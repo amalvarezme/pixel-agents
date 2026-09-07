@@ -13,6 +13,7 @@ of them stayed well under 500 production lines.
 | PR1 `slice-1a-contracts-toolchain` | 279 | 622 |
 | PR2 `slice-1a-ports-spikes` | 497 | 875 |
 | PR3 `slice-1b-claude-adapter` | 490 | 1194 |
+| PR4 `slice-1b-sse-scene` | 774 | 1720 |
 
 A budget that charges tests rewards writing fewer of them, which is the opposite of what strict TDD
 is for in this change: the four `memory_write` detectors are the highest-value tests here, and each
@@ -90,8 +91,21 @@ RED/GREEN coverage per spec scenario):
   adapter (discovery, tailing, parsing, parent/child correlation) and its `memory_write` detector
   with sanitized fixtures. 1024 lines excluding `package-lock.json` (`chokidar` added as a
   dependency), of which roughly 600 are tests. No PixiJS, SSE server, or UI code lands here.
-- **PR4 (base: PR3 branch)** — Phases 9-11: SSE server, minimal Pixi scene, atomic-design
-  components, and slice 1b verification — deliberately deferred, not dropped.
+- **PR4 (`slice-1b-sse-scene`, base: `slice-1b-claude-adapter`)** — Phases 9-11: the real SSE
+  server (ring buffer, snapshot/replay resume, bounded per-client backpressure queue), the
+  Office aggregate's structural event projection, pure canvas-free layout math, atomic-design
+  components, the PixiJS v8 scene renderer (the only file importing it, enforced by a
+  dependency-cruiser rule), the container/presentational split (`OfficeContainer`/`OfficeStage`),
+  and slice 1b verification. 774 production lines against the 700-line budget — a 74-line
+  (10.6%) overage, smaller than PR3's. This is a single work unit by explicit scope (Phases 9-11
+  together complete slice 1b); nothing was compressed or had its tests trimmed to fit the number,
+  per the budget rule. Slice 1b is now fully complete across PR3+PR4.
+  Manual smoke (task 11.2): discovery + a full tail pass against the real, machine-specific
+  `~/.claude/projects/` tree (538 real sessions, 175k+ lines read) left the entire `~/.claude/`
+  tree byte-for-byte unchanged (mtime+size snapshot before/after, 4651 files, 0 changed, 0 added).
+  One session file exceeded the JS engine's max string length (~536M chars) and could not be read
+  in one pass — a read-side limitation only, not a write; it does not affect the no-write proof
+  and is out of this work unit's scope to fix (would touch already-completed Phase 7 code).
 
 ## Slice 1a — PR 1 (base: `main`) — Contracts & Toolchain (Phases 1-2)
 
@@ -165,26 +179,26 @@ RED/GREEN coverage per spec scenario):
 
 ### Phase 9: SSE Server
 
-- [ ] 9.1 Create `src/adapters/driving/http/stream.ts` — `GET /stream` as `text/event-stream`, monotonic `id:`, 15s heartbeat comment
-- [ ] 9.2 Implement ring buffer (last 2000 events) + `Last-Event-ID` replay; snapshot frame on evicted/first-connect
-- [ ] 9.3 Implement bounded per-client queue (1000): drop oldest transient events (`message`, `tool_start`) under pressure, coalesce `stats`/`status`, never drop state-defining events; `snapshot_required` on desync
-- [ ] 9.4 RED+GREEN: integration test — reconnect inside ring replays only `(k, now]`; reconnect outside ring receives a `snapshot` frame
+- [x] 9.1 Create `src/adapters/driving/http/stream.ts` — `GET /stream` as `text/event-stream`, monotonic `id:`, 15s heartbeat comment
+- [x] 9.2 Implement ring buffer (last 2000 events) + `Last-Event-ID` replay; snapshot frame on evicted/first-connect
+- [x] 9.3 Implement bounded per-client queue (1000): drop oldest transient events (`message`, `tool_start`) under pressure, coalesce `stats`/`status`, never drop state-defining events; `snapshot_required` on desync
+- [x] 9.4 RED+GREEN: integration test — reconnect inside ring replays only `(k, now]`; reconnect outside ring receives a `snapshot` frame
 
 ### Phase 10: Minimal Office Scene
 
-- [ ] 10.1 Create `src/ui/scene/layout/` pure TS layout math — 1920×1080 floor plan, desk grid, single-agent centered layout, multi-agent packed row (≤8, overflow scrolls)
-- [ ] 10.2 RED+GREEN: layout unit tests, canvas-free (Single-Agent Layout, Multi-Agent Layout scenarios)
-- [ ] 10.3 Create `src/ui/scene/pixi/` (only file importing PixiJS v8) — desks + caption strip, no animation
-- [ ] 10.4 Create `src/ui/containers/OfficeContainer` (owns SSE subscription + client projection) and `src/ui/scene/OfficeStage` (presentational, receives `OfficeViewModel`)
-- [ ] 10.5 Create `src/ui/components/atoms|molecules|organisms` per atomic design (badge, caption, worker, desk)
-- [ ] 10.6 RED+GREEN: worker appears on `session_start`, disappears on `session_end` (Per-Agent Worker Mapping)
-- [ ] 10.7 RED+GREEN: Claude subagent renders in a visually distinct lane from its parent (Parent/Child Lane Layout, Claude Code only)
-- [ ] 10.8 RED+GREEN: worker label resolves `attributionAgent` → `toolUseResult.description` → `agent-<shortId>` fallback chain (Worker Label Resolution, Claude Code)
+- [x] 10.1 Create `src/ui/scene/layout/` pure TS layout math — 1920×1080 floor plan, desk grid, single-agent centered layout, multi-agent packed row (≤8, overflow scrolls)
+- [x] 10.2 RED+GREEN: layout unit tests, canvas-free (Single-Agent Layout, Multi-Agent Layout scenarios)
+- [x] 10.3 Create `src/ui/scene/pixi/` (only file importing PixiJS v8) — desks + caption strip, no animation
+- [x] 10.4 Create `src/ui/containers/OfficeContainer` (owns SSE subscription + client projection) and `src/ui/scene/OfficeStage` (presentational, receives `OfficeViewModel`)
+- [x] 10.5 Create `src/ui/components/atoms|molecules|organisms` per atomic design (badge, caption, worker, desk)
+- [x] 10.6 RED+GREEN: worker appears on `session_start`, disappears on `session_end` (Per-Agent Worker Mapping)
+- [x] 10.7 RED+GREEN: Claude subagent renders in a visually distinct lane from its parent (Parent/Child Lane Layout, Claude Code only)
+- [x] 10.8 RED+GREEN: worker label resolves `attributionAgent` → `toolUseResult.description` → `agent-<shortId>` fallback chain (Worker Label Resolution, Claude Code)
 
 ### Phase 11: Slice 1b Verification
 
-- [ ] 11.1 Run `npm test` — Claude Code adapter, detector, SSE, scene suites green
-- [ ] 11.2 Manual smoke: point adapter at a real `~/.claude/projects/` tree (read-only), confirm no file under `~/.claude/` changes (mtime check)
+- [x] 11.1 Run `npm test` — Claude Code adapter, detector, SSE, scene suites green
+- [x] 11.2 Manual smoke: point adapter at a real `~/.claude/projects/` tree (read-only), confirm no file under `~/.claude/` changes (mtime check)
 
 ---
 
