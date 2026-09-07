@@ -308,8 +308,8 @@ follow-up check.
 
 ### Phase 15: Slice 2 Verification
 
-- [ ] 15.1 Run `npm test` — Codex + Antigravity adapter/detector suites green, Claude Code suite unaffected by these changes (Detector Interface Isolation)
-- [ ] 15.2 Manual smoke: point both adapters at real logs (read-only), confirm no files under `~/.codex/` or `~/.gemini/` change
+- [x] 15.1 Run `npm test` — Codex + Antigravity adapter/detector suites green, Claude Code suite unaffected by these changes (Detector Interface Isolation)
+- [x] 15.2 Manual smoke: point both adapters at real logs (read-only), confirm no files under `~/.codex/` or `~/.gemini/` change
 
 ---
 
