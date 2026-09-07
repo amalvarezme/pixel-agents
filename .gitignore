@@ -36,3 +36,6 @@ venv/
 
 # Skill registry local cache
 .atl/.skill-registry.cache.json
+
+# Gentle AI per-change runtime instance id (machine-local, not shared state)
+.gentle-ai-instance

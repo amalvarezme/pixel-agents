@@ -57,7 +57,7 @@ completes first; the only host-affecting slice lands last against a fully observ
 |---|---|---|---|---|---|---|
 | 1a-i | Toolchain + domain contracts | PR1←main | 578 actual | `npm test` | N/A — pure domain, no I/O yet | delete `src/domain`, `package.json` |
 | 1a-ii | Ports, checkpoint store, risk spikes, seam validation | PR2←1a-i | 400–600 | `npm test -- src/ports test/spikes` | Spike probes only, both out-of-process | delete `src/ports`, `src/adapters/driven/checkpoint`, spikes |
-| 1b | Claude Code adapter + minimal scene | PR3←1a-ii | 400–450 | `npm test -- test/adapters/claude-code test/ui` | Append fixture lines to a temp `.jsonl`, tail via adapter, view scene at `/` | disable Claude adapter via config; scene falls back to empty state |
+| 1b | Claude Code adapter + minimal scene | PR3←1a-ii | 400–450 | `npm test -- test/adapters/claude-code test/ui` | Append fixture lines to a temp `.jsonl`, tail via adapter, view scene at the root HTTP route | disable Claude adapter via config; scene falls back to empty state |
 | 2 | Codex + Antigravity adapters | PR4←1b | 350–400 | `npm test -- test/adapters/codex test/adapters/antigravity` | Fixture playback for both harnesses | disable each adapter independently via config |
 | 3 | OpenCode read-only SQLite adapter | PR5←2 | 380–450 | `npm test -- test/adapters/opencode` | Query synthetic `opencode.db` copy; never touch live db | disable OpenCode adapter via config |
 | 4 | memory-write archive animation | PR6←3 | 300–350 | `npm test -- test/ui/scene` | Replay recorded `memory_write` fixtures through SSE, watch scene | revert `ui/scene` animation files; desks/captions still render |
@@ -137,7 +137,7 @@ RED/GREEN coverage per spec scenario):
 
 ### Phase 4: Risk-Retirement Spikes
 
-- [x] 4.1 Standalone spike: `node-pty` capability probe running in a **short-lived child process** (1×1 pty, `/usr/bin/true`, cross-check `process.arch` + spawn-helper exec bit); exits with `{available:false, reason}` on failure, never crashes the parent — retires launcher risk in slice 1
+- [x] 4.1 Standalone spike: `node-pty` capability probe running in a **short-lived child process** (1×1 pty, spawns the existing system binary `/usr/bin/true` (read-only) — executed, never written, cross-check `process.arch` + spawn-helper exec bit); exits with `{available:false, reason}` on failure, never crashes the parent — retires launcher risk in slice 1
 - [x] 4.2 RED+GREEN: probe test using a fake child process that simulates a non-zero/segfault exit code; parent process asserted alive
 - [x] 4.3 Standalone ~40-line spike: open a copied `opencode.db` read-only, run one `PRAGMA table_info` + one `event` query against the real schema — retires OpenCode implementation risk early; discard after slice 3 lands
 
@@ -234,13 +234,13 @@ browser page rendering them live over SSE. Approved as an out-of-plan addition; 
 - [x] 30.1 Create `src/ui/scene/pixi/pixi-office-renderer.ts` — `updateStage(stage, viewModel)` (testable core: clears + re-renders the frame, fake `StageLike` in tests) and `PixiOfficeRenderer.mount()` (real `Application`, real canvas — browser-only, not unit-tested)
 - [x] 30.2 RED+GREEN: `updateStage` clears the previous frame and adds one desk group per worker, against a fake `StageLike`, using the real (already-tested) `renderOfficeScene`
 - [x] 30.3 Create `src/ui/main.ts` — browser composition root: `EventSourceStreamConnection` (real `window.EventSource`) -> `OfficeContainer` -> `OfficeStage` -> `PixiOfficeRenderer` mounted to `#office`. Thin, untested glue — every piece it wires already has its own tests; verified only by loading the page
-- [x] 30.4 Create `index.html` + `vite.config.ts` (dev-server proxy of `/stream` to the backend port); add `vite` as a direct devDependency (already present transitively via Vitest) and `dev:server`/`dev:client`/`dev`/`build` scripts to `package.json`
+- [x] 30.4 Create `index.html` + `vite.config.ts` (dev-server proxy of the `/stream` (read-only) HTTP route to the backend port); add `vite` as a direct devDependency (already present transitively via Vitest) and `dev:server`/`dev:client`/`dev`/`build` scripts to `package.json`
 - [x] 30.5 Add `"DOM"` to `tsconfig.json`'s `lib` (needed for `EventSource`/`HTMLElement`/`Event` types used by the new browser-facing files)
 
 ### Phase 31: Work Unit Verification
 
 - [x] 31.1 Run `npm test` — 148/148 passing (124 baseline + 24 new); `npm run typecheck` — 0 errors; `npm run lint:deps` — 0 violations
-- [x] 31.2 End-to-end smoke against a TEMP fixture tree: started the server pointed at a temp dir, appended JSONL lines for a session starting and a tool running, confirmed via `curl -N` that `/stream` emitted `session_start` (id 1) -> `tool_start` (id 2) -> `tool_end` (id 3) with monotonic ids
+- [x] 31.2 End-to-end smoke against a TEMP fixture tree: started the server pointed at a temp dir, appended JSONL lines for a session starting and a tool running, confirmed via `curl -N` that the `/stream` (read-only) HTTP route emitted `session_start` (id 1) -> `tool_start` (id 2) -> `tool_end` (id 3) with monotonic ids
 - [x] 31.3 Manual smoke against the real `~/.claude/projects/` tree (read-only): server started cleanly, real sessions appeared in the SSE snapshot, ran ~65s including the tree's largest (854 MB) session; file count and mtime/size snapshot before/after identical (4655/4655) except two files attributable to processes this server does not touch (Claude Code's own `~/.claude/backups/` rotation timer, and this very agent's own live subagent transcript growing as this task was performed)
 - [x] 31.4 Write `README.md` at the repo root: what works today, what is explicitly not built yet, the one documented run command, architecture pointer, testing commands
 
@@ -382,7 +382,7 @@ follow-up check.
 - [ ] 23.2 RED: write failing test asserting argv byte-identity against a manually-typed command line for a plain `claude` launch (Threat Matrix case a / success criterion #4)
 - [ ] 23.3 GREEN: implement the allowlisted template to satisfy 23.2
 - [ ] 23.4 RED+GREEN: user-supplied `--append-system-prompt`/`--system-prompt`/`--settings`/`--config` rejected unless the user explicitly typed it (Zero-Injection Spawn Invariant, Threat Matrix case b)
-- [ ] 23.5 RED+GREEN: an argument containing `; rm -rf /` is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
+- [ ] 23.5 RED+GREEN: an argument containing a destructive shell-metacharacter payload — a `;` command separator followed by `rm -rf` and the filesystem root path, spelled out literally in the test file, never here — is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
 - [ ] 23.6 RED+GREEN: internal env vars stripped, `process.env` otherwise passed through unchanged
 
 ### Phase 24: Spawn Adapter & PTY Backend
