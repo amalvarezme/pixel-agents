@@ -6,14 +6,21 @@ context: |
   Target: passive log-reader "office" agent visualizer (Category B — no hooks, no settings.json writes).
   Multi-harness: Claude Code, Codex, Antigravity, OpenCode session logs on disk.
   Must launch agents/subagents from the visualization; compatible with gentle-ai and Engram.
-  Not a git repository yet.
+  Git repository on branch main, remote origin https://github.com/amalvarezme/pixel-agents.
 
-strict_tdd: false
+strict_tdd: true
 strict_tdd_marker: true
 strict_tdd_note: >
-  Slice 1a of office-agent-visualizer picked the toolchain (Node/TypeScript + Vitest)
-  and set testing.test_command below. strict_tdd itself stays false pending an explicit
-  sdd-init re-run to flip it to true now that a workspace-wide test command exists.
+  Re-resolved 2026-09-06 on branch slice-1a-contracts-toolchain: strict_tdd flips to true
+  because a workspace-level test command now exists (testing.test_command below) and covers
+  the sole in-scope project (office-agent-visualizer), verified by actually running
+  `npm test` (4 files, 10 tests passed) and `npm run typecheck` (zero errors). This
+  supersedes the prior fail-closed resolution recorded when zero projects were discovered.
+  BRANCH CAVEAT: this true resolution is valid for work on the slice-1a-contracts-toolchain
+  branch chain (this branch and its descendants, e.g. slice 1a-ii onward). On `main`,
+  openspec/config.yaml still declares projects: [] and test_command: null — strict_tdd
+  there becomes true only once PR #1 (https://github.com/amalvarezme/pixel-agents/pull/1)
+  merges this toolchain into main.
 
 testing:
   projects: ["office-agent-visualizer"]
@@ -42,7 +49,7 @@ rules:
   apply:
     guidelines:
       - Follow existing code patterns once a stack is chosen
-    tdd: false           # strict_tdd stays false until sdd-init re-run flips it; test_command now set
+    tdd: true            # re-resolved true 2026-09-06; see strict_tdd_note (branch-scoped, see caveat)
     test_command: "npm test"
   verify:
     test_command: "npm test"
