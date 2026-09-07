@@ -94,9 +94,9 @@ every unit after it.
 
 ### Phase 6: Slice 1a Verification
 
-- [ ] 6.1 Run `npm test` — all domain/port/checkpoint tests green
-- [ ] 6.2 Run `npm run typecheck` — zero errors
-- [ ] 6.3 Confirm `openspec/config.yaml` `testing.test_command` is `"npm test"` (unblocks strict TDD re-resolution for slice 1b+)
+- [x] 6.1 Run `npm test` — all domain/port/checkpoint tests green
+- [x] 6.2 Run `npm run typecheck` — zero errors
+- [x] 6.3 Confirm `openspec/config.yaml` `testing.test_command` is `"npm test"` (unblocks strict TDD re-resolution for slice 1b+)
 
 ---
 
