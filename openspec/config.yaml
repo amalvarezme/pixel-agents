@@ -1,0 +1,54 @@
+# SDD config for pixel-agents
+schema: spec-driven
+
+context: |
+  Greenfield project, no stack chosen yet (zero package.json/go.mod/pyproject.toml/Cargo.toml).
+  Target: passive log-reader "office" agent visualizer (Category B — no hooks, no settings.json writes).
+  Multi-harness: Claude Code, Codex, Antigravity, OpenCode session logs on disk.
+  Must launch agents/subagents from the visualization; compatible with gentle-ai and Engram.
+  Not a git repository yet.
+
+strict_tdd: false
+strict_tdd_marker: true
+strict_tdd_note: >
+  Global session config requests strict_tdd: true, but zero projects are discovered
+  and no workspace-level test command exists yet (greenfield, no toolchain selected).
+  Per sdd-init decision gates this fails closed to strict_tdd: false until a stack is
+  chosen and a workspace-wide test command is defined. Re-run sdd-init (or update this
+  file) once the toolchain is picked.
+
+testing:
+  projects: []
+  test_command: null
+  notes: >
+    Unresolved. No project has been discovered under the workspace root; test_command
+    cannot be set until a stack is chosen (e.g. Node/TS, Go, Rust, Python) for the
+    office visualizer.
+
+rules:
+  proposal:
+    - Confirm stack choice (language/runtime, UI/rendering layer) before scoping work
+    - Preserve passive log-reader architecture: no hooks, no ~/.claude/settings.json writes
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    - Multi-harness log formats (Claude Code, Codex, Antigravity, OpenCode) must be modeled explicitly
+  design:
+    - Document how each harness's session logs are located and parsed without hooks
+    - Document the agent-launch mechanism from the visualizer (process spawn, not hook injection)
+    - Document how Engram save events are detected and animated in the office view
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns once a stack is chosen
+    tdd: false           # Unresolved until strict_tdd_marker is honored (needs workspace test command)
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
