@@ -120,3 +120,19 @@ export function resolveAntigravityWorkerLabel(toolCall: AntigravityToolCall): An
   const detail = dequoteOnce(args.toolSummary);
   return { label, detail };
 }
+
+export interface AntigravityToolCaption {
+  toolLabel: string;
+  toolDetail?: string;
+}
+
+/**
+ * Normalized {toolLabel, toolDetail} caption pair (design.md "Captions": de-quoted
+ * `args.toolAction`/`args.toolSummary`) — the exact same underlying fields Worker Label
+ * Resolution already reads, exposed here under the shared tool_start caption contract so the
+ * renderer consumes one normalized shape regardless of harness.
+ */
+export function resolveAntigravityToolCaption(toolCall: AntigravityToolCall): AntigravityToolCaption {
+  const { label, detail } = resolveAntigravityWorkerLabel(toolCall);
+  return { toolLabel: label, toolDetail: detail };
+}

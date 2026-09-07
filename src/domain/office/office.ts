@@ -39,6 +39,9 @@ export interface Worker {
    * arrived yet.
    */
   parentSessionKey: string | null;
+  /** Normalized tool_start caption pair (design.md "Captions"), resolved upstream per-harness. */
+  toolLabel?: string;
+  toolDetail?: string;
 }
 
 export interface OfficeState {
@@ -70,6 +73,8 @@ function upsertWorker(
     label: patch.label ?? existing?.label ?? sessionKey,
     activity: patch.activity ?? existing?.activity ?? 'working',
     parentSessionKey: patch.parentSessionKey !== undefined ? patch.parentSessionKey : (existing?.parentSessionKey ?? null),
+    toolLabel: patch.toolLabel ?? existing?.toolLabel,
+    toolDetail: patch.toolDetail ?? existing?.toolDetail,
   });
   return { ...state, workers };
 }
@@ -106,9 +111,14 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
       return applyMemoryWriteToOfficeState(state, event.sessionKey, event.at);
 
     default:
-      if (!event.label) return state;
+      if (!event.label && !event.toolLabel) return state;
       if (!state.workers.has(event.sessionKey)) return state;
-      return upsertWorker(state, event.sessionKey, { harness: event.harness, label: event.label });
+      return upsertWorker(state, event.sessionKey, {
+        harness: event.harness,
+        label: event.label,
+        toolLabel: event.toolLabel,
+        toolDetail: event.toolDetail,
+      });
   }
 }
 

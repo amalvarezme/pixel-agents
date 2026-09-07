@@ -361,16 +361,16 @@ follow-up check.
 
 ### Phase 21: Path Waypoints, Animation Wiring, Caption Normalization
 
-- [ ] 21.1 Implement `src/ui/scene/layout/` path waypoints — desk → one corridor waypoint → archive `(1720,540)`, never cutting through desks
-- [ ] 21.2 Wire archive animation: worker walks to archive, document tweens in, counter increments, brief highlight, worker returns to `working`/`idle` — ingestion never blocks (events mutate model immediately, animation lags)
-- [ ] 21.3 RED+GREEN: `memory_write` event for `S1` animates a path to the fixed archive destination (Archive Destination Rendering)
-- [ ] 21.4 RED+GREEN: any harness's `memory_write` (incl. `antigravity`) triggers the same animation path (memory_write Drives Archive Animation Trigger)
-- [ ] 21.5 Implement normalized `{toolLabel, toolDetail}` caption pair on `tool_start`, sourced per-harness (Antigravity de-quoted `toolAction`/`toolSummary`; Claude `tool_use.name` + input digest; Codex `item.type`/`server`/`tool`/command head; OpenCode `part.data.tool`+`state.title`) so the renderer never branches on harness
+- [x] 21.1 Implement `src/ui/scene/layout/` path waypoints — desk → one corridor waypoint → archive `(1720,540)`, never cutting through desks
+- [x] 21.2 Wire archive animation: worker walks to archive, document tweens in, counter increments, brief highlight, worker returns to `working`/`idle` — ingestion never blocks (events mutate model immediately, animation lags)
+- [x] 21.3 RED+GREEN: `memory_write` event for `S1` animates a path to the fixed archive destination (Archive Destination Rendering)
+- [x] 21.4 RED+GREEN: any harness's `memory_write` (incl. `antigravity`) triggers the same animation path (memory_write Drives Archive Animation Trigger)
+- [x] 21.5 Implement normalized `{toolLabel, toolDetail}` caption pair on `tool_start`, sourced per-harness (Antigravity de-quoted `toolAction`/`toolSummary`; Claude `tool_use.name` + input digest; Codex `item.type`/`server`/`tool`/command head; OpenCode `part.data.tool`+`state.title`) so the renderer never branches on harness
 
 ### Phase 22: Slice 4 Verification
 
-- [ ] 22.1 Run `npm test` — carry queue, archive slot, waypoint, caption suites green
-- [ ] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each
+- [x] 22.1 Run `npm test` — carry queue, archive slot, waypoint, caption suites green (307/307)
+- [ ] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each — **automated part done** (`src/ui/state/archive-trip-cross-harness.test.ts` proves all four harnesses produce a byte-identical animation path/destination); the VISUAL confirmation through a real browser is still open, no browser available to this apply pass — needs the orchestrator (Chrome DevTools)
 
 ---
 

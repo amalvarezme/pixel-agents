@@ -24,7 +24,7 @@ export interface OpenCodePartRow {
 export interface OpenCodePartData {
   type?: string;
   tool?: string;
-  state?: { input?: Record<string, unknown>; [key: string]: unknown };
+  state?: { input?: Record<string, unknown>; title?: string; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -35,6 +35,21 @@ export function parseOpenCodePartData(raw: string): OpenCodePartData | null {
   } catch {
     return null;
   }
+}
+
+export interface OpenCodeToolCaption {
+  toolLabel: string;
+  toolDetail?: string;
+}
+
+/**
+ * Normalized {toolLabel, toolDetail} caption pair (design.md "Captions": "part.data.tool +
+ * state.title when non-empty"). Returns `null` for a non-`tool` part.
+ */
+export function resolveOpenCodeToolCaption(data: OpenCodePartData): OpenCodeToolCaption | null {
+  if (data.type !== 'tool' || typeof data.tool !== 'string' || data.tool.length === 0) return null;
+  const title = data.state?.title;
+  return { toolLabel: data.tool, toolDetail: typeof title === 'string' && title.length > 0 ? title : undefined };
 }
 
 export interface OpenCodeSessionRow {

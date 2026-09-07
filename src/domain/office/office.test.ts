@@ -143,6 +143,32 @@ describe('applyEventToOfficeState (office-scene-renderer spec: Per-Agent Worker 
     expect(worker?.label).toBe('resolved-label');
     expect(worker?.parentSessionKey).toBe('claude-code:root');
   });
+
+  // Task 21.5: normalized {toolLabel, toolDetail} carried through the same generic branch as
+  // `label` already is above — no harness-specific handling added here either.
+  it('carries a tool_start toolLabel/toolDetail pair onto the worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1100,
+      toolLabel: 'Read',
+      toolDetail: 'design.md',
+    });
+
+    const worker = state.workers.get('claude-code:s1');
+    expect(worker?.toolLabel).toBe('Read');
+    expect(worker?.toolDetail).toBe('design.md');
+  });
 });
 
 describe('applyEventToOfficeState — memory_write drives the carry queue and archive docking (design.md: "animation is a lagging view, ingestion never blocks")', () => {

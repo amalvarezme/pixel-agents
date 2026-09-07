@@ -14,6 +14,8 @@ export interface CreateLogSourcedEventInput {
   at: number;
   label?: string;
   correlationId?: string;
+  toolLabel?: string;
+  toolDetail?: string;
 }
 
 /**

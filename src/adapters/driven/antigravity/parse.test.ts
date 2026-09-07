@@ -5,6 +5,7 @@ import {
   extractToolCalls,
   parseAntigravityLine,
   parseCallMcpToolArguments,
+  resolveAntigravityToolCaption,
   resolveAntigravityWorkerLabel,
 } from './parse';
 
@@ -117,5 +118,18 @@ describe('resolveAntigravityWorkerLabel (office-scene-renderer spec: Worker Labe
   it('falls back to a deterministic default label when toolAction is absent', () => {
     const toolCall = { name: 'call_mcp_tool', args: {} };
     expect(resolveAntigravityWorkerLabel(toolCall)).toEqual({ label: 'antigravity-agent', detail: undefined });
+  });
+});
+
+describe('resolveAntigravityToolCaption (design.md "Captions": de-quoted toolAction/toolSummary)', () => {
+  it('sources toolLabel/toolDetail from the same de-quoted toolAction/toolSummary pair as the worker label', () => {
+    const toolCall = {
+      name: 'call_mcp_tool',
+      args: { toolAction: '"Saving probe memory to Engram"', toolSummary: '"Engram probe memory save"' },
+    };
+    expect(resolveAntigravityToolCaption(toolCall)).toEqual({
+      toolLabel: 'Saving probe memory to Engram',
+      toolDetail: 'Engram probe memory save',
+    });
   });
 });
