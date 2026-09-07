@@ -362,15 +362,38 @@ follow-up check.
 ### Phase 21: Path Waypoints, Animation Wiring, Caption Normalization
 
 - [x] 21.1 Implement `src/ui/scene/layout/` path waypoints — desk → one corridor waypoint → archive `(1720,540)`, never cutting through desks
-- [x] 21.2 Wire archive animation: worker walks to archive, document tweens in, counter increments, brief highlight, worker returns to `working`/`idle` — ingestion never blocks (events mutate model immediately, animation lags)
-- [x] 21.3 RED+GREEN: `memory_write` event for `S1` animates a path to the fixed archive destination (Archive Destination Rendering)
-- [x] 21.4 RED+GREEN: any harness's `memory_write` (incl. `antigravity`) triggers the same animation path (memory_write Drives Archive Animation Trigger)
+- [ ] 21.2 Wire archive animation: worker walks to archive, document tweens in, counter increments, brief highlight, worker returns to `working`/`idle` — ingestion never blocks (events mutate model immediately, animation lags)
+  - [x] Data half: `OfficeViewModel.archiveTrip` (`{path, carryCount}`) is projected from the carry queue and covered by tests
+  - [ ] **Render half: NOT built.** Nothing under `src/ui/scene/` or `src/ui/components/` reads `archiveTrip` (verified by grep). No worker walks, no document tweens, no counter, no highlight. The orchestrator confirmed this in Chrome: a real `mcp__engram__mem_save` renders a desk captioned `mcp__engram__mem_save` and nothing else
+- [ ] 21.3 RED+GREEN: `memory_write` event for `S1` animates a path to the fixed archive destination (Archive Destination Rendering) — the path is COMPUTED and tested (`archive-path.ts`), but nothing animates it; blocked on 21.2's render half
+- [ ] 21.4 RED+GREEN: any harness's `memory_write` (incl. `antigravity`) triggers the same animation path (memory_write Drives Archive Animation Trigger) — path identity across all four harnesses is proven by `archive-trip-cross-harness.test.ts`; the TRIGGER does not exist at runtime, see the blocker below
 - [x] 21.5 Implement normalized `{toolLabel, toolDetail}` caption pair on `tool_start`, sourced per-harness (Antigravity de-quoted `toolAction`/`toolSummary`; Claude `tool_use.name` + input digest; Codex `item.type`/`server`/`tool`/command head; OpenCode `part.data.tool`+`state.title`) so the renderer never branches on harness
+
+### BLOCKER discovered during slice 4 verification: `memory_write` is never emitted at runtime
+
+All four `memory-write-detector.ts` files exist, are unit-tested against true-positive and
+false-positive fixtures, and are mutation-verified. **None of them is imported by any `parse.ts` or
+`activity-source.ts`** (verified by grep across `src/`, excluding tests): the detectors are
+orphaned, `createMemoryWriteEvent` is called only from tests, and no `memory_write` event is ever
+constructed at runtime.
+
+Consequence: the carry queue, the archive docking slots and the path math are all correct and
+tested, but nothing can reach them in a running system. Confirmed end to end — a real
+`mcp__engram__mem_save` in a watched session produces only `tool_start` with
+`toolLabel: "mcp__engram__mem_save"`; there is no `memory_write` frame on `/stream`.
+
+This is a PLAN gap, not an implementation slip: no phase in this file ever asked for the detectors
+to be wired into their adapters' event pipelines. Phases 8, 12, 13 and 18 each say "implement the
+detector" and stop. Closing it needs two pieces of work that no current phase covers:
+
+- [ ] B.1 Wire each adapter's detector into its own event pipeline so a matching tool call emits a
+  `memory_write` event alongside `tool_start`
+- [ ] B.2 Build the render half of 21.2 so `archiveTrip` becomes visible motion
 
 ### Phase 22: Slice 4 Verification
 
-- [x] 22.1 Run `npm test` — carry queue, archive slot, waypoint, caption suites green (307/307)
-- [ ] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each — **automated part done** (`src/ui/state/archive-trip-cross-harness.test.ts` proves all four harnesses produce a byte-identical animation path/destination); the VISUAL confirmation through a real browser is still open, no browser available to this apply pass — needs the orchestrator (Chrome DevTools)
+- [x] 22.1 Run `npm test` — carry queue, archive slot, waypoint, caption suites green (307/307, independently re-run by the orchestrator) (307/307)
+- [ ] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each — automated path-identity proven by `archive-trip-cross-harness.test.ts`. The VISUAL half is NOT merely pending: it is currently IMPOSSIBLE, because nothing emits `memory_write` at runtime and nothing renders `archiveTrip`. The orchestrator ran the app in Chrome and captured the evidence. Blocked on B.1 and B.2 above
 
 ---
 
