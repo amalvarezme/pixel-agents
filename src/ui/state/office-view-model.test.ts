@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { applyEventToOfficeState, createOfficeState } from '../../domain/office/office';
-import type { AgentEvent } from '../../domain/events/types';
+import type { AgentEvent, HarnessId } from '../../domain/events/types';
 import { buildOfficeViewModel } from './office-view-model';
 
 function sessionStart(id: number, sessionKey: string, label?: string): AgentEvent {
   return { id, kind: 'session_start', harness: 'claude-code', sessionKey, at: id, label };
+}
+
+function sessionStartFor(id: number, harness: HarnessId, sessionKey: string, label?: string): AgentEvent {
+  return { id, kind: 'session_start', harness, sessionKey, at: id, label };
 }
 
 function parent(id: number, sessionKey: string, correlationId: string): AgentEvent {
@@ -43,5 +47,21 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
     expect(parentVm?.lane).toBe('root');
     expect(childVm?.lane).toBe('child');
     expect(childVm?.y).not.toBe(parentVm?.y);
+  });
+
+  it('renders three unrelated sessions from three different harnesses as distinct, non-overlapping workers (office-scene-renderer spec: Multi-Agent Layout, cross-harness)', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStartFor(1, 'claude-code', 'claude-code:s1'));
+    state = applyEventToOfficeState(state, sessionStartFor(2, 'codex', 'codex:s2'));
+    state = applyEventToOfficeState(state, sessionStartFor(3, 'antigravity', 'antigravity:cli:s3'));
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers).toHaveLength(3);
+    expect(vm.workers.map((w) => w.harness).sort()).toEqual(['antigravity', 'claude-code', 'codex']);
+
+    // Non-overlapping: every worker occupies a distinct (x, y) position.
+    const positions = vm.workers.map((w) => `${w.x},${w.y}`);
+    expect(new Set(positions).size).toBe(3);
   });
 });

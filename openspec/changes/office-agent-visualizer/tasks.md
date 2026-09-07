@@ -303,8 +303,8 @@ follow-up check.
 
 ### Phase 14: Multi-Agent Scene Updates
 
-- [ ] 14.1 RED+GREEN: three unrelated `session_start` events render as three distinct non-overlapping workers (Multi-Agent Layout, cross-harness)
-- [ ] 14.2 RED+GREEN: Antigravity worker label uses de-quoted `toolAction`/`toolSummary` as caption source (Worker Label Resolution, Antigravity)
+- [x] 14.1 RED+GREEN: three unrelated `session_start` events render as three distinct non-overlapping workers (Multi-Agent Layout, cross-harness)
+- [x] 14.2 RED+GREEN: Antigravity worker label uses de-quoted `toolAction`/`toolSummary` as caption source (Worker Label Resolution, Antigravity)
 
 ### Phase 15: Slice 2 Verification
 

@@ -97,3 +97,26 @@ export function parseCallMcpToolArguments(argumentsRaw: string): Record<string, 
     return null;
   }
 }
+
+const DEFAULT_ANTIGRAVITY_WORKER_LABEL = 'antigravity-agent';
+
+export interface AntigravityWorkerLabelSignal {
+  label: string;
+  detail?: string;
+}
+
+/**
+ * Resolves a worker's display label from a tool call's de-quoted `toolAction`/`toolSummary`
+ * pair (office-scene-renderer spec: "Worker Label Resolution" — Antigravity is one of the two
+ * harnesses with a first-class label field, preferred over any inferred/undocumented field).
+ * Applies to any tool call, not only `call_mcp_tool`: every observed Antigravity tool call
+ * carries this pair, including IDE-native editor actions (research-local-evidence.md: "Populated
+ * `tool_calls` example (IDE)"). Falls back to a deterministic default when `toolAction` is
+ * absent, never a blank or error label.
+ */
+export function resolveAntigravityWorkerLabel(toolCall: AntigravityToolCall): AntigravityWorkerLabelSignal {
+  const args = toolCall.args ?? {};
+  const label = dequoteOnce(args.toolAction) ?? DEFAULT_ANTIGRAVITY_WORKER_LABEL;
+  const detail = dequoteOnce(args.toolSummary);
+  return { label, detail };
+}

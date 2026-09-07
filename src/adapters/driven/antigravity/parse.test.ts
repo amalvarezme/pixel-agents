@@ -5,6 +5,7 @@ import {
   extractToolCalls,
   parseAntigravityLine,
   parseCallMcpToolArguments,
+  resolveAntigravityWorkerLabel,
 } from './parse';
 
 describe('parseAntigravityLine', () => {
@@ -90,5 +91,31 @@ describe('parseCallMcpToolArguments (second JSON.parse of the Arguments string)'
 
   it('returns null for malformed JSON', () => {
     expect(parseCallMcpToolArguments('{not valid')).toBeNull();
+  });
+});
+
+describe('resolveAntigravityWorkerLabel (office-scene-renderer spec: Worker Label Resolution, Antigravity)', () => {
+  it('de-quotes toolAction as the label and toolSummary as the detail', () => {
+    const toolCall = {
+      name: 'call_mcp_tool',
+      args: { toolAction: '"Saving probe memory to Engram"', toolSummary: '"Engram probe memory save"' },
+    };
+    expect(resolveAntigravityWorkerLabel(toolCall)).toEqual({
+      label: 'Saving probe memory to Engram',
+      detail: 'Engram probe memory save',
+    });
+  });
+
+  it('works for any tool call, not only call_mcp_tool (e.g. an IDE-native editor action)', () => {
+    const toolCall = { name: 'list_dir', args: { toolAction: '"Listing workspace directory"', toolSummary: '"Workspace directory listing"' } };
+    expect(resolveAntigravityWorkerLabel(toolCall)).toEqual({
+      label: 'Listing workspace directory',
+      detail: 'Workspace directory listing',
+    });
+  });
+
+  it('falls back to a deterministic default label when toolAction is absent', () => {
+    const toolCall = { name: 'call_mcp_tool', args: {} };
+    expect(resolveAntigravityWorkerLabel(toolCall)).toEqual({ label: 'antigravity-agent', detail: undefined });
   });
 });
