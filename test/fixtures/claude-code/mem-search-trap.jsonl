@@ -1,0 +1,1 @@
+{"type":"assistant","uuid":"33333333-3333-3333-3333-333333333333","parentUuid":null,"isSidechain":false,"timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"toolu_01example00000000003","name":"mcp__engram__mem_search","input":{"query":"example query","project":"example-project"}}]}}
