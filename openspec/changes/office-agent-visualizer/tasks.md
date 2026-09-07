@@ -276,15 +276,15 @@ follow-up check.
 
 ### Phase 12: Codex Adapter + Detector + Fixtures
 
-- [ ] 12.1 Create `src/adapters/driven/codex/discover.ts` — glob `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (read-only), watch current day directory
-- [ ] 12.2 Create `src/adapters/driven/codex/parse.ts` — parse `session_meta`, `event_msg`, `response_item`, `turn_context`, `world_state`, `compacted` record families
-- [ ] 12.3 RED+GREEN: session file discovered under a date-partitioned tree (Codex Session Discovery scenario)
-- [ ] 12.4 Capture and sanitize fixtures from `~/.codex/sessions/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q1 — commit to `test/fixtures/codex/`
-- [ ] 12.5 Fixture: `event_msg`/`item_completed` with `item.type:"McpToolCall"`, `server:"engram"`, `tool:"mem_save"` (true positive)
-- [ ] 12.6 Fixture: `response_item`/`custom_tool_call` with `name:"exec"` whose free-text `output` contains the literal string `mem_save` (false-positive trap — MUST NOT fire)
-- [ ] 12.7 RED: write failing detector tests against both fixtures
-- [ ] 12.8 GREEN: implement `src/adapters/driven/codex/memory-write-detector.ts`; explicitly excludes `custom_tool_call` family from all detection (memory_write, tool_start/tool_end)
-- [ ] 12.9 RED+GREEN: adapter startup performs zero writes under `~/.codex/` (Global No-Write Invariant, Codex)
+- [x] 12.1 Create `src/adapters/driven/codex/discover.ts` — glob `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (read-only), watch current day directory
+- [x] 12.2 Create `src/adapters/driven/codex/parse.ts` — parse `session_meta`, `event_msg`, `response_item`, `turn_context`, `world_state`, `compacted` record families
+- [x] 12.3 RED+GREEN: session file discovered under a date-partitioned tree (Codex Session Discovery scenario)
+- [x] 12.4 Capture and sanitize fixtures from `~/.codex/sessions/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q1 — commit to `test/fixtures/codex/`
+- [x] 12.5 Fixture: `event_msg`/`item_completed` with `item.type:"McpToolCall"`, `server:"engram"`, `tool:"mem_save"` (true positive)
+- [x] 12.6 Fixture: `response_item`/`custom_tool_call` with `name:"exec"` whose free-text `output` contains the literal string `mem_save` (false-positive trap — MUST NOT fire)
+- [x] 12.7 RED: write failing detector tests against both fixtures
+- [x] 12.8 GREEN: implement `src/adapters/driven/codex/memory-write-detector.ts`; explicitly excludes `custom_tool_call` family from all detection (memory_write, tool_start/tool_end)
+- [x] 12.9 RED+GREEN: adapter startup performs zero writes under `~/.codex/` (Global No-Write Invariant, Codex)
 
 ### Phase 13: Antigravity Adapter + Double-Decode Detector + Fixtures
 
