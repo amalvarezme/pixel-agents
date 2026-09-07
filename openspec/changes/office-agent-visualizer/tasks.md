@@ -1,5 +1,33 @@
 # Tasks: Office Agent Visualizer
 
+## Review Budget Policy (maintainer decision, supersedes the forecast below)
+
+**The review budget counts PRODUCTION lines only: 700 per work unit.** Test files
+(`*.test.ts`), fixtures under `test/`, and `package-lock.json` are excluded.
+
+Rationale: the first three work units each exceeded a budget that counted tests, while every one
+of them stayed well under 500 production lines.
+
+| Work unit | Production | Total excl. lockfile |
+|---|---|---|
+| PR1 `slice-1a-contracts-toolchain` | 279 | 622 |
+| PR2 `slice-1a-ports-spikes` | 497 | 875 |
+| PR3 `slice-1b-claude-adapter` | 490 | 1194 |
+
+A budget that charges tests rewards writing fewer of them, which is the opposite of what strict TDD
+is for in this change: the four `memory_write` detectors are the highest-value tests here, and each
+spec scenario mandates its own RED/GREEN pair. In PR3 alone, 490 lines are production and 704 are
+tests and fixtures — a healthy ratio, not bloat.
+
+The `gentle-ai sdd-attempt` ledger cannot express "production only", so its `--max-changed-lines`
+is set generously and acts as a safety net. The 700-production-line rule is enforced by measuring
+each work unit before opening its PR:
+
+```sh
+git diff --numstat <base>..<head> -- 'src/**' ':(exclude)src/**/*.test.ts' \
+  | awk '{a+=$1; d+=$2} END {print a+d}'
+```
+
 ## Review Workload Forecast
 
 | Field | Value |
