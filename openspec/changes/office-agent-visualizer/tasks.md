@@ -52,6 +52,19 @@ The runtime attempt ledger recorded 2698 changed lines for the first attempt bec
 maintainer with a 3000-line budget for this first unit to absorb the one-time lockfile, and 800 for
 every unit after it.
 
+Slice 1b was split the same way, before implementation started, once Phases 7-8 alone were
+estimated near the 400-450 line range for the whole slice (7-10) and the maintainer pre-approved a
+1000-line budget for the first slice-1b work unit to absorb strict-TDD test volume (discovery,
+tailing, parsing, correlation, and a false-positive-trap-driven detector each need dedicated
+RED/GREEN coverage per spec scenario):
+
+- **PR3 (`slice-1b-claude-adapter`, base: `slice-1a-ports-spikes`)** — Phases 7-8: Claude Code
+  adapter (discovery, tailing, parsing, parent/child correlation) and its `memory_write` detector
+  with sanitized fixtures. 1024 lines excluding `package-lock.json` (`chokidar` added as a
+  dependency), of which roughly 600 are tests. No PixiJS, SSE server, or UI code lands here.
+- **PR4 (base: PR3 branch)** — Phases 9-11: SSE server, minimal Pixi scene, atomic-design
+  components, and slice 1b verification — deliberately deferred, not dropped.
+
 ## Slice 1a — PR 1 (base: `main`) — Contracts & Toolchain (Phases 1-2)
 
 ### Phase 1: Toolchain Setup
@@ -100,27 +113,27 @@ every unit after it.
 
 ---
 
-## Slice 1b — PR 2 (base: PR1 branch) — Claude Code Adapter & Minimal Scene
+## Slice 1b — PR 3 (base: `slice-1a-ports-spikes`, split into two PRs; see Delivery Revision above) — Claude Code Adapter & Minimal Scene
 
 ### Phase 7: Claude Code Adapter — Discovery & Tailing
 
-- [ ] 7.1 Create `src/adapters/driven/claude-code/discover.ts` — glob `~/.claude/projects/*/*.jsonl` (read-only host path) plus `*/<sid>/subagents/agent-*.jsonl`; chokidar `add` for new files (Claude Code Session Discovery)
-- [ ] 7.2 Create `src/adapters/driven/claude-code/tail.ts` — `chokidar` watch → stat-based offset math: growth (read from offset), rotation/truncation (reset, `status(source_reset)`), no-op on equal size, partial trailing-line buffer never emitted
-- [ ] 7.3 RED+GREEN: temp-dir test — growth, rotation, truncation, partial-line-buffer cases, driving the read function directly (no chokidar)
-- [ ] 7.4 Create `src/adapters/driven/claude-code/parse.ts` — parse `assistant`/`user`/`system`/`tool_use`/`tool_result` records into `AgentEvent`
-- [ ] 7.5 Implement parent/child correlation via `toolUseResult.agentId` ↔ `agent-<agentId>.jsonl` filename; second independent edge via `<parent-session-id>/subagents/` directory name
-- [ ] 7.6 RED+GREEN: subagent correlates to parent via `agentId` alone, independent of `attributionAgent` (Requirement: Claude Code Session Discovery scenarios)
-- [ ] 7.7 RED+GREEN: missing `attributionAgent` still resolves a deterministic fallback label, correlation unaffected
-- [ ] 7.8 RED+GREEN: adapter startup performs zero writes under `~/.claude/` (Global No-Write Invariant, Claude Code)
+- [x] 7.1 Create `src/adapters/driven/claude-code/discover.ts` — glob `~/.claude/projects/*/*.jsonl` (read-only host path) plus `*/<sid>/subagents/agent-*.jsonl`; chokidar `add` for new files (Claude Code Session Discovery)
+- [x] 7.2 Create `src/adapters/driven/claude-code/tail.ts` — `chokidar` watch → stat-based offset math: growth (read from offset), rotation/truncation (reset, `status(source_reset)`), no-op on equal size, partial trailing-line buffer never emitted
+- [x] 7.3 RED+GREEN: temp-dir test — growth, rotation, truncation, partial-line-buffer cases, driving the read function directly (no chokidar)
+- [x] 7.4 Create `src/adapters/driven/claude-code/parse.ts` — parse `assistant`/`user`/`system`/`tool_use`/`tool_result` records into `AgentEvent`
+- [x] 7.5 Implement parent/child correlation via `toolUseResult.agentId` ↔ `agent-<agentId>.jsonl` filename; second independent edge via `<parent-session-id>/subagents/` directory name
+- [x] 7.6 RED+GREEN: subagent correlates to parent via `agentId` alone, independent of `attributionAgent` (Requirement: Claude Code Session Discovery scenarios)
+- [x] 7.7 RED+GREEN: missing `attributionAgent` still resolves a deterministic fallback label, correlation unaffected
+- [x] 7.8 RED+GREEN: adapter startup performs zero writes under `~/.claude/` (Global No-Write Invariant, Claude Code)
 
 ### Phase 8: Claude Code memory_write Detector + Fixtures
 
-- [ ] 8.1 Capture and sanitize fixtures from `~/.claude/projects/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q4/Q5: strip absolute home paths, private project names, unrelated content — commit to `test/fixtures/claude-code/`
-- [ ] 8.2 Fixture: `tool_use` with `name: "mcp__engram__mem_save"` (true positive)
-- [ ] 8.3 Fixture: `tool_use` with `name: "mcp__plugin_engram_engram__mem_save"` (true positive)
-- [ ] 8.4 Fixture: `tool_use` with `name: "mcp__engram__mem_search"` (false-positive trap — MUST NOT fire)
-- [ ] 8.5 RED: write failing detector tests against all three fixtures above
-- [ ] 8.6 GREEN: implement `src/adapters/driven/claude-code/memory-write-detector.ts` matching `mcp__*engram*__mem_save`; both fixtures 8.2/8.3 fire, 8.4 does not
+- [x] 8.1 Capture and sanitize fixtures from `~/.claude/projects/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q4/Q5: strip absolute home paths, private project names, unrelated content — commit to `test/fixtures/claude-code/`
+- [x] 8.2 Fixture: `tool_use` with `name: "mcp__engram__mem_save"` (true positive)
+- [x] 8.3 Fixture: `tool_use` with `name: "mcp__plugin_engram_engram__mem_save"` (true positive)
+- [x] 8.4 Fixture: `tool_use` with `name: "mcp__engram__mem_search"` (false-positive trap — MUST NOT fire)
+- [x] 8.5 RED: write failing detector tests against all three fixtures above
+- [x] 8.6 GREEN: implement `src/adapters/driven/claude-code/memory-write-detector.ts` matching `mcp__*engram*__mem_save`; both fixtures 8.2/8.3 fire, 8.4 does not
 
 ### Phase 9: SSE Server
 
