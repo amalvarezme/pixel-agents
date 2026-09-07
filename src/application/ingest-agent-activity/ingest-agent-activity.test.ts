@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FakeActivitySource } from '../../adapters/driven/fake/fake-activity-source';
 import { InMemoryCheckpointStore } from '../../adapters/driven/checkpoint/in-memory-checkpoint-store';
 import type { AgentEvent } from '../../domain/events/types';
+import type { ActivitySource } from '../../ports/activity-source.port';
 import { ingestAgentActivity } from './ingest-agent-activity';
 
 function event(id: number, sessionKey: string): AgentEvent {
@@ -54,5 +55,57 @@ describe('ingestAgentActivity', () => {
     });
 
     expect(publishedSecondRun).toEqual([]);
+  });
+
+  // browser-entrypoint work unit: a real live tailer's stream never completes on its own (it
+  // stays open waiting for the next file write), so the original sequential `for await` loop
+  // would block forever on the FIRST discovered session and never even open() a second one. A
+  // real multi-session composition root needs every discovered session ingested concurrently.
+  it('starts ingesting a later-discovered session without waiting for an earlier session\'s stream to complete', async () => {
+    const sessionA = { harness: 'claude-code' as const, sessionKey: 'claude-code:a', discoveredAt: 0 };
+    const sessionB = { harness: 'claude-code' as const, sessionKey: 'claude-code:b', discoveredAt: 1 };
+    const published: AgentEvent[] = [];
+    const checkpointStore = new InMemoryCheckpointStore();
+
+    const source: ActivitySource = {
+      harness: 'claude-code',
+      async probe() {
+        return { status: 'ready' };
+      },
+      async *discover() {
+        yield sessionA;
+        yield sessionB;
+      },
+      open(session) {
+        if (session.sessionKey === 'claude-code:a') {
+          return {
+            // Session A's stream deliberately never completes, simulating a live tail that is
+            // still waiting for the next file write.
+            events: (async function* () {
+              yield { event: event(1, 'claude-code:a'), checkpoint: { kind: 'seq', bySession: {} } };
+              await new Promise<void>(() => {});
+            })(),
+            stop(): void {},
+          };
+        }
+        return {
+          events: (async function* () {
+            yield { event: event(2, 'claude-code:b'), checkpoint: { kind: 'seq', bySession: {} } };
+          })(),
+          stop(): void {},
+        };
+      },
+      async close() {},
+    };
+
+    // Deliberately not awaited: with a live session A stream open forever, awaiting the full
+    // call would hang this test. The assertion instead proves session B was reached anyway.
+    void ingestAgentActivity({ source, publisher: { publish: (e) => published.push(e) }, checkpointStore });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(published.map((e) => e.sessionKey)).toEqual(
+      expect.arrayContaining(['claude-code:a', 'claude-code:b']),
+    );
   });
 });

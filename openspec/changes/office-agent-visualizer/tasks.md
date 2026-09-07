@@ -204,6 +204,74 @@ RED/GREEN coverage per spec scenario):
 
 ---
 
+## Work Unit: `browser-entrypoint` (approved addition, base: PR4 branch `slice-1b-sse-scene`)
+
+**Not part of the original slicing above.** Slice 1b (Phases 7-11) delivered a complete, tested
+engine with no body: 124 passing tests, an injectable `StreamConnection` interface exercised only
+with fakes, no real `EventSource`, no HTML entry point, no bundler. This work unit makes it
+actually runnable: `npm run dev` starts a server, watches real Claude Code sessions, and serves a
+browser page rendering them live over SSE. Approved as an out-of-plan addition; recorded here so
+`tasks.md` stays truthful about what shipped and when.
+
+### Phase 28: Real `StreamConnection` — Browser `EventSource`
+
+- [x] 28.1 Create `src/adapters/driving/browser/event-source-stream-connection.ts` — real `StreamConnection`/`StreamConnectionFactory` backed by an injectable `EventSourceLike`/`EventSourceFactory` seam
+- [x] 28.2 RED+GREEN: initial connect opens one `EventSource` with no `?lastEventId=`; a bare `message` frame, a named `snapshot` frame, and a named `snapshot_required` frame each project into the correct `StreamMessage`
+- [x] 28.3 RED+GREEN: `snapshot_required` forces an immediate reconnect with the tracked id dropped (server responds with a fresh `snapshot`, per `planReplay`'s "no id -> snapshot" rule)
+- [x] 28.4 RED+GREEN: reconnect after an error resumes via `?lastEventId=` (a query parameter, since a manually re-created `EventSource` cannot set the `Last-Event-ID` header itself) — `stream.ts`'s `parseLastEventId` extended to accept either the header or the query parameter, header wins if both present
+- [x] 28.5 RED+GREEN: exponential backoff 1s -> 2s -> 4s... capped at `maxBackoffMs`, full jitter (injectable `random`); resets to the minimum after a successful `onopen`; `close()` cancels any pending reconnect
+
+### Phase 29: Application Composition Root
+
+- [x] 29.1 Create `src/adapters/driven/claude-code/activity-source.ts` — `ClaudeCodeActivitySource implements ActivitySource`, composing `discover.ts`+`tail.ts`+`parse.ts` behind the one port via `shared/async-queue.ts`; `open()` emits one synthetic `session_start` first (no JSONL record spells that out, and without it a real session would never create a worker in `applyEventToOfficeState`)
+- [x] 29.2 RED+GREEN (integration, real temp dir): discover() finds an existing session; open() bootstrap-reads existing content then live-tails newly appended lines; discover+open+close never writes under the harness root
+- [x] 29.3 RED+GREEN: fix `ingestAgentActivity` to ingest every discovered session CONCURRENTLY instead of sequentially — a live tail stream never completes on its own, so the original `for await` loop blocked forever on the first session and never `open()`ed a second one
+- [x] 29.4 RED+GREEN: fix `FileCheckpointStore` to serialize concurrent `save()` calls (promise-chained queue) — discovered live against the real `~/.claude/projects/` tree (hundreds of concurrent sessions after 29.3) as a torn-write `SyntaxError` crashing the process; without serialization a concurrent save can also silently lose an unrelated session's checkpoint
+- [x] 29.5 Create `src/server.ts` — composition root wiring `ClaudeCodeActivitySource` -> `ingestAgentActivity` -> `SseEventHub` -> `createStreamServer`; binds `127.0.0.1` only; `CLAUDE_HOME` env var (default `~/.claude`) overrides the watched root; checkpoint file under this repo's own `.data/`, never under the watched tree
+
+### Phase 30: HTML Entry Point, Bundler, Real PixiJS Renderer
+
+- [x] 30.1 Create `src/ui/scene/pixi/pixi-office-renderer.ts` — `updateStage(stage, viewModel)` (testable core: clears + re-renders the frame, fake `StageLike` in tests) and `PixiOfficeRenderer.mount()` (real `Application`, real canvas — browser-only, not unit-tested)
+- [x] 30.2 RED+GREEN: `updateStage` clears the previous frame and adds one desk group per worker, against a fake `StageLike`, using the real (already-tested) `renderOfficeScene`
+- [x] 30.3 Create `src/ui/main.ts` — browser composition root: `EventSourceStreamConnection` (real `window.EventSource`) -> `OfficeContainer` -> `OfficeStage` -> `PixiOfficeRenderer` mounted to `#office`. Thin, untested glue — every piece it wires already has its own tests; verified only by loading the page
+- [x] 30.4 Create `index.html` + `vite.config.ts` (dev-server proxy of `/stream` to the backend port); add `vite` as a direct devDependency (already present transitively via Vitest) and `dev:server`/`dev:client`/`dev`/`build` scripts to `package.json`
+- [x] 30.5 Add `"DOM"` to `tsconfig.json`'s `lib` (needed for `EventSource`/`HTMLElement`/`Event` types used by the new browser-facing files)
+
+### Phase 31: Work Unit Verification
+
+- [x] 31.1 Run `npm test` — 148/148 passing (124 baseline + 24 new); `npm run typecheck` — 0 errors; `npm run lint:deps` — 0 violations
+- [x] 31.2 End-to-end smoke against a TEMP fixture tree: started the server pointed at a temp dir, appended JSONL lines for a session starting and a tool running, confirmed via `curl -N` that `/stream` emitted `session_start` (id 1) -> `tool_start` (id 2) -> `tool_end` (id 3) with monotonic ids
+- [x] 31.3 Manual smoke against the real `~/.claude/projects/` tree (read-only): server started cleanly, real sessions appeared in the SSE snapshot, ran ~65s including the tree's largest (854 MB) session; file count and mtime/size snapshot before/after identical (4655/4655) except two files attributable to processes this server does not touch (Claude Code's own `~/.claude/backups/` rotation timer, and this very agent's own live subagent transcript growing as this task was performed)
+- [x] 31.4 Write `README.md` at the repo root: what works today, what is explicitly not built yet, the one documented run command, architecture pointer, testing commands
+
+### Phase 32: Viewport Fit (browser verification follow-up)
+
+- [x] 32.1 RED+GREEN: `fitToViewport(w,h)` in `pixi-office-renderer.ts` — contain-fits the fixed
+  1920x1080 floor plan into the real viewport (uniform scale, centred letter/pillarboxing, 1:1
+  fallback on a degenerate zero-sized container)
+- [x] 32.2 Wire it into `PixiOfficeRenderer.mount` — fit once after mount, re-fit on every
+  `renderer` resize event. Before this, `resizeTo: container` sized the CANVAS but nothing mapped
+  scene units onto it, so the floor was drawn 1:1 in CSS pixels and any window other than exactly
+  1920x1080 pushed the desks off-centre and clipped most of the floor
+- [x] 32.3 Browser verification (Chrome DevTools, orchestrator — the follow-up Phase 31 left open):
+  page loads with no console errors, two fixture sessions render as centred desks, a third `.jsonl`
+  appended live appears as a new desk with no reload and the row re-centres
+- [x] 32.4 Add README "Verifying the scene renders" section (the renderer's file header already
+  pointed at it; it did not exist)
+
+**Review budget**: 612 production lines (`git diff --numstat 7fbfaae..HEAD -- 'src/**' ':(exclude)src/**/*.test.ts'`), within the 700-line work-unit budget.
+
+**What is test-covered vs. manually-verified only**: reconnect/backoff/resume/snapshot projection
+(`EventSourceStreamConnection`), the Claude Code `ActivitySource` composition (real temp-dir
+integration tests), the ingestion-concurrency fix, the checkpoint-store concurrency fix, and the
+PixiJS stage-update logic (`updateStage`) are all unit/integration tested. Mounting a real PixiJS
+`Application` to a real `<canvas>` (`PixiOfficeRenderer.mount`) and `src/ui/main.ts`/`src/server.ts`
+themselves (thin composition-root glue) are verified only by the manual runs recorded in 31.2/31.3
+— this agent has no browser and cannot confirm the page visually renders; that is the orchestrator's
+follow-up check.
+
+---
+
 ## Slice 2 — PR 3 (base: PR2 branch) — Codex + Antigravity (Seam Validation)
 
 ### Phase 12: Codex Adapter + Detector + Fixtures

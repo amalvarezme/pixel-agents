@@ -69,4 +69,25 @@ describe('FileCheckpointStore', () => {
 
     expect(await store.load('claude-code:never')).toBeNull();
   });
+
+  // browser-entrypoint work unit: `ingestAgentActivity` now ingests every discovered session
+  // CONCURRENTLY (see its own concurrency fix). Against a real ~/.claude/projects tree with
+  // hundreds of sessions, that means hundreds of concurrent `save()` calls against the SAME
+  // checkpoint file — a read-then-write with no serialization corrupts the file the moment two
+  // writes interleave (reproduced live: `SyntaxError: Unexpected end of JSON input` from a torn
+  // write, crashing the whole process). Every save must land, none may be lost or corrupt the file.
+  it('never corrupts the file under many concurrent save() calls for DIFFERENT sessions', async () => {
+    const store = new FileCheckpointStore(filePath);
+    const sessionCount = 50;
+
+    await Promise.all(
+      Array.from({ length: sessionCount }, (_, i) =>
+        store.save(`claude-code:s${i}`, { kind: 'byte-offset', offset: i, size: i, inode: i }),
+      ),
+    );
+
+    for (let i = 0; i < sessionCount; i++) {
+      expect(await store.load(`claude-code:s${i}`)).toEqual({ kind: 'byte-offset', offset: i, size: i, inode: i });
+    }
+  });
 });
