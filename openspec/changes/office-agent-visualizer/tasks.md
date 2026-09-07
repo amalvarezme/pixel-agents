@@ -88,9 +88,9 @@ every unit after it.
 
 ### Phase 5: Seam Validation — Fake Adapter + SSE Stub
 
-- [ ] 5.1 Implement one fake `ActivitySource` (in-memory, no I/O) proving `discover()`/`open()`/`close()` end-to-end
-- [ ] 5.2 Create `src/application/ingest-agent-activity/` use case wiring the fake source to the event bus
-- [ ] 5.3 Create a stub HTTP endpoint (no real SSE yet) proving the port → application → bus seam compiles and runs
+- [x] 5.1 Implement one fake `ActivitySource` (in-memory, no I/O) proving `discover()`/`open()`/`close()` end-to-end
+- [x] 5.2 Create `src/application/ingest-agent-activity/` use case wiring the fake source to the event bus
+- [x] 5.3 Create a stub HTTP endpoint (no real SSE yet) proving the port → application → bus seam compiles and runs
 
 ### Phase 6: Slice 1a Verification
 
