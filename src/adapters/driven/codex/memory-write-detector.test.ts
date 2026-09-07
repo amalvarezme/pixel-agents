@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseCodexLine } from './parse';
+import { isCodexCustomToolCall, parseCodexLine } from './parse';
 import { CodexMemoryWriteDetector } from './memory-write-detector';
 
 const FIXTURES_DIR = join(import.meta.dirname, '..', '..', '..', '..', 'test', 'fixtures', 'codex');
@@ -35,6 +35,34 @@ describe('CodexMemoryWriteDetector', () => {
     const signal = detector.detect(record);
 
     expect(signal).toBeNull();
+  });
+
+  // The 12.6 fixture proves the REAL exec record is rejected, but it is rejected for an incidental
+  // reason: its payload carries no `item` at all, so it dies on the `item_completed` check long
+  // before the record-family check matters. That leaves the actual exclusion — "only `event_msg`
+  // records are ever inspected" — unpinned: widening the family gate to admit `response_item` kept
+  // the whole Codex suite green. This test pins it with the adversarial record the fixture cannot
+  // express: a `response_item` carrying a fully well-formed engram/mem_save McpToolCall payload.
+  // Only the record-family check can reject it, so this test fails the moment that check weakens.
+  it('does NOT fire on a response_item carrying an otherwise-matching engram/mem_save McpToolCall (pins the record-family exclusion itself)', () => {
+    const record = parseCodexLine(
+      '{"type":"response_item","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"engram","tool":"mem_save","arguments":{"title":"should never be detected"}}}}',
+    )!;
+
+    // Sanity: the same payload under `event_msg` DOES fire, so the only difference under test is
+    // the record family — otherwise this test could pass for an unrelated reason.
+    const asEventMsg = parseCodexLine(
+      '{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"engram","tool":"mem_save","arguments":{"title":"should never be detected"}}}}',
+    )!;
+    expect(detector.detect(asEventMsg)).not.toBeNull();
+
+    expect(detector.detect(record)).toBeNull();
+  });
+
+  it('classifies the 12.6 exec fixture as the custom_tool_call family that is excluded from detection', async () => {
+    const record = await loadFixtureRecord('custom-tool-call-exec-false-positive.jsonl');
+    expect(isCodexCustomToolCall(record)).toBe(true);
+    expect(detector.detect(record)).toBeNull();
   });
 
   it('does not fire on an unrelated McpToolCall (different server/tool)', () => {
