@@ -1,0 +1,168 @@
+/**
+ * The real SSE server (tasks.md Phase 9, design.md D2: "SSE with snapshot-or-replay resume, not
+ * WebSocket"). Supersedes the Phase 5 seam-validation stub (`stub-stream.ts`).
+ *
+ * `GET /stream` as `text/event-stream`, one monotonic `id:` per event (ids are allocated
+ * upstream by the ingestion adapters/application, never here — this hub is a multiplexer, not an
+ * id source), and a 15s heartbeat comment so idle proxies don't time the connection out.
+ *
+ * Resume semantics on `Last-Event-ID`: replay `(k, now]` when `k` is still resolvable inside the
+ * ring buffer (`ring-buffer.ts`), otherwise send one `snapshot` frame — the current
+ * `OfficeSnapshot` projection (`domain/office/office.ts`'s `applyEventToOfficeState`), not
+ * history. Backpressure per client is delegated to `client-queue.ts`; a desynced client receives
+ * one `snapshot_required` frame instead of a silently-corrupted partial backlog.
+ */
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { AgentEvent } from '../../../domain/events/types';
+import type { EventPublisher } from '../../../ports/event-publisher.port';
+import { applyEventToOfficeState, createOfficeState, type OfficeState, type Worker } from '../../../domain/office/office';
+import { appendToRing, createRingBuffer, planReplay, RING_CAPACITY, type RingBuffer } from './ring-buffer';
+import { acknowledgeDesync, createClientQueueState, enqueueForClient, type ClientQueueState } from './client-queue';
+
+export const HEARTBEAT_INTERVAL_MS = 15000;
+const HEARTBEAT_COMMENT = ': heartbeat\n\n';
+
+export interface OfficeSnapshot {
+  generatedAt: number;
+  workers: Worker[];
+}
+
+function buildSnapshot(state: OfficeState): OfficeSnapshot {
+  return { generatedAt: Date.now(), workers: [...state.workers.values()] };
+}
+
+function formatEventFrame(event: AgentEvent): string {
+  return `id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+function formatNamedFrame(eventName: string, data: unknown): string {
+  return `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+/** Owns one client's bounded queue and its underlying `ServerResponse` writability. */
+class SseClient {
+  private queueState: ClientQueueState = createClientQueueState();
+  private writable = true;
+
+  constructor(private readonly res: ServerResponse) {
+    res.on('drain', () => {
+      this.writable = true;
+      this.flush();
+    });
+  }
+
+  sendSnapshot(snapshot: OfficeSnapshot): void {
+    this.res.write(formatNamedFrame('snapshot', snapshot));
+  }
+
+  deliver(event: AgentEvent): void {
+    this.queueState = enqueueForClient(this.queueState, event);
+    this.flush();
+  }
+
+  heartbeat(): void {
+    this.res.write(HEARTBEAT_COMMENT);
+  }
+
+  private flush(): void {
+    if (this.queueState.desynced) {
+      this.res.write(formatNamedFrame('snapshot_required', {}));
+      this.queueState = acknowledgeDesync(this.queueState);
+      return;
+    }
+    while (this.writable && this.queueState.queue.length > 0) {
+      const [next, ...rest] = this.queueState.queue;
+      this.queueState = { ...this.queueState, queue: rest };
+      if (next) this.writable = this.res.write(formatEventFrame(next));
+    }
+  }
+}
+
+export interface SseEventHubOptions {
+  ringCapacity?: number;
+  heartbeatIntervalMs?: number;
+}
+
+/**
+ * Multiplexes one `EventPublisher.publish` stream to every connected SSE client, each with its
+ * own bounded delivery queue, backed by one shared ring buffer for resume.
+ */
+export class SseEventHub implements EventPublisher {
+  private ring: RingBuffer;
+  private officeState: OfficeState = createOfficeState();
+  private readonly clients = new Set<SseClient>();
+  private readonly heartbeatIntervalMs: number;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+
+  constructor(options: SseEventHubOptions = {}) {
+    this.ring = createRingBuffer(options.ringCapacity ?? RING_CAPACITY);
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS;
+  }
+
+  publish(event: AgentEvent): void {
+    this.ring = appendToRing(this.ring, event);
+    this.officeState = applyEventToOfficeState(this.officeState, event);
+    for (const client of this.clients) client.deliver(event);
+  }
+
+  handleStreamRequest(req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+
+    const client = new SseClient(res);
+    this.clients.add(client);
+    this.ensureHeartbeat();
+
+    const lastEventId = parseLastEventId(req);
+    const plan = planReplay(this.ring, lastEventId);
+    if (plan.status === 'snapshot') {
+      client.sendSnapshot(buildSnapshot(this.officeState));
+    } else {
+      for (const event of plan.events) client.deliver(event);
+    }
+
+    req.on('close', () => {
+      this.clients.delete(client);
+      if (this.clients.size === 0) this.stopHeartbeat();
+    });
+  }
+
+  clientCount(): number {
+    return this.clients.size;
+  }
+
+  private ensureHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+    this.heartbeatTimer = setInterval(() => {
+      for (const client of this.clients) client.heartbeat();
+    }, this.heartbeatIntervalMs);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
+  }
+}
+
+function parseLastEventId(req: IncomingMessage): number | null {
+  const header = req.headers['last-event-id'];
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function createStreamServer(hub: SseEventHub): Server {
+  return createServer((req, res) => {
+    if (req.url !== '/stream') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    hub.handleStreamRequest(req, res);
+  });
+}
