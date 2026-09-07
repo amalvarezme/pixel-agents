@@ -7,7 +7,7 @@
 | Estimated changed lines | ~2100–2500 total, 300–480 per slice |
 | 400-line budget risk | High |
 | Chained PRs recommended | Yes |
-| Suggested split | PR1 (1a) → PR2 (1b) → PR3 (2) → PR4 (3) → PR5 (4) → PR6 (5) |
+| Suggested split | PR1 (1a-i) → PR2 (1a-ii) → PR3 (1b) → PR4 (2) → PR5 (3) → PR6 (4) → PR7 (5) |
 | Delivery strategy | ask-on-risk |
 | Chain strategy | stacked-to-main |
 
@@ -26,16 +26,33 @@ completes first; the only host-affecting slice lands last against a fully observ
 
 | Unit | Goal | PR | Est. lines | Focused test command | Runtime harness | Rollback boundary |
 |---|---|---|---|---|---|---|
-| 1a | Toolchain + domain contracts + fake adapter seam | PR1←main | 300–350 | `npm test -- test/domain test/ports` | N/A — pure contracts, no I/O yet | delete `src/domain`, `src/ports`, `package.json` |
-| 1b | Claude Code adapter + minimal scene | PR2←1a | 400–450 | `npm test -- test/adapters/claude-code test/ui` | Append fixture lines to a temp `.jsonl`, tail via adapter, view scene at `/` | disable Claude adapter via config; scene falls back to empty state |
-| 2 | Codex + Antigravity adapters | PR3←1b | 350–400 | `npm test -- test/adapters/codex test/adapters/antigravity` | Fixture playback for both harnesses | disable each adapter independently via config |
-| 3 | OpenCode read-only SQLite adapter | PR4←2 | 380–450 | `npm test -- test/adapters/opencode` | Query synthetic `opencode.db` copy; never touch live db | disable OpenCode adapter via config |
-| 4 | memory-write archive animation | PR5←3 | 300–350 | `npm test -- test/ui/scene` | Replay recorded `memory_write` fixtures through SSE, watch scene | revert `ui/scene` animation files; desks/captions still render |
-| 5 | Zero-injection launcher | PR6←4 | 400–480 | `npm test -- test/launcher` | Launch `claude --help`-equivalent via spawn fake, then one manual real launch | remove `POST /launch` route + launcher UI control |
+| 1a-i | Toolchain + domain contracts | PR1←main | 578 actual | `npm test` | N/A — pure domain, no I/O yet | delete `src/domain`, `package.json` |
+| 1a-ii | Ports, checkpoint store, risk spikes, seam validation | PR2←1a-i | 400–600 | `npm test -- src/ports test/spikes` | Spike probes only, both out-of-process | delete `src/ports`, `src/adapters/driven/checkpoint`, spikes |
+| 1b | Claude Code adapter + minimal scene | PR3←1a-ii | 400–450 | `npm test -- test/adapters/claude-code test/ui` | Append fixture lines to a temp `.jsonl`, tail via adapter, view scene at `/` | disable Claude adapter via config; scene falls back to empty state |
+| 2 | Codex + Antigravity adapters | PR4←1b | 350–400 | `npm test -- test/adapters/codex test/adapters/antigravity` | Fixture playback for both harnesses | disable each adapter independently via config |
+| 3 | OpenCode read-only SQLite adapter | PR5←2 | 380–450 | `npm test -- test/adapters/opencode` | Query synthetic `opencode.db` copy; never touch live db | disable OpenCode adapter via config |
+| 4 | memory-write archive animation | PR6←3 | 300–350 | `npm test -- test/ui/scene` | Replay recorded `memory_write` fixtures through SSE, watch scene | revert `ui/scene` animation files; desks/captions still render |
+| 5 | Zero-injection launcher | PR7←4 | 400–480 | `npm test -- test/launcher` | Launch `claude --help`-equivalent via spawn fake, then one manual real launch | remove `POST /launch` route + launcher UI control |
 
 ---
 
-## Slice 1a — PR 1 (base: `main`) — Contracts & Toolchain
+## Delivery Revision (maintainer decision)
+
+Slice 1a was split into two PRs after Phases 1-2 alone produced 578 reviewable lines against a
+300-350 estimate. The estimate was wrong; the work was not reduced, and nothing was compressed to
+fit a number.
+
+- **PR1 (`slice-1a-contracts-toolchain`)** — Phases 1-2: toolchain and domain contracts. 578 lines
+  excluding `package-lock.json`, of which roughly 250 are tests and 52 are SDD artifact churn.
+- **PR2 (`slice-1a-ports-spikes`)** — Phases 3-6: ports, checkpoint store, both risk-retirement
+  spikes, seam validation, and slice verification.
+
+The runtime attempt ledger recorded 2698 changed lines for the first attempt because it counts
+`package-lock.json` (~2120 lines), which carries no review surface. The objective was reset by the
+maintainer with a 3000-line budget for this first unit to absorb the one-time lockfile, and 800 for
+every unit after it.
+
+## Slice 1a — PR 1 (base: `main`) — Contracts & Toolchain (Phases 1-2)
 
 ### Phase 1: Toolchain Setup
 
