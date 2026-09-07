@@ -39,22 +39,22 @@ completes first; the only host-affecting slice lands last against a fully observ
 
 ### Phase 1: Toolchain Setup
 
-- [ ] 1.1 Create `package.json`, `tsconfig.json`, `vitest.config.ts` with Node/TS + Vitest (satisfies design's Runner decision)
-- [ ] 1.2 Create `.dependency-cruiser.cjs` rule forbidding `domain/` from importing `adapters/`, `ui/`, or third-party runtime packages
-- [ ] 1.3 Set `testing.test_command: "npm test"` in `openspec/config.yaml`; add `npm run test:watch` and `npm run typecheck` scripts to `package.json` — this unblocks re-resolving `strict_tdd`
-- [ ] 1.4 RED: add a `dependency-cruiser` test asserting a deliberate `domain → adapters` import fails the build
-- [ ] 1.5 GREEN: run `npx dependency-cruiser` in CI script; confirm the rule is enforced (Contract: Dependency direction)
+- [x] 1.1 Create `package.json`, `tsconfig.json`, `vitest.config.ts` with Node/TS + Vitest (satisfies design's Runner decision)
+- [x] 1.2 Create `.dependency-cruiser.cjs` rule forbidding `domain/` from importing `adapters/`, `ui/`, or third-party runtime packages
+- [x] 1.3 Set `testing.test_command: "npm test"` in `openspec/config.yaml`; add `npm run test:watch` and `npm run typecheck` scripts to `package.json` — this unblocks re-resolving `strict_tdd`
+- [x] 1.4 RED: add a `dependency-cruiser` test asserting a deliberate `domain → adapters` import fails the build
+- [x] 1.5 GREEN: run `npx dependency-cruiser` in CI script; confirm the rule is enforced (Contract: Dependency direction)
 
 ### Phase 2: Domain — Events, Agents, Office
 
-- [ ] 2.1 Create `src/domain/events/` — `AgentEvent` union (11 canonical types: 8 prior-art + `memory_write`, `launch_requested`, `launch_started`), factories, envelope fields (harness, sessionKey, id, at, label)
-- [ ] 2.2 RED: test asserting no 12th event type can be constructed (Canonical Event Type Set)
-- [ ] 2.3 RED: test asserting `launch_requested`/`launch_started` are excluded from any log-parse factory (Event Origination Provenance)
-- [ ] 2.4 Create `src/domain/agents/` — `AgentId`, `AgentNode`, `AgentTree` (`Map<sessionKey, node>`), `pendingChildren` map, `orphanGrace` promotion
-- [ ] 2.5 RED+GREEN: unit test — child arriving before parent resolves on parent arrival; promotes to root after `orphanGrace` (5s, fake clock); no event ever dropped
-- [ ] 2.6 Create `src/domain/sessions/` — `SessionKey`, lifecycle (`active|idle|ended`), `idleTimeout` (10m) / `evictTimeout` (60m) transitions
-- [ ] 2.7 RED+GREEN: fake-clock test for idle-then-evict transition emitting synthetic `session_end(reason:'timeout')`
-- [ ] 2.8 Create `src/domain/office/` — `Office` aggregate skeleton (workers, lanes, archive, carry queue types only; behavior lands in slice 4)
+- [x] 2.1 Create `src/domain/events/` — `AgentEvent` union (11 canonical types: 8 prior-art + `memory_write`, `launch_requested`, `launch_started`), factories, envelope fields (harness, sessionKey, id, at, label)
+- [x] 2.2 RED: test asserting no 12th event type can be constructed (Canonical Event Type Set)
+- [x] 2.3 RED: test asserting `launch_requested`/`launch_started` are excluded from any log-parse factory (Event Origination Provenance)
+- [x] 2.4 Create `src/domain/agents/` — `AgentId`, `AgentNode`, `AgentTree` (`Map<sessionKey, node>`), `pendingChildren` map, `orphanGrace` promotion
+- [x] 2.5 RED+GREEN: unit test — child arriving before parent resolves on parent arrival; promotes to root after `orphanGrace` (5s, fake clock); no event ever dropped
+- [x] 2.6 Create `src/domain/sessions/` — `SessionKey`, lifecycle (`active|idle|ended`), `idleTimeout` (10m) / `evictTimeout` (60m) transitions
+- [x] 2.7 RED+GREEN: fake-clock test for idle-then-evict transition emitting synthetic `session_end(reason:'timeout')`
+- [x] 2.8 Create `src/domain/office/` — `Office` aggregate skeleton (workers, lanes, archive, carry queue types only; behavior lands in slice 4)
 
 ### Phase 3: Ports & Checkpoint Store
 
