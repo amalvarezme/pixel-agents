@@ -1,0 +1,18 @@
+{
+  "id": "prt_synth0002ctx",
+  "message_id": "msg_synth0002",
+  "session_id": "ses_synth0001",
+  "data": {
+    "type": "tool",
+    "tool": "context7_query-docs",
+    "callID": "call_synth0002",
+    "state": {
+      "status": "completed",
+      "input": { "libraryId": "/vercel/next.js", "topic": "routing" },
+      "output": "{\"docs\":\"...\"}",
+      "title": "",
+      "time": { "start": 1783042240000, "end": 1783042240050 }
+    },
+    "metadata": {}
+  }
+}

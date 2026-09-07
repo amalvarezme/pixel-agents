@@ -1,0 +1,23 @@
+{
+  "id": "prt_synth0001mem",
+  "message_id": "msg_synth0001",
+  "session_id": "ses_synth0001",
+  "data": {
+    "type": "tool",
+    "tool": "engram_mem_save",
+    "callID": "call_synth0001",
+    "state": {
+      "status": "completed",
+      "input": {
+        "project": "example-project",
+        "title": "Synthetic fixture: verified OpenCode Engram wiring",
+        "type": "discovery",
+        "content": "**What**: example.\n**Why**: example.\n**Where**: example.\n**Learned**: example."
+      },
+      "output": "{\"id\":1,\"result\":\"Memory saved\"}",
+      "title": "",
+      "time": { "start": 1783042239442, "end": 1783042239485 }
+    },
+    "metadata": { "openai": { "itemId": "fc_synth0001" } }
+  }
+}
