@@ -354,10 +354,10 @@ follow-up check.
 
 ### Phase 20: Carry State Machine & Archive Slots
 
-- [ ] 20.1 Implement `src/domain/office/` carry queue: per-worker FIFO, at most one document held, `maxQueued=5` collapses remainder into one `×N` batch carry
-- [ ] 20.2 RED+GREEN: fake-clock test — 6 queued `memory_write` events for one worker collapse to 1 held + 1 batch(`×5`)
-- [ ] 20.3 Implement 4 archive docking slots, round-robin assignment; 5th concurrent worker waits in an adjacent queue line
-- [ ] 20.4 RED+GREEN: cross-worker concurrency test — 5 simultaneous `memory_write` events, 4 dock immediately, 1 queues
+- [x] 20.1 Implement `src/domain/office/` carry queue: per-worker FIFO, at most one document held, `maxQueued=5` collapses remainder into one `×N` batch carry
+- [x] 20.2 RED+GREEN: fake-clock test — 6 queued `memory_write` events for one worker collapse to 1 held + 1 batch(`×5`)
+- [x] 20.3 Implement 4 archive docking slots, round-robin assignment; 5th concurrent worker waits in an adjacent queue line
+- [x] 20.4 RED+GREEN: cross-worker concurrency test — 5 simultaneous `memory_write` events, 4 dock immediately, 1 queues
 
 ### Phase 21: Path Waypoints, Animation Wiring, Caption Normalization
 

@@ -13,6 +13,17 @@
  * client projection (tasks.md 10.4) — one canonical fold over the normalized event stream.
  */
 import type { AgentEvent, HarnessId } from '../events/types';
+import {
+  completeHeldCarryJob,
+  createCarryQueueState,
+  enqueueCarryJob,
+  type CarryQueueState,
+} from './carry-queue';
+import { createArchiveDockState, releaseArchiveDock, requestArchiveDock, type ArchiveDockState } from './archive-dock';
+
+export type { CarryJob, CarryQueueState } from './carry-queue';
+export type { ArchiveSlot, ArchiveDockState, ArchiveWaitEntry } from './archive-dock';
+export { ARCHIVE_SLOT_COUNT } from './archive-dock';
 
 export type WorkerActivity = 'working' | 'idle';
 
@@ -30,32 +41,18 @@ export interface Worker {
   parentSessionKey: string | null;
 }
 
-export interface ArchiveSlot {
-  slotIndex: number;
-  occupiedBySessionKey: string | null;
-}
-
-export interface CarryJob {
-  sessionKey: string;
-  queuedAt: number;
-}
-
 export interface OfficeState {
   workers: Map<string, Worker>;
-  archiveSlots: ArchiveSlot[];
-  /** Per-worker FIFO carry queue; slice 4 owns collapsing this beyond `maxQueued`. */
-  carryQueues: Map<string, CarryJob[]>;
+  /** The 4 physical archive docking slots plus their wait line (`archive-dock.ts`). */
+  archive: ArchiveDockState;
+  /** Per-worker FIFO carry queue plus batch collapse (`carry-queue.ts`). */
+  carryQueues: Map<string, CarryQueueState>;
 }
 
-export const ARCHIVE_SLOT_COUNT = 4;
-
-export function createOfficeState(archiveSlotCount = ARCHIVE_SLOT_COUNT): OfficeState {
+export function createOfficeState(archiveSlotCount?: number): OfficeState {
   return {
     workers: new Map(),
-    archiveSlots: Array.from({ length: archiveSlotCount }, (_, slotIndex) => ({
-      slotIndex,
-      occupiedBySessionKey: null,
-    })),
+    archive: createArchiveDockState(archiveSlotCount),
     carryQueues: new Map(),
   };
 }
@@ -105,9 +102,54 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         parentSessionKey: event.correlationId ?? null,
       });
 
+    case 'memory_write':
+      return applyMemoryWriteToOfficeState(state, event.sessionKey, event.at);
+
     default:
       if (!event.label) return state;
       if (!state.workers.has(event.sessionKey)) return state;
       return upsertWorker(state, event.sessionKey, { harness: event.harness, label: event.label });
   }
+}
+
+/**
+ * memory_write drives the carry queue AND, only on the FIRST held document for this worker (it
+ * was idle immediately before this event), requests an archive dock (design.md: "the archive has
+ * 4 docking slots assigned round-robin"). A `memory_write` for a session with no known worker is
+ * a no-op — the animation has nothing to animate (spec: "whose worker is currently at its default
+ * position" assumes an existing worker). Purely synchronous: this is the whole "ingestion never
+ * blocks" guarantee — it never depends on `completeArchiveTripForWorker` (the animation-
+ * completion side, driven by the UI's own clock) being called.
+ */
+function applyMemoryWriteToOfficeState(state: OfficeState, sessionKey: string, now: number): OfficeState {
+  if (!state.workers.has(sessionKey)) return state;
+
+  const existingQueue = state.carryQueues.get(sessionKey) ?? createCarryQueueState();
+  const wasIdle = existingQueue.held === null;
+  const nextQueue = enqueueCarryJob(existingQueue, sessionKey, now);
+
+  const carryQueues = new Map(state.carryQueues);
+  carryQueues.set(sessionKey, nextQueue);
+
+  const archive = wasIdle ? requestArchiveDock(state.archive, sessionKey, now) : state.archive;
+
+  return { ...state, carryQueues, archive };
+}
+
+/**
+ * Called by the UI once the archive-trip ANIMATION finishes (not from event ingestion): advances
+ * the worker's carry queue and, only once nothing is left to carry, releases its archive dock so
+ * the next waiting worker (if any) can be promoted into that exact slot.
+ */
+export function completeArchiveTripForWorker(state: OfficeState, sessionKey: string, now: number): OfficeState {
+  const queue = state.carryQueues.get(sessionKey);
+  if (!queue || queue.held === null) return state;
+
+  const nextQueue = completeHeldCarryJob(queue);
+  const carryQueues = new Map(state.carryQueues);
+  carryQueues.set(sessionKey, nextQueue);
+
+  const archive = nextQueue.held === null ? releaseArchiveDock(state.archive, sessionKey) : state.archive;
+
+  return { ...state, carryQueues, archive };
 }
