@@ -288,18 +288,18 @@ follow-up check.
 
 ### Phase 13: Antigravity Adapter + Double-Decode Detector + Fixtures
 
-- [ ] 13.1 Create `src/adapters/driven/antigravity/discover.ts` — CLI root `~/.gemini/antigravity-cli/brain/<uuid>/.system_generated/logs/transcript.jsonl` (read-only); index `transcript_full.jsonl` as candidate but tail `transcript.jsonl` only; IDE root `~/.gemini/antigravity-ide/brain/<uuid>/...` (read-only) treated as separate, launch-ineligible
-- [ ] 13.2 RED+GREEN: CLI conversation with both `transcript.jsonl` and `transcript_full.jsonl` records both as candidates, tails only the former
-- [ ] 13.3 RED+GREEN: IDE session surfaces read-only with no launch affordance (Antigravity IDE Root Separation)
-- [ ] 13.4 Implement Antigravity config read for `~/.gemini/config/mcp_config.json` (read-only) or workspace `.agents/mcp_config.json` (read-only); explicitly never read the stale `~/.gemini/antigravity-cli/mcp_config.json`
-- [ ] 13.5 RED+GREEN: adapter never opens the stale config path even when present
-- [ ] 13.6 Capture and sanitize fixtures from Antigravity CLI/IDE transcripts (read-only) per `research-local-evidence.md` (read-only) Addendum — commit to `test/fixtures/antigravity/`
-- [ ] 13.7 Fixture: `tool_calls[]` entry `{"name":"call_mcp_tool","args":{"ServerName":"\"engram\"","ToolName":"\"mem_save\"","Arguments":"<json-string>"}}` (true positive)
-- [ ] 13.8 Fixture: `call_mcp_tool` with `ServerName:"\"codegraph\""` (false-positive trap — MUST NOT fire)
-- [ ] 13.9 RED: write a test asserting a **naive equality check** (`args.ServerName === "engram"`, no de-quoting) FAILS against fixture 13.7 — proves de-quoting is mandatory
-- [ ] 13.10 RED: write failing detector tests against fixtures 13.7/13.8 requiring de-quote + second-parse of `Arguments`
-- [ ] 13.11 GREEN: implement `src/adapters/driven/antigravity/memory-write-detector.ts` — strip one quote layer from `ServerName`/`ToolName` before compare, JSON-parse `Arguments` as a string
-- [ ] 13.12 RED+GREEN: adapter startup performs zero writes under `~/.gemini/` (Global No-Write Invariant, Antigravity)
+- [x] 13.1 Create `src/adapters/driven/antigravity/discover.ts` — CLI root `~/.gemini/antigravity-cli/brain/<uuid>/.system_generated/logs/transcript.jsonl` (read-only); index `transcript_full.jsonl` as candidate but tail `transcript.jsonl` only; IDE root `~/.gemini/antigravity-ide/brain/<uuid>/...` (read-only) treated as separate, launch-ineligible
+- [x] 13.2 RED+GREEN: CLI conversation with both `transcript.jsonl` and `transcript_full.jsonl` records both as candidates, tails only the former
+- [x] 13.3 RED+GREEN: IDE session surfaces read-only with no launch affordance (Antigravity IDE Root Separation)
+- [x] 13.4 Implement Antigravity config read for `~/.gemini/config/mcp_config.json` (read-only) or workspace `.agents/mcp_config.json` (read-only); explicitly never read the stale `~/.gemini/antigravity-cli/mcp_config.json`
+- [x] 13.5 RED+GREEN: adapter never opens the stale config path even when present
+- [x] 13.6 Capture and sanitize fixtures from Antigravity CLI/IDE transcripts (read-only) per `research-local-evidence.md` (read-only) Addendum — commit to `test/fixtures/antigravity/`
+- [x] 13.7 Fixture: `tool_calls[]` entry `{"name":"call_mcp_tool","args":{"ServerName":"\"engram\"","ToolName":"\"mem_save\"","Arguments":"<json-string>"}}` (true positive)
+- [x] 13.8 Fixture: `call_mcp_tool` with `ServerName:"\"codegraph\""` (false-positive trap — MUST NOT fire)
+- [x] 13.9 RED: write a test asserting a **naive equality check** (`args.ServerName === "engram"`, no de-quoting) FAILS against fixture 13.7 — proves de-quoting is mandatory
+- [x] 13.10 RED: write failing detector tests against fixtures 13.7/13.8 requiring de-quote + second-parse of `Arguments`
+- [x] 13.11 GREEN: implement `src/adapters/driven/antigravity/memory-write-detector.ts` — strip one quote layer from `ServerName`/`ToolName` before compare, JSON-parse `Arguments` as a string
+- [x] 13.12 RED+GREEN: adapter startup performs zero writes under `~/.gemini/` (Global No-Write Invariant, Antigravity)
 
 ### Phase 14: Multi-Agent Scene Updates
 
