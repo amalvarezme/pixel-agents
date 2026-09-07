@@ -11,19 +11,17 @@ context: |
 strict_tdd: false
 strict_tdd_marker: true
 strict_tdd_note: >
-  Global session config requests strict_tdd: true, but zero projects are discovered
-  and no workspace-level test command exists yet (greenfield, no toolchain selected).
-  Per sdd-init decision gates this fails closed to strict_tdd: false until a stack is
-  chosen and a workspace-wide test command is defined. Re-run sdd-init (or update this
-  file) once the toolchain is picked.
+  Slice 1a of office-agent-visualizer picked the toolchain (Node/TypeScript + Vitest)
+  and set testing.test_command below. strict_tdd itself stays false pending an explicit
+  sdd-init re-run to flip it to true now that a workspace-wide test command exists.
 
 testing:
-  projects: []
-  test_command: null
+  projects: ["office-agent-visualizer"]
+  test_command: "npm test"
   notes: >
-    Unresolved. No project has been discovered under the workspace root; test_command
-    cannot be set until a stack is chosen (e.g. Node/TS, Go, Rust, Python) for the
-    office visualizer.
+    Node/TypeScript + Vitest, selected in slice 1a (office-agent-visualizer). Run
+    `npm run typecheck` for `tsc --noEmit` and `npm run test:watch` for the Vitest
+    watch runner.
 
 rules:
   proposal:
@@ -44,11 +42,11 @@ rules:
   apply:
     guidelines:
       - Follow existing code patterns once a stack is chosen
-    tdd: false           # Unresolved until strict_tdd_marker is honored (needs workspace test command)
-    test_command: ""
+    tdd: false           # strict_tdd stays false until sdd-init re-run flips it; test_command now set
+    test_command: "npm test"
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: "npm test"
+    build_command: "npm run typecheck"
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
