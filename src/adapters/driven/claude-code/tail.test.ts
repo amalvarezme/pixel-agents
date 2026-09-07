@@ -1,8 +1,29 @@
 import { mkdtemp, rm, stat, truncate, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readTailIncrement, watchAndTailFile } from './tail';
+
+// Records the byte length of every `data` chunk that flows through the real `createReadStream`
+// call made by production code, without changing stream behavior. This gives direct, honest
+// evidence that `readTailIncrement` reads the increment in bounded chunks — the largest buffer
+// ever handed to line-splitting/decoding is exactly one of these recorded chunk sizes, never the
+// whole increment in a single call. It cannot observe V8's internal string-length limits directly
+// (there is no public API for that), so this is the closest cleanly observable proxy for "never
+// materializes one oversized string": bound the input chunk size, and decoding necessarily follows.
+const recordedChunkSizes: number[] = [];
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    createReadStream: (...args: Parameters<typeof actual.createReadStream>) => {
+      const stream = actual.createReadStream(...args);
+      stream.on('data', (chunk) => recordedChunkSizes.push((chunk as Buffer).length));
+      return stream;
+    },
+  };
+});
 
 describe('readTailIncrement', () => {
   let dir: string;
@@ -104,6 +125,87 @@ describe('readTailIncrement', () => {
     if (result.kind === 'no-op') throw new Error('unexpected no-op');
     expect(result.lines).toEqual(['{"c":1}', '{"c":2}']);
     expect(result.checkpoint.inode).toBe(rotatedStat.ino);
+  });
+});
+
+describe('readTailIncrement — bounded chunk reading (ERR_STRING_TOO_LONG regression)', () => {
+  let dir: string;
+  let filePath: string;
+
+  beforeEach(() => {
+    recordedChunkSizes.length = 0;
+  });
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reads the underlying file in chunks no larger than the injected maxChunkBytes', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-chunked-'));
+    filePath = join(dir, 'session.jsonl');
+    // 200 lines * ~30 bytes/line ~= 6000 bytes, comfortably larger than the 64-byte chunk size
+    // injected below, forcing many bounded reads instead of a single whole-file read.
+    const lines = Array.from({ length: 200 }, (_, i) => `{"seq":${i},"pad":"xxxxxxxxxx"}`);
+    await writeFile(filePath, `${lines.join('\n')}\n`);
+    const maxChunkBytes = 64;
+
+    const result = await readTailIncrement(filePath, null, { maxChunkBytes });
+
+    if (result.kind === 'no-op') throw new Error('expected growth');
+    expect(result.lines).toEqual(lines);
+    expect(recordedChunkSizes.length).toBeGreaterThan(1);
+    expect(recordedChunkSizes.every((size) => size <= maxChunkBytes)).toBe(true);
+  });
+
+  it('produces the exact same lines via tiny bounded chunks as a single-shot (default) read', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-chunked-'));
+    filePath = join(dir, 'session.jsonl');
+    const lines = Array.from({ length: 50 }, (_, i) => `{"index":${i},"note":"hello world ${i}"}`);
+    const content = `${lines.join('\n')}\n`;
+    await writeFile(filePath, content);
+
+    const wholeFileResult = await readTailIncrement(filePath, null);
+    const tinyChunkResult = await readTailIncrement(filePath, null, { maxChunkBytes: 5 });
+
+    if (wholeFileResult.kind === 'no-op' || tinyChunkResult.kind === 'no-op') {
+      throw new Error('expected growth');
+    }
+    expect(tinyChunkResult.lines).toEqual(wholeFileResult.lines);
+    expect(tinyChunkResult.checkpoint.offset).toBe(wholeFileResult.checkpoint.offset);
+  });
+
+  it('decodes a multi-byte UTF-8 character split across a chunk boundary correctly', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-utf8-'));
+    filePath = join(dir, 'session.jsonl');
+    // '😀' is U+1F600, encoded as 4 UTF-8 bytes (F0 9F 98 80). The 6-byte ASCII prefix plus a
+    // maxChunkBytes of 9 puts the chunk boundary 3 bytes into the 4-byte character.
+    const prefix = '{"a":"';
+    const emoji = '\u{1F600}';
+    const suffix = '"}';
+    const line = `${prefix}${emoji}${suffix}`;
+    await writeFile(filePath, `${line}\n`);
+    expect(Buffer.byteLength(prefix, 'utf8')).toBe(6);
+
+    const result = await readTailIncrement(filePath, null, { maxChunkBytes: 9 });
+
+    if (result.kind === 'no-op') throw new Error('expected growth');
+    expect(result.lines).toEqual([line]);
+    expect(result.lines[0]).toContain(emoji);
+  });
+
+  it('carries a partial-line remainder across an internal chunk boundary without emitting it', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-partial-'));
+    filePath = join(dir, 'session.jsonl');
+    // Second line has no trailing newline and is far longer than maxChunkBytes, so it must span
+    // several internal chunks yet still never be emitted as a line.
+    await writeFile(filePath, '{"a":1}\n{"a":2,"pad":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"');
+
+    const result = await readTailIncrement(filePath, null, { maxChunkBytes: 4 });
+
+    if (result.kind === 'no-op') throw new Error('expected growth');
+    expect(result.lines).toEqual(['{"a":1}']);
+    expect(result.lines.join('')).not.toContain('"a":2');
+    expect(recordedChunkSizes.length).toBeGreaterThan(1);
   });
 });
 

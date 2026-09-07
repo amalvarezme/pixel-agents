@@ -16,6 +16,7 @@
  */
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { StringDecoder } from 'node:string_decoder';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { ByteOffsetCheckpoint } from '../../../ports/activity-source.port';
 
@@ -24,29 +25,68 @@ export type TailReadResult =
   | { kind: 'growth'; lines: string[]; checkpoint: ByteOffsetCheckpoint }
   | { kind: 'reset'; lines: string[]; checkpoint: ByteOffsetCheckpoint };
 
-async function readFromOffset(filePath: string, start: number): Promise<Buffer> {
-  return await new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    const stream = createReadStream(filePath, { start });
-    stream.on('data', (chunk) => chunks.push(chunk as Buffer));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
-  });
+export interface ReadTailIncrementOptions {
+  /**
+   * Upper bound, in bytes, on each chunk read from the underlying file (passed to
+   * `createReadStream` as `highWaterMark`). Bounding chunk size is what prevents the historical
+   * `ERR_STRING_TOO_LONG` failure: on the very first read of an existing file, `offset` starts at
+   * 0, so the "increment" is the whole file — for a large-enough session this used to be
+   * concatenated into one `Buffer` and decoded with a single `buffer.toString('utf8')` call,
+   * materializing one JavaScript string that can exceed V8's maximum string length. Injectable so
+   * tests can drive it down to a handful of bytes and prove chunking works without allocating an
+   * oversized fixture.
+   */
+  maxChunkBytes?: number;
 }
 
-function splitCompleteLines(buffer: Buffer): { lines: string[]; consumedOffsetDelta: number } {
-  if (buffer.length === 0) return { lines: [], consumedOffsetDelta: 0 };
+// 1 MiB default: comfortably below V8's maximum string length while still large enough that
+// steady-state tailing (small increments) issues a single read in the common case.
+const DEFAULT_MAX_CHUNK_BYTES = 1024 * 1024;
 
-  const text = buffer.toString('utf8');
-  const trailingHasNewline = text.endsWith('\n');
-  const parts = text.split('\n');
-  // `parts.slice(0, -1)` drops the trailing element unconditionally: it is either the empty
-  // string produced by a trailing `\n`, or the unterminated partial fragment — neither is ever
-  // emitted as a line.
-  const lines = parts.slice(0, -1);
-  const partial = trailingHasNewline ? '' : (parts[parts.length - 1] ?? '');
-  const partialByteLength = Buffer.byteLength(partial, 'utf8');
-  return { lines, consumedOffsetDelta: buffer.length - partialByteLength };
+interface ChunkedReadResult {
+  lines: string[];
+  bytesRead: number;
+  /** Trailing text after the last complete line, not yet terminated by `\n`. Never emitted. */
+  partialLine: string;
+}
+
+/**
+ * Reads `filePath` from `start` onward in chunks bounded by `maxChunkBytes`, decoding and
+ * splitting complete lines incrementally as each chunk arrives. Never concatenates the whole
+ * increment into one `Buffer`/string — each chunk is decoded via `StringDecoder`, which also
+ * transparently carries an incomplete multi-byte UTF-8 sequence at a chunk boundary over to the
+ * next chunk, so a character split across two reads is still decoded correctly.
+ */
+async function readLinesInChunks(
+  filePath: string,
+  start: number,
+  maxChunkBytes: number,
+): Promise<ChunkedReadResult> {
+  return await new Promise((resolve, reject) => {
+    const decoder = new StringDecoder('utf8');
+    const lines: string[] = [];
+    let pending = '';
+    let bytesRead = 0;
+
+    const appendDecoded = (decoded: string): void => {
+      if (decoded.length === 0) return;
+      const parts = (pending + decoded).split('\n');
+      pending = parts.pop() ?? '';
+      if (parts.length > 0) lines.push(...parts);
+    };
+
+    const stream = createReadStream(filePath, { start, highWaterMark: maxChunkBytes });
+    stream.on('data', (chunk) => {
+      const buf = chunk as Buffer;
+      bytesRead += buf.length;
+      appendDecoded(decoder.write(buf));
+    });
+    stream.on('end', () => {
+      appendDecoded(decoder.end());
+      resolve({ lines, bytesRead, partialLine: pending });
+    });
+    stream.on('error', reject);
+  });
 }
 
 async function readGrowth(
@@ -54,11 +94,12 @@ async function readGrowth(
   fromOffset: number,
   inode: number,
   kind: 'growth' | 'reset',
+  maxChunkBytes: number,
 ): Promise<TailReadResult> {
-  const buffer = await readFromOffset(filePath, fromOffset);
-  const { lines, consumedOffsetDelta } = splitCompleteLines(buffer);
-  const observedSize = fromOffset + buffer.length;
-  const newOffset = fromOffset + consumedOffsetDelta;
+  const { lines, bytesRead, partialLine } = await readLinesInChunks(filePath, fromOffset, maxChunkBytes);
+  const partialByteLength = Buffer.byteLength(partialLine, 'utf8');
+  const observedSize = fromOffset + bytesRead;
+  const newOffset = fromOffset + bytesRead - partialByteLength;
   return {
     kind,
     lines,
@@ -74,24 +115,26 @@ async function readGrowth(
 export async function readTailIncrement(
   filePath: string,
   previous: ByteOffsetCheckpoint | null,
+  options: ReadTailIncrementOptions = {},
 ): Promise<TailReadResult> {
+  const maxChunkBytes = options.maxChunkBytes ?? DEFAULT_MAX_CHUNK_BYTES;
   const stats = await stat(filePath);
   const inode = stats.ino;
 
   if (previous === null) {
-    return await readGrowth(filePath, 0, inode, 'growth');
+    return await readGrowth(filePath, 0, inode, 'growth', maxChunkBytes);
   }
 
   const rotatedOrTruncated = previous.inode !== inode || stats.size < previous.size;
   if (rotatedOrTruncated) {
-    return await readGrowth(filePath, 0, inode, 'reset');
+    return await readGrowth(filePath, 0, inode, 'reset', maxChunkBytes);
   }
 
   if (stats.size === previous.size) {
     return { kind: 'no-op' };
   }
 
-  return await readGrowth(filePath, previous.offset, inode, 'growth');
+  return await readGrowth(filePath, previous.offset, inode, 'growth', maxChunkBytes);
 }
 
 /**
