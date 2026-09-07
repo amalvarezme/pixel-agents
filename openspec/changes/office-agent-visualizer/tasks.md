@@ -75,8 +75,8 @@ every unit after it.
 
 ### Phase 3: Ports & Checkpoint Store
 
-- [ ] 3.1 Create `src/ports/activity-source.port.ts` — `ActivitySource`, `ActivityStream`, `SourceHealth`, `MemoryWriteDetector<TRecord>` interfaces
-- [ ] 3.2 Create `src/ports/checkpoint-store.port.ts`, `event-publisher.port.ts`, `session-launcher.port.ts`, `terminal-backend.port.ts`, `clock.port.ts`
+- [x] 3.1 Create `src/ports/activity-source.port.ts` — `ActivitySource`, `ActivityStream`, `SourceHealth`, `MemoryWriteDetector<TRecord>` interfaces
+- [x] 3.2 Create `src/ports/checkpoint-store.port.ts`, `event-publisher.port.ts`, `session-launcher.port.ts`, `terminal-backend.port.ts`, `clock.port.ts`
 - [ ] 3.3 Create `src/adapters/driven/checkpoint/` — in-memory + file-backed `CheckpointStore` (opaque `{kind:'byte-offset'...}` / `{kind:'seq'...}` blobs)
 - [ ] 3.4 RED+GREEN: checkpoint round-trips byte-for-byte through save/load
 
