@@ -17,8 +17,9 @@
  * `parseClaudeCodeLine` never throws: malformed JSON returns `null` (design.md: "Malformed JSON
  * increments a counter and emits `status(parse_error)`; it never throws").
  */
-import { createEventFromLogRecord } from '../../../domain/events/factories';
+import { createEventFromLogRecord, createMemoryWriteEvent } from '../../../domain/events/factories';
 import type { AgentEventBase } from '../../../domain/events/types';
+import { ClaudeCodeMemoryWriteDetector } from './memory-write-detector';
 
 export interface ClaudeCodeContentBlock {
   type: string;
@@ -113,6 +114,12 @@ export interface ToolCaption {
 const TOOL_INPUT_DIGEST_KEYS = ['file_path', 'file', 'path', 'command', 'pattern', 'query'] as const;
 
 /**
+ * Blocker B.1 (tasks.md): stateless and adapter-private (spec: "Detector Interface Isolation"),
+ * so one shared instance is safe to reuse across every record this module maps.
+ */
+const memoryWriteDetector = new ClaudeCodeMemoryWriteDetector();
+
+/**
  * Normalized {toolLabel, toolDetail} caption pair (design.md "Captions": "tool_use.name + short
  * input digest, e.g. Read: design.md"). `toolDetail` is the first recognized, non-empty string
  * value among the tool's own input fields — never a harness-agnostic guess.
@@ -158,6 +165,26 @@ export function mapClaudeCodeRecordToEvents(
         toolDetail: caption.toolDetail,
       }),
     );
+
+    // Blocker B.1: a matching mem_save call additionally emits a `memory_write` event, alongside
+    // (never instead of) its `tool_start` — the archive-animation trigger the carry queue, dock
+    // slots and path math (slice 4) were built to consume but that runtime never produced.
+    const signal = memoryWriteDetector.detect(block);
+    if (signal) {
+      events.push(
+        createMemoryWriteEvent(ctx.allocateId(), {
+          harness: 'claude-code',
+          sessionKey: ctx.sessionKey,
+          at,
+          label,
+          title: signal.title,
+          topicKey: signal.topicKey,
+          observationType: signal.observationType,
+          toolLabel: signal.toolLabel,
+          toolDetail: signal.toolDetail,
+        }),
+      );
+    }
   }
 
   const toolResultBlocks = extractToolResultBlocks(record);
