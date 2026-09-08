@@ -217,7 +217,9 @@ export class OpenCodeActivitySource implements ActivitySource {
     state: SessionPumpState,
   ): Promise<void> {
     let checkpoint = initialCheckpoint;
-    let partWatermark = 0;
+    // Seeded from the checkpoint, never 0-by-default: a resumed session must not re-select
+    // `time_updated > 0` and republish every historical part (see SeqCheckpoint.partsBySession).
+    let partWatermark = initialCheckpoint.partsBySession?.[sessionId] ?? 0;
 
     while (!state.stopped && !this.closed) {
       const sinceSeq = checkpoint.bySession[sessionId] ?? 0;
@@ -233,15 +235,22 @@ export class OpenCodeActivitySource implements ActivitySource {
       if (state.stopped || this.closed) return;
 
       if (events.length > 0) {
-        const nextCheckpoint = nextSeqCheckpoint(checkpoint, sessionId, events);
+        const seqAdvanced = nextSeqCheckpoint(checkpoint, sessionId, events);
         const parts = this.selectNewParts(db, sessionId, partWatermark);
         for (const part of parts) {
           partWatermark = Math.max(partWatermark, part.timeUpdated);
+          // The published checkpoint carries the watermark of the part being published, so a crash
+          // mid-batch resumes at the last row actually handed to the consumer, never before it.
+          const nextCheckpoint: SeqCheckpoint = {
+            ...seqAdvanced,
+            partsBySession: { ...seqAdvanced.partsBySession, [sessionId]: partWatermark },
+          };
           for (const event of mapOpenCodePartToEvents(part.row, { allocateId: this.allocateId })) {
             queue.push({ event, checkpoint: nextCheckpoint });
           }
+          checkpoint = nextCheckpoint;
         }
-        checkpoint = nextCheckpoint;
+        checkpoint = { ...seqAdvanced, partsBySession: { ...seqAdvanced.partsBySession, [sessionId]: partWatermark } };
       }
 
       await this.sleeper.sleep(this.cadenceMs);

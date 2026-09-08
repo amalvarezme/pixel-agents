@@ -115,5 +115,5 @@ export async function pollWithBackoff<T>(options: PollWithBackoffOptions<T>): Pr
 export function nextSeqCheckpoint(current: SeqCheckpoint, aggregateId: string, events: OpenCodeEventRow[]): SeqCheckpoint {
   if (events.length === 0) return current;
   const maxSeq = events.reduce((max, event) => Math.max(max, event.seq), -Infinity);
-  return { kind: 'seq', bySession: { ...current.bySession, [aggregateId]: maxSeq } };
+  return { ...current, kind: 'seq', bySession: { ...current.bySession, [aggregateId]: maxSeq } };
 }

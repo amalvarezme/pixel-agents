@@ -83,6 +83,56 @@ describe('OpenCodeActivitySource', () => {
     });
   });
 
+  describe('checkpoint resume (invariant: a resumed session never republishes history)', () => {
+    // The seq checkpoint correctly resumes the `event` query, but the `part` watermark that decides
+    // WHICH ROWS become events was in-memory only and reset to 0 on every open(). So the first new
+    // event after a restart re-selected `time_updated > 0` — the session's ENTIRE part history —
+    // and republished every historical tool_start and memory_write at once, double-counting the
+    // archive. The checkpoint store exists precisely to prevent that.
+    it('does not republish parts already covered by the checkpoint when a session resumes', async () => {
+      const dbPath = freshDbPath();
+      const writer = buildSyntheticOpenCodeDb(dbPath);
+      seedSession(writer, { id: 'ses_resume', agent: 'observador' });
+      // Two historical parts, already published and checkpointed by a previous process.
+      seedEvent(writer, { id: 'evt_1', aggregate_id: 'ses_resume', seq: 1, type: 'message.part.updated.1', data: '{}' });
+      seedPart(writer, { id: 'prt_old_1', message_id: 'msg_1', session_id: 'ses_resume', data: MEMORY_WRITE_PART_DATA, time_updated: 1_000 });
+      seedPart(writer, { id: 'prt_old_2', message_id: 'msg_1', session_id: 'ses_resume', data: MEMORY_WRITE_PART_DATA, time_updated: 2_000 });
+      // One genuinely new part, arriving after the checkpoint.
+      seedEvent(writer, { id: 'evt_2', aggregate_id: 'ses_resume', seq: 2, type: 'message.part.updated.2', data: '{}' });
+      seedPart(writer, { id: 'prt_new', message_id: 'msg_1', session_id: 'ses_resume', data: MEMORY_WRITE_PART_DATA, time_updated: 3_000 });
+      writer.close();
+
+      const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 1 });
+      const resumed = source.open(
+        { harness: 'opencode', sessionKey: 'opencode:ses_resume', sessionId: 'ses_resume' } as OpenCodeSessionRef,
+        { kind: 'seq', bySession: { ses_resume: 1 }, partsBySession: { ses_resume: 2_000 } },
+      );
+
+      const iterator = resumed.events[Symbol.asyncIterator]();
+      const seen: string[] = [];
+      // Drain generously. Each part emits BOTH tool_start and memory_write, so a short window can
+      // fill up with the replayed history's leading events and still show only one memory_write —
+      // passing for the wrong reason. 16 pulls is well past the 7 events the buggy path produces.
+      for (let i = 0; i < 16; i++) {
+        // Race each pull against a short timeout: once the (correct) single new part is drained the
+        // stream simply has nothing more, and waiting forever would hang instead of failing.
+        const next = await Promise.race([
+          iterator.next(),
+          new Promise<{ done: true; value: undefined }>((resolve) => setTimeout(() => resolve({ done: true, value: undefined }), 60)),
+        ]);
+        if (!next.value) break;
+        seen.push(next.value.event.kind);
+      }
+      resumed.stop();
+      await source.close();
+
+      // Exactly one memory_write and one tool_start, both for `prt_new`. The two historical parts
+      // must not reappear in either kind.
+      expect(seen.filter((kind) => kind === 'memory_write')).toHaveLength(1);
+      expect(seen.filter((kind) => kind === 'tool_start')).toHaveLength(1);
+    });
+  });
+
   describe('quiet degradation (invariant: missing/drifted db never crashes, degrades quietly)', () => {
     it('discover() yields nothing when the db file does not exist', async () => {
       scratchDir = mkdtempSync(join(tmpdir(), 'opencode-activity-source-'));

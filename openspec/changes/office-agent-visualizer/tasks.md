@@ -366,7 +366,7 @@ follow-up check.
   - [x] Data half: `OfficeViewModel.archiveTrip` (`{path, carryCount}`) is projected from the carry queue and covered by tests
   - [x] Render half (`archive-animation-runtime` work unit): `src/ui/scene/animation/trip-animation.ts` is a pure, fake-clock-driven animator (`walking-out` → `at-archive` → `walking-back`) consumed by a new `OfficeContainer.tick(now)`, driven by the browser's own `requestAnimationFrame` loop (`ui/main.ts`) and never by `handleMessage` — `OfficeContainer.test.ts` pins that a burst of ingested events and a real-time gap between two of them can never advance or block on animation. `worker.ts`/`office-floor.ts`/`office-scene-renderer.ts` draw the resulting document indicator, highlight ring, `×N` batch badge, and archive counter. Verified by `npm test` (unit) only — the orchestrator confirms the actual visual result in Chrome, not this apply
 - [x] 21.3 RED+GREEN: `memory_write` event for `S1` animates a path to the fixed archive destination (Archive Destination Rendering) — the path was already computed and tested (`archive-path.ts`); `trip-animation.test.ts` now proves the ANIMATION itself: position along the path is pure arithmetic at time t, walking-out reaches the archive exactly at `WALK_DURATION_MS`, and the round trip returns the worker home
-- [x] 21.4 RED+GREEN: any harness's `memory_write` (incl. `antigravity`) triggers the same animation path (memory_write Drives Archive Animation Trigger) — path identity across all four harnesses was already proven by `archive-trip-cross-harness.test.ts`; `trip-animation.test.ts` additionally proves the RENDER TRIGGER itself never branches on `harness` (an `antigravity` worker starts the identical trip). The runtime EMISSION side of this requirement is closed for Claude Code only by blocker B.1 below — Codex, OpenCode, and Antigravity still emit no `memory_write` at runtime
+- [x] 21.4 RED+GREEN: any harness's `memory_write` (incl. `antigravity`) triggers the same animation path (memory_write Drives Archive Animation Trigger) — path identity across all four harnesses was already proven by `archive-trip-cross-harness.test.ts`; `trip-animation.test.ts` additionally proves the RENDER TRIGGER itself never branches on `harness` (an `antigravity` worker starts the identical trip). The runtime EMISSION side is now closed for ALL FOUR harnesses (blocker B.1 below); every adapter emits `memory_write` through its own detector and is composed into `src/server.ts`
 - [x] 21.5 Implement normalized `{toolLabel, toolDetail}` caption pair on `tool_start`, sourced per-harness (Antigravity de-quoted `toolAction`/`toolSummary`; Claude `tool_use.name` + input digest; Codex `item.type`/`server`/`tool`/command head; OpenCode `part.data.tool`+`state.title`) so the renderer never branches on harness
 
 ### BLOCKER discovered during slice 4 verification: `memory_write` is never emitted at runtime
@@ -447,6 +447,15 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
   lines (git diff vs `b1-remaining-harnesses`, tests excluded), well under the 700-line budget.
   **All four harnesses now emit `memory_write` at runtime and are composed into `src/server.ts`.
   Blocker B.1 is fully closed.**
+- [x] B.1-fix (orchestrator verification) `SeqCheckpoint.partsBySession` added and seeded on
+  resume. `OpenCodeActivitySource` held its `part.time_updated` watermark in memory only, reset to
+  `0` on every `open()`. The seq checkpoint correctly resumed the `event` query, but the first new
+  event after a restart re-selected `time_updated > 0` — the session's ENTIRE part history — and
+  republished every historical `tool_start`/`memory_write`, double-counting the archive. The
+  checkpoint store built in Phase 3.3/3.4 exists precisely to prevent that, and was being bypassed
+  for the part stream. Now persisted per session and seeded from the checkpoint on resume;
+  `nextSeqCheckpoint` preserves the field. Covered by a resume test verified against the reverted
+  fix
 - [x] B.2 (`archive-animation-runtime` work unit) Render half of 21.2 built:
   `src/ui/scene/animation/trip-animation.ts` + wiring through `OfficeContainer`, the worker
   molecule, the office-floor organism, and the pixi scene renderer — `archiveTrip` now becomes
