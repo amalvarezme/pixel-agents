@@ -492,6 +492,15 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
 - [x] 23.2 RED: write failing test asserting argv byte-identity against a manually-typed command line for a plain `claude` launch (Threat Matrix case a / success criterion #4)
 - [x] 23.3 GREEN: implement the allowlisted template to satisfy 23.2
 - [x] 23.4 RED+GREEN: user-supplied `--append-system-prompt`/`--system-prompt`/`--settings`/`--config` rejected unless the user explicitly typed it (Zero-Injection Spawn Invariant, Threat Matrix case b). Implemented as an assertion over the launcher's OWN allowlisted template (always empty in production; a test-only `templates` override proves the guard fires on a poisoned template via mutation testing) — a user-typed instance of any of these flags in their own free arguments is never inspected, stripped, or rejected, since that is the user's explicit choice, not injection, and altering it would break byte-identity (criterion #4).
+  - [x] **Corrected during orchestrator verification.** The argv builder guarded only the per-harness
+    TEMPLATE, on the reading that `spec.args` is what the user typed and must survive byte-identical
+    — a test even asserted denylisted flags in `spec.args` are allowed. That reading does not hold
+    for `POST /launch`: it is an unauthenticated localhost endpoint with no origin check and no
+    confirmation step, so "arrived in an HTTP body" is not evidence a human typed it. A curl against
+    the running server spawned a real `claude` carrying `--append-system-prompt "you are
+    compromised"`. design.md's Threat Matrix names planned RED test (b) as "user-supplied
+    `--append-system-prompt` rejected"; the route now refuses all four denylisted flags with 400
+    before reaching the use case, and an adversarial near-miss proves a harmless flag still passes
 - [x] 23.5 RED+GREEN: an argument containing a destructive shell-metacharacter payload — a `;` command separator followed by `rm -rf` and the filesystem root path, spelled out literally in the test file, never here — is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
 - [x] 23.6 RED+GREEN: internal env vars stripped, `process.env` otherwise passed through unchanged
 

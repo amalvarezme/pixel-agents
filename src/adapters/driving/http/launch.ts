@@ -4,8 +4,20 @@
  * an HTTP status: `started`/`unavailable_interactive` -> 200 (the request was handled, whether or
  * not a process ended up running), `failed` -> 502 (the launcher itself reports failure), a
  * malformed body -> 400 without ever reaching the use case.
+ *
+ * This route also refuses `spec.args` carrying an injection-denylisted flag (design.md Threat
+ * Matrix case b, tasks.md 23.4). `buildLaunchCommand` guards only the per-harness TEMPLATE, on the
+ * reading that `spec.args` is what the user typed and must survive byte-identical. That reading
+ * does not hold HERE: this is an unauthenticated localhost endpoint with no origin check and no
+ * confirmation step, so "arrived in an HTTP body" is not evidence a human typed it — any local
+ * process can reach it. Silently altering what a harness does would poison the very sessions this
+ * project exists to observe, so the refusal happens before the use case and nothing is spawned.
+ *
+ * A future UI affordance that makes the user confirm such a flag explicitly can pass it through a
+ * separate, deliberate path; until one exists, this surface refuses.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { INJECTION_DENYLIST } from '../../driven/launcher/build-launch-command';
 import { launchAgentSession } from '../../../application/launch-agent-session/launch-agent-session';
 import { HARNESS_IDS } from '../../../domain/events/types';
 import type { LaunchSpec, SessionLauncher } from '../../../ports/session-launcher.port';
@@ -45,6 +57,14 @@ export async function handleLaunchRequest(req: IncomingMessage, res: ServerRespo
   const spec = parseLaunchSpec(rawBody);
   if (!spec) {
     respondJson(res, 400, { error: 'invalid launch request body' });
+    return;
+  }
+
+  const denylisted = spec.args.find((arg) => (INJECTION_DENYLIST as readonly string[]).includes(arg));
+  if (denylisted) {
+    respondJson(res, 400, {
+      error: `refusing to launch: "${denylisted}" cannot be supplied over HTTP (Zero-Injection Spawn Invariant)`,
+    });
     return;
   }
 

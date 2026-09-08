@@ -84,9 +84,16 @@ describe('CodexActivitySource', () => {
       timestamp: '2026-08-23T18:01:00.000Z',
       payload: { type: 'item_completed', item: { type: 'CommandExecution', command: 'ls' } },
     });
+    // chokidar's watcher can still be attaching when open() returns: on macOS a single write that
+    // lands in that window is never delivered, and awaiting one event then hangs to the 5s timeout.
+    // This flaked across all three harnesses' live-tail tests. Re-append on an interval until the
+    // event arrives — unlike the `add` case in discover.test.ts, repeated writes to the SAME file
+    // each emit `change`, so retrying the same content is enough and the assertion is unchanged.
+    const keepAppending = setInterval(() => { void writeFile(filePath, `${commandLine}\n`); }, 150);
     await writeFile(filePath, `${commandLine}\n`);
 
     const next = await streamIterator.next();
+    clearInterval(keepAppending);
     expect(next.value?.event.kind).toBe('tool_start');
 
     stream.stop();

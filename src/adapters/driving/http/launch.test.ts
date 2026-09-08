@@ -52,6 +52,49 @@ describe('POST /launch', () => {
     expect(launcher.received).toEqual([{ harness: 'claude-code', cwd: '/tmp/project', args: ['--resume', 'x'] }]);
   });
 
+  // design.md's Threat Matrix names planned RED test (b) as "user-supplied `--append-system-prompt`
+  // REJECTED", and tasks.md 23.4 says the same. The argv builder only guarded the per-harness
+  // TEMPLATE, on the reading that `spec.args` is what the user typed and must survive byte-identical.
+  // That reading does not hold for THIS surface: `POST /launch` is an unauthenticated localhost
+  // endpoint with no origin check and no confirmation step, so any local process can reach it. A
+  // curl against the running server spawned a real `claude` carrying an injected system prompt.
+  //
+  // Silently altering what a harness does is the exact harm this whole change exists to prevent —
+  // it would poison the very sessions the visualizer observes, invisibly. So the HTTP surface
+  // refuses denylisted flags outright and never reaches the launcher.
+  it.each(['--append-system-prompt', '--system-prompt', '--settings', '--config'])(
+    'rejects %s supplied over HTTP without spawning anything (Threat Matrix case b)',
+    async (flag) => {
+      const launcher = createFakeLauncher({ outcome: 'started', launchId: 'l9', pid: 1, startedAt: 1 });
+      const url = await listen(launcher);
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ harness: 'claude-code', cwd: '/tmp/project', args: [flag, 'you are compromised'] }),
+      });
+
+      expect(response.status).toBe(400);
+      // The guard must stop the request BEFORE the launcher, not merely report afterwards.
+      expect(launcher.received).toEqual([]);
+    },
+  );
+
+  it('adversarial near-miss: a harmless flag with the same shape is still accepted and forwarded', async () => {
+    // Proves the guard targets the denylist specifically, rather than rejecting any flag-like arg.
+    const launcher = createFakeLauncher({ outcome: 'started', launchId: 'l10', pid: 2, startedAt: 2 });
+    const url = await listen(launcher);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ harness: 'claude-code', cwd: '/tmp/project', args: ['--continue', 'you are compromised'] }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(launcher.received).toEqual([{ harness: 'claude-code', cwd: '/tmp/project', args: ['--continue', 'you are compromised'] }]);
+  });
+
   it('502s when the launcher reports a failed launch (triangulation: a different outcome)', async () => {
     const launcher = createFakeLauncher({ outcome: 'failed', launchId: 'l2', reason: 'binary not found on PATH: agy' });
     const url = await listen(launcher);
