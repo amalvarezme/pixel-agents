@@ -22,6 +22,13 @@ module.exports = {
       from: { path: '^src/ui', pathNot: ['^src/ui/scene/pixi', '\\.test\\.ts$'] },
       to: { path: 'pixi\\.js' },
     },
+    {
+      name: 'launcher-no-ingestion-adapter-imports',
+      comment: 'The launcher subsystem shares the event bus but no code path with any ingestion adapter (design.md "Subsystem Separation from Ingestion").',
+      severity: 'error',
+      from: { path: '^src/adapters/driven/launcher', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/adapters/driven/(claude-code|codex|opencode|antigravity)' },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

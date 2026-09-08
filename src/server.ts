@@ -33,6 +33,8 @@ import { ClaudeCodeActivitySource } from './adapters/driven/claude-code/activity
 import { CodexActivitySource } from './adapters/driven/codex/activity-source';
 import { OpenCodeActivitySource } from './adapters/driven/opencode/activity-source';
 import { FileCheckpointStore } from './adapters/driven/checkpoint/file-checkpoint-store';
+import { ChildProcessSessionLauncher } from './adapters/driven/launcher/child-process-session-launcher';
+import { createNodePtyProbe } from './adapters/driven/terminal/node-pty-probe';
 import { createStreamServer, SseEventHub } from './adapters/driving/http/stream';
 import { ingestAgentActivity } from './application/ingest-agent-activity/ingest-agent-activity';
 
@@ -65,6 +67,9 @@ async function main(): Promise<void> {
   const hub = new SseEventHub();
   const checkpointStore = new FileCheckpointStore(CHECKPOINT_FILE);
   const sources = buildSources();
+  // Subsystem Separation from Ingestion (spec: agent-launcher): the launcher shares the bus
+  // (`hub` as `EventPublisher`) but no code path with any of the four adapters above.
+  const launcher = new ChildProcessSessionLauncher({ publisher: hub, terminalBackend: createNodePtyProbe() });
 
   for (const source of sources) {
     void ingestAgentActivity({ source, publisher: hub, checkpointStore }).catch((error: unknown) => {
@@ -72,7 +77,7 @@ async function main(): Promise<void> {
     });
   }
 
-  const server = createStreamServer(hub);
+  const server = createStreamServer(hub, launcher);
   server.listen(PORT, HOST, () => {
     console.log(`[office-agent-visualizer] SSE stream ready at http://${HOST}:${PORT}/stream`);
     for (const source of sources) {
@@ -83,6 +88,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     server.close();
     await Promise.all(sources.map((source) => source.close()));
+    await launcher.shutdown();
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown());
