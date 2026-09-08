@@ -75,28 +75,28 @@ every unit after it.
 
 ### Phase 3: Ports & Checkpoint Store
 
-- [ ] 3.1 Create `src/ports/activity-source.port.ts` — `ActivitySource`, `ActivityStream`, `SourceHealth`, `MemoryWriteDetector<TRecord>` interfaces
-- [ ] 3.2 Create `src/ports/checkpoint-store.port.ts`, `event-publisher.port.ts`, `session-launcher.port.ts`, `terminal-backend.port.ts`, `clock.port.ts`
-- [ ] 3.3 Create `src/adapters/driven/checkpoint/` — in-memory + file-backed `CheckpointStore` (opaque `{kind:'byte-offset'...}` / `{kind:'seq'...}` blobs)
-- [ ] 3.4 RED+GREEN: checkpoint round-trips byte-for-byte through save/load
+- [x] 3.1 Create `src/ports/activity-source.port.ts` — `ActivitySource`, `ActivityStream`, `SourceHealth`, `MemoryWriteDetector<TRecord>` interfaces
+- [x] 3.2 Create `src/ports/checkpoint-store.port.ts`, `event-publisher.port.ts`, `session-launcher.port.ts`, `terminal-backend.port.ts`, `clock.port.ts`
+- [x] 3.3 Create `src/adapters/driven/checkpoint/` — in-memory + file-backed `CheckpointStore` (opaque `{kind:'byte-offset'...}` / `{kind:'seq'...}` blobs)
+- [x] 3.4 RED+GREEN: checkpoint round-trips byte-for-byte through save/load
 
 ### Phase 4: Risk-Retirement Spikes
 
-- [ ] 4.1 Standalone spike: `node-pty` capability probe running in a **short-lived child process** (1×1 pty, `/usr/bin/true`, cross-check `process.arch` + spawn-helper exec bit); exits with `{available:false, reason}` on failure, never crashes the parent — retires launcher risk in slice 1
-- [ ] 4.2 RED+GREEN: probe test using a fake child process that simulates a non-zero/segfault exit code; parent process asserted alive
-- [ ] 4.3 Standalone ~40-line spike: open a copied `opencode.db` read-only, run one `PRAGMA table_info` + one `event` query against the real schema — retires OpenCode implementation risk early; discard after slice 3 lands
+- [x] 4.1 Standalone spike: `node-pty` capability probe running in a **short-lived child process** (1×1 pty, `/usr/bin/true`, cross-check `process.arch` + spawn-helper exec bit); exits with `{available:false, reason}` on failure, never crashes the parent — retires launcher risk in slice 1
+- [x] 4.2 RED+GREEN: probe test using a fake child process that simulates a non-zero/segfault exit code; parent process asserted alive
+- [x] 4.3 Standalone ~40-line spike: open a copied `opencode.db` read-only, run one `PRAGMA table_info` + one `event` query against the real schema — retires OpenCode implementation risk early; discard after slice 3 lands
 
 ### Phase 5: Seam Validation — Fake Adapter + SSE Stub
 
-- [ ] 5.1 Implement one fake `ActivitySource` (in-memory, no I/O) proving `discover()`/`open()`/`close()` end-to-end
-- [ ] 5.2 Create `src/application/ingest-agent-activity/` use case wiring the fake source to the event bus
-- [ ] 5.3 Create a stub HTTP endpoint (no real SSE yet) proving the port → application → bus seam compiles and runs
+- [x] 5.1 Implement one fake `ActivitySource` (in-memory, no I/O) proving `discover()`/`open()`/`close()` end-to-end
+- [x] 5.2 Create `src/application/ingest-agent-activity/` use case wiring the fake source to the event bus
+- [x] 5.3 Create a stub HTTP endpoint (no real SSE yet) proving the port → application → bus seam compiles and runs
 
 ### Phase 6: Slice 1a Verification
 
-- [ ] 6.1 Run `npm test` — all domain/port/checkpoint tests green
-- [ ] 6.2 Run `npm run typecheck` — zero errors
-- [ ] 6.3 Confirm `openspec/config.yaml` `testing.test_command` is `"npm test"` (unblocks strict TDD re-resolution for slice 1b+)
+- [x] 6.1 Run `npm test` — all domain/port/checkpoint tests green
+- [x] 6.2 Run `npm run typecheck` — zero errors
+- [x] 6.3 Confirm `openspec/config.yaml` `testing.test_command` is `"npm test"` (unblocks strict TDD re-resolution for slice 1b+)
 
 ---
 
