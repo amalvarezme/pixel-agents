@@ -6,24 +6,29 @@ context: |
   Target: passive log-reader "office" agent visualizer (Category B — no hooks, no settings.json writes).
   Multi-harness: Claude Code, Codex, Antigravity, OpenCode session logs on disk.
   Must launch agents/subagents from the visualization; compatible with gentle-ai and Engram.
-  Not a git repository yet.
+  Git repository on branch main, remote origin https://github.com/amalvarezme/pixel-agents.
 
-strict_tdd: false
+strict_tdd: true
 strict_tdd_marker: true
 strict_tdd_note: >
-  Global session config requests strict_tdd: true, but zero projects are discovered
-  and no workspace-level test command exists yet (greenfield, no toolchain selected).
-  Per sdd-init decision gates this fails closed to strict_tdd: false until a stack is
-  chosen and a workspace-wide test command is defined. Re-run sdd-init (or update this
-  file) once the toolchain is picked.
+  Re-resolved 2026-09-06 on branch slice-1a-contracts-toolchain: strict_tdd flips to true
+  because a workspace-level test command now exists (testing.test_command below) and covers
+  the sole in-scope project (office-agent-visualizer), verified by actually running
+  `npm test` (4 files, 10 tests passed) and `npm run typecheck` (zero errors). This
+  supersedes the prior fail-closed resolution recorded when zero projects were discovered.
+  BRANCH CAVEAT: this true resolution is valid for work on the slice-1a-contracts-toolchain
+  branch chain (this branch and its descendants, e.g. slice 1a-ii onward). On `main`,
+  openspec/config.yaml still declares projects: [] and test_command: null — strict_tdd
+  there becomes true only once PR #1 (https://github.com/amalvarezme/pixel-agents/pull/1)
+  merges this toolchain into main.
 
 testing:
-  projects: []
-  test_command: null
+  projects: ["office-agent-visualizer"]
+  test_command: "npm test"
   notes: >
-    Unresolved. No project has been discovered under the workspace root; test_command
-    cannot be set until a stack is chosen (e.g. Node/TS, Go, Rust, Python) for the
-    office visualizer.
+    Node/TypeScript + Vitest, selected in slice 1a (office-agent-visualizer). Run
+    `npm run typecheck` for `tsc --noEmit` and `npm run test:watch` for the Vitest
+    watch runner.
 
 rules:
   proposal:
@@ -44,11 +49,11 @@ rules:
   apply:
     guidelines:
       - Follow existing code patterns once a stack is chosen
-    tdd: false           # Unresolved until strict_tdd_marker is honored (needs workspace test command)
-    test_command: ""
+    tdd: true            # re-resolved true 2026-09-06; see strict_tdd_note (branch-scoped, see caveat)
+    test_command: "npm test"
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: "npm test"
+    build_command: "npm run typecheck"
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas

@@ -1,0 +1,19 @@
+{
+  "name": "office-agent-visualizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hexagonal office visualizer for Claude Code, Codex, OpenCode and Antigravity agent sessions.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint:deps": "depcruise src --config .dependency-cruiser.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "dependency-cruiser": "^16.9.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
