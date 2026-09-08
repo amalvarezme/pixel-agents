@@ -8,11 +8,13 @@
 import { describe, expect, it } from 'vitest';
 import { applyEventToOfficeState, createOfficeState } from '../../../domain/office/office';
 import {
+  mapOpenCodePartToEvents,
   mapOpenCodeSessionToEvents,
   openCodeSessionKey,
   parseOpenCodePartData,
   resolveOpenCodeToolCaption,
   resolveOpenCodeWorkerLabel,
+  type OpenCodePartRow,
   type OpenCodeSessionRow,
 } from './parse';
 
@@ -106,5 +108,80 @@ describe('resolveOpenCodeToolCaption (design.md "Captions": part.data.tool + sta
   it('returns null for a non-tool part', () => {
     const data = parseOpenCodePartData('{"type":"text"}')!;
     expect(resolveOpenCodeToolCaption(data)).toBeNull();
+  });
+});
+
+describe('mapOpenCodePartToEvents', () => {
+  function partRow(data: unknown, sessionId = 'ses_synth0001'): OpenCodePartRow {
+    return { id: 'prt_1', message_id: 'msg_1', session_id: sessionId, data: JSON.stringify(data) };
+  }
+
+  it('maps a tool part to a tool_start event carrying the normalized caption', () => {
+    const row = partRow({ type: 'tool', tool: 'read', state: { title: 'design.md' } });
+    const events = mapOpenCodePartToEvents(row, { allocateId: allocator(), at: 2000 });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: 'tool_start',
+      harness: 'opencode',
+      sessionKey: 'opencode:ses_synth0001',
+      toolLabel: 'read',
+      toolDetail: 'design.md',
+    });
+  });
+
+  it('produces no events for a non-tool part (e.g. type: text)', () => {
+    const row = partRow({ type: 'text' });
+    expect(mapOpenCodePartToEvents(row, { allocateId: allocator(), at: 2000 })).toEqual([]);
+  });
+
+  it('produces no events for a malformed data payload', () => {
+    const row: OpenCodePartRow = { id: 'prt_1', message_id: 'msg_1', session_id: 'ses_synth0001', data: '{not json' };
+    expect(mapOpenCodePartToEvents(row, { allocateId: allocator(), at: 2000 })).toEqual([]);
+  });
+
+  // Blocker B.1 (tasks.md): OpenCodeMemoryWriteDetector exists and is fixture-tested, but nothing
+  // ever called it at runtime. This wires it into the same tool-part mapping that already
+  // produces tool_start.
+  describe('memory_write wiring (blocker B.1, OpenCode)', () => {
+    it('emits a memory_write event IN ADDITION TO tool_start for an engram_mem_save part', () => {
+      const row = partRow({
+        type: 'tool',
+        tool: 'engram_mem_save',
+        state: { input: { title: 'Synthetic fixture: verified OpenCode Engram wiring', topic_key: 'probe/topic', type: 'discovery' } },
+      });
+      const events = mapOpenCodePartToEvents(row, { allocateId: allocator(), at: 2000 });
+
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({ kind: 'tool_start', harness: 'opencode' });
+      expect(events[1]).toMatchObject({
+        kind: 'memory_write',
+        harness: 'opencode',
+        sessionKey: 'opencode:ses_synth0001',
+        title: 'Synthetic fixture: verified OpenCode Engram wiring',
+        topicKey: 'probe/topic',
+        observationType: 'discovery',
+        toolLabel: 'engram_mem_save',
+      });
+    });
+
+    // Adversarial twin: a similarly-shaped tool part for an unrelated tool (context7's docs
+    // query) must emit ONLY tool_start. Proves the wiring is gated on detector.detect(), not
+    // merely on seeing a tool-type part.
+    it('emits ONLY tool_start for a non-matching tool part (near-miss: context7_query-docs)', () => {
+      const row = partRow({ type: 'tool', tool: 'context7_query-docs', state: { input: {} } });
+      const events = mapOpenCodePartToEvents(row, { allocateId: allocator(), at: 2000 });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ kind: 'tool_start' });
+      expect(events.some((e) => e.kind === 'memory_write')).toBe(false);
+    });
+
+    it('allocates a distinct, monotonically increasing id for the memory_write event after tool_start', () => {
+      const row = partRow({ type: 'tool', tool: 'engram_mem_save', state: { input: { title: 'x' } } });
+      const events = mapOpenCodePartToEvents(row, { allocateId: allocator(), at: 2000 });
+
+      expect(events.map((e) => e.id)).toEqual([1, 2]);
+    });
   });
 });

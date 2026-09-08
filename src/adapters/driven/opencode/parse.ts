@@ -10,9 +10,14 @@
  * `session.parent_id` needs no fallback (unlike Claude Code's `agentId`/`attributionAgent`
  * split): it is populated directly at read time, so `mapOpenCodeSessionToEvents` can emit both
  * the `session_start` and (when present) the `parent` event synchronously from one row.
+ *
+ * `mapOpenCodePartToEvents` (blocker B.1) is the part-row->events mapper the runtime pipeline was
+ * missing entirely: a `tool`-type part yields one `tool_start`, and a matching `engram_mem_save`
+ * part additionally (never instead of) yields a `memory_write` via `OpenCodeMemoryWriteDetector`.
  */
-import { createEventFromLogRecord } from '../../../domain/events/factories';
+import { createEventFromLogRecord, createMemoryWriteEvent } from '../../../domain/events/factories';
 import type { AgentEventBase } from '../../../domain/events/types';
+import { OpenCodeMemoryWriteDetector } from './memory-write-detector';
 
 export interface OpenCodePartRow {
   id: string;
@@ -110,6 +115,63 @@ export function mapOpenCodeSessionToEvents(session: OpenCodeSessionRow, ctx: Ope
         sessionKey,
         at,
         correlationId: openCodeSessionKey(session.parent_id),
+      }),
+    );
+  }
+
+  return events;
+}
+
+export interface OpenCodePartMappingContext {
+  allocateId: () => number;
+  at?: number;
+}
+
+/**
+ * Stateless and adapter-private (spec: "Detector Interface Isolation"), so one shared instance is
+ * safe to reuse across every row this module maps.
+ */
+const openCodeMemoryWriteDetector = new OpenCodeMemoryWriteDetector();
+
+/**
+ * Maps one `part` row to zero or more normalized `AgentEvent`s (blocker B.1). A non-`tool` part,
+ * or one whose `data` fails to parse, yields nothing at this layer — matching
+ * `resolveOpenCodeToolCaption`'s own exclusion.
+ */
+export function mapOpenCodePartToEvents(part: OpenCodePartRow, ctx: OpenCodePartMappingContext): AgentEventBase[] {
+  const data = parseOpenCodePartData(part.data);
+  if (!data) return [];
+
+  const caption = resolveOpenCodeToolCaption(data);
+  if (!caption) return [];
+
+  const at = ctx.at ?? Date.now();
+  const sessionKey = openCodeSessionKey(part.session_id);
+  const events: AgentEventBase[] = [
+    createEventFromLogRecord(ctx.allocateId(), {
+      kind: 'tool_start',
+      harness: 'opencode',
+      sessionKey,
+      at,
+      toolLabel: caption.toolLabel,
+      toolDetail: caption.toolDetail,
+    }),
+  ];
+
+  // Blocker B.1: a matching engram_mem_save part additionally emits `memory_write`, alongside
+  // (never instead of) its `tool_start`.
+  const signal = openCodeMemoryWriteDetector.detect(part);
+  if (signal) {
+    events.push(
+      createMemoryWriteEvent(ctx.allocateId(), {
+        harness: 'opencode',
+        sessionKey,
+        at,
+        title: signal.title,
+        topicKey: signal.topicKey,
+        observationType: signal.observationType,
+        toolLabel: signal.toolLabel,
+        toolDetail: signal.toolDetail,
       }),
     );
   }
