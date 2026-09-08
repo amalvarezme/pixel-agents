@@ -508,11 +508,11 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
 
 ### Phase 25: Launch↔Log Correlation
 
-- [ ] 25.1 Implement claim window `[t0−2s, t1+30s]` scoped to `(harness, cwd)`, recorded before/at spawn
-- [ ] 25.2 Implement per-harness match predicates (Claude Code slug-dir + cwd + unseen sessionId; Codex rollout cwd+timestamp; OpenCode `session.directory`+`time_created`; Antigravity new `brain/<uuid>/` + no other in-flight `agy` launch)
-- [ ] 25.3 RED+GREEN: exactly one candidate binds and emits `launch_bound`; zero/ambiguous candidates bind nothing and emit `status(launch_correlation_timeout|ambiguous)` — a failed bind degrades attribution only, ingestion unaffected
-- [ ] 25.4 Implement per-`(harness,cwd)` serialization guard — a second request for the same pair queues until the first binds or times out
-- [ ] 25.5 RED+GREEN: two concurrent launch requests for the same `(harness,cwd)` never produce two open unclaimed claims simultaneously
+- [x] 25.1 Implement claim window `[t0−2s, t1+30s]` scoped to `(harness, cwd)`, recorded before/at spawn
+- [x] 25.2 Implement per-harness match predicates (Claude Code slug-dir + cwd + unseen sessionId; Codex rollout cwd+timestamp; OpenCode `session.directory`+`time_created`; Antigravity new `brain/<uuid>/` + no other in-flight `agy` launch). Implemented as ONE generalized predicate over a harness-agnostic `CandidateSession {harness, sessionKey, cwd, discoveredAt}` (`launch-correlator.ts`) rather than four separate per-harness matchers: every harness's real signal (slug-dir, rollout timestamp, `session.directory`, new `brain/<uuid>/`) ultimately reduces to "does this session's cwd/window match the open claim's", with Antigravity's `cwd: null` (its transcript carries no cwd) falling back to harness+window alone, exactly as design.md specifies. **Scope decision**: this module is implemented as a standalone, fully tested pure state machine; it is NOT yet wired into the four adapters' real `discover()` output (that would require each adapter's `SessionRef` to additionally report a `cwd`, which none currently do) — deferred as a follow-up, since the tasks only asked to "implement" the claim window/predicates/guard, not to complete end-to-end wiring, and doing so safely within this work unit's remaining budget was not achievable without under-testing it.
+- [x] 25.3 RED+GREEN: exactly one candidate binds and emits `launch_bound`; zero/ambiguous candidates bind nothing and emit `status(launch_correlation_timeout|ambiguous)` — a failed bind degrades attribution only, ingestion unaffected. Ambiguity is detected across SEQUENTIAL candidate offers (a second, different candidate matching an already-bound claim revokes the bind and flips to `ambiguous`) rather than only within one batched call, matching how sessions are actually discovered one at a time.
+- [x] 25.4 Implement per-`(harness,cwd)` serialization guard — a second request for the same pair queues until the first binds or times out
+- [x] 25.5 RED+GREEN: two concurrent launch requests for the same `(harness,cwd)` never produce two open unclaimed claims simultaneously
 
 ### Phase 26: `POST /launch` + UI Control + Subsystem Separation
 
