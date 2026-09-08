@@ -28,6 +28,15 @@ export interface ByteOffsetCheckpoint {
 export interface SeqCheckpoint {
   kind: 'seq';
   bySession: Record<string, number>;
+  /**
+   * Last published `part.time_updated` per session. Separate from `bySession` because the two
+   * advance on different currencies: `seq` decides WHEN to wake, `part.time_updated` decides WHICH
+   * rows become events (`event.data`'s shape was never confirmed by research, so parts are read
+   * from the `part` table directly). Without persisting this, a resumed session re-selects
+   * `time_updated > 0` and republishes its entire history. Optional so checkpoints written before
+   * this field load unchanged.
+   */
+  partsBySession?: Record<string, number>;
 }
 
 export type Checkpoint = ByteOffsetCheckpoint | SeqCheckpoint;
