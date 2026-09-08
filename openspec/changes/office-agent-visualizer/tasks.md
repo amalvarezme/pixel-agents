@@ -418,12 +418,35 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
   live against the real server + temp fixture roots (see apply-progress): `curl -N
   '.../stream?lastEventId=0'` showed real `tool_start` and `memory_write` frames for both Codex
   and Antigravity, fixture files byte-identical after the run.
-  **Still open for OpenCode** (deliberately deferred at the review-budget boundary, not attempted
-  half-done): `mapOpenCodePartToEvents` (`src/adapters/driven/opencode/parse.ts`) now exists and
-  is fully wired to `OpenCodeMemoryWriteDetector` with the same mutation-verified guard and
-  adversarial near-miss test as the other three harnesses — but `OpenCodeActivitySource` (SQLite
-  seq/rowid polling, a genuinely different mechanism from JSONL tailing) does not exist yet, and
-  OpenCode is not wired into `src/server.ts`. This is the one remaining piece to fully close B.1.
+  **CLOSED for OpenCode, the fourth and last harness** (`opencode-activity-source` work unit).
+  Added `OpenCodeActivitySource` (`src/adapters/driven/opencode/activity-source.ts`), composing
+  `db.ts` + `schema-probe.ts` + `poll.ts` + `parse.ts` behind the `ActivitySource` port. OpenCode
+  has no file-based session log (SQLite `seq` polling instead of JSONL tailing), so this adapter
+  does not reuse the shared byte-offset tailer the other three harnesses share — it drives
+  `poll.ts`'s existing tested query/backoff/checkpoint loop on a fixed cadence. Composition
+  decision (documented as a deviation, not a silent one): `event.data`'s exact JSON shape was
+  never confirmed (17.1), so this adapter uses `event.seq` (via `poll.ts`) purely as the
+  "something changed" wake signal and checkpoint currency, and separately re-reads the `part`
+  table directly (confirmed shape) past an in-memory per-session watermark for the actual rows
+  `mapOpenCodePartToEvents` needs. Composed into `src/server.ts` behind `OPENCODE_ENABLED`,
+  degrading quietly (same as the other three) when the db is absent or schema-drifted. Four
+  guards mutation-verified with adversarial near-miss twins: read-only enforcement (near-miss:
+  `-wal`+`-shm` both present opens ready; break: disabling the shm-precondition check makes
+  discovery falsely succeed), quiet degradation on a missing/drifted db (break: skipping the
+  `ensureOpen()` status check crashes instead of degrading), no dangling timer after `close()`
+  (break: removing `sleeper.cancelAll()` times out with a live fake timer), and the checkpoint
+  file resolving outside every watched directory including `OPENCODE_DB_PATH` (break: deriving
+  `CHECKPOINT_FILE` from `OPENCODE_DB_PATH` fails the structural guard in
+  `src/checkpoint-path.test.ts`). End-to-end verified live: a synthetic `opencode.db` with a
+  session + `engram_mem_save` part row, server composed against it, `curl -N
+  '.../stream?lastEventId=0'` showed `session_start`, `tool_start` and `memory_write` frames for
+  harness `opencode`; db/`-wal`/`-shm` byte-identical/size-stable before/after. Live-database
+  safety smoke also run against the real `~/.local/share/opencode/opencode.db` (read-only,
+  bounded `probe()`+`discover()`+`close()`): db and `-wal` byte-identical (same sha256/size/mtime),
+  `-shm` preserved (exists, same size) — see apply-progress for full evidence. 317 production
+  lines (git diff vs `b1-remaining-harnesses`, tests excluded), well under the 700-line budget.
+  **All four harnesses now emit `memory_write` at runtime and are composed into `src/server.ts`.
+  Blocker B.1 is fully closed.**
 - [x] B.2 (`archive-animation-runtime` work unit) Render half of 21.2 built:
   `src/ui/scene/animation/trip-animation.ts` + wiring through `OfficeContainer`, the worker
   molecule, the office-floor organism, and the pixi scene renderer — `archiveTrip` now becomes
@@ -436,7 +459,7 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
   - [x] Automated path identity across all four harnesses (`archive-trip-cross-harness.test.ts`)
   - [x] **Claude Code visually confirmed** by the orchestrator in Chrome against a live fixture tree: a `mcp__engram__mem_save` appended to a watched session made the worker leave its desk and travel the dogleg path carrying a document badged `x7` (the batch collapse of 8 bursted saves), the archive counter advanced 1 -> 2 -> 3, and the worker returned to its original desk. No console errors beyond a pre-existing favicon 404
   - [x] **Codex and Antigravity now emit `memory_write` at runtime** (`b1-remaining-harnesses`), confirmed via `curl -N '.../stream?lastEventId=0'` against the real server + temp fixture roots — `tool_start` and `memory_write` frames observed for both. Not yet visually confirmed in Chrome (that step is the orchestrator's, per the apply contract)
-  - [ ] OpenCode: still blocked on B.1's remaining piece (`OpenCodeActivitySource` + server wiring) — the mapper/detector wiring exists and is tested, but there is no live pipeline to replay through yet
+  - [x] **OpenCode now emits `memory_write` at runtime** (`opencode-activity-source`), confirmed via `curl -N '.../stream?lastEventId=0'` against the composed server + a synthetic `opencode.db` — `session_start`, `tool_start` and `memory_write` frames observed for harness `opencode`. Not yet visually confirmed in Chrome (that step is the orchestrator's, per the apply contract)
 
 ---
 
