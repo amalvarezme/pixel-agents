@@ -386,14 +386,44 @@ This is a PLAN gap, not an implementation slip: no phase in this file ever asked
 to be wired into their adapters' event pipelines. Phases 8, 12, 13 and 18 each say "implement the
 detector" and stop. Closing it needed two pieces of work that no current phase covered:
 
-- [x] B.1 (Claude Code only, `archive-animation-runtime` work unit) `mapClaudeCodeRecordToEvents`
+- [x] B.1 (Claude Code, `archive-animation-runtime` work unit) `mapClaudeCodeRecordToEvents`
   (`src/adapters/driven/claude-code/parse.ts`) now runs `ClaudeCodeMemoryWriteDetector` over every
   `tool_use` block it maps; a match emits `memory_write` alongside (never instead of) `tool_start`,
-  carrying the detector's `title`/`topicKey`/`observationType`. **Still open for Codex, Antigravity,
-  and OpenCode**: none of the three has a record→events mapper at all
-  (`mapCodexRecordToEvents`/`mapAntigravityRecordToEvents`/`mapOpenCodeRecordToEvents` do not
-  exist) — wiring them is building three new pipelines, a separate work unit, and none of them is
-  wired into `src/server.ts` today anyway, so none could be demonstrated end to end yet
+  carrying the detector's `title`/`topicKey`/`observationType`.
+- [x] B.1 (Codex + Antigravity, `b1-remaining-harnesses` work unit) **CLOSED for three of four
+  harnesses.** Added the two mappers that did not exist at all —
+  `mapCodexRecordToEvents` (`src/adapters/driven/codex/parse.ts`) emits `tool_start` for any
+  `event_msg`/`item_completed` record with a resolvable caption (McpToolCall or CommandExecution)
+  and, for a matching `engram`/`mem_save` McpToolCall, additionally a `memory_write`;
+  `mapAntigravityRecordToEvents` (`src/adapters/driven/antigravity/parse.ts`) emits one
+  `tool_start` per `tool_calls[]` entry, a `message` for a no-tool-call record with non-empty
+  `thinking` text, and, for a de-quoted `engram`/`mem_save` `call_mcp_tool`, additionally a
+  `memory_write`. Both detector-wiring points are mutation-verified: disconnecting
+  `CodexMemoryWriteDetector.detect`/`AntigravityMemoryWriteDetector.detect` turns their respective
+  "id after tool_start" assertions red, and each mapper has an adversarial near-miss test (a
+  different server/tool, or an unrelated MCP server) that must emit `tool_start` alone.
+  Added `CodexActivitySource` (`src/adapters/driven/codex/activity-source.ts`) and
+  `AntigravityActivitySource` (`src/adapters/driven/antigravity/activity-source.ts`), both
+  mirroring `ClaudeCodeActivitySource` and reusing the same `readTailIncrement`/`watchAndTailFile`
+  byte-offset tailer (design.md: "ONE shared mechanism for all three" JSONL harnesses); added
+  `watchAntigravitySessions` to `antigravity/discover.ts` (a live-discovery watcher did not exist
+  for that harness before this work unit). Composed all three JSONL harnesses into
+  `src/server.ts`: each is independently disableable via `<HARNESS>_ENABLED=false`
+  (`CLAUDE_CODE_ENABLED`/`CODEX_ENABLED`/`ANTIGRAVITY_ENABLED`), and a harness whose root does not
+  exist degrades quietly (`discoverCodexSessions`/`discoverAntigravitySessions` already return `[]`
+  on `ENOENT`, so ingestion for that harness simply finds nothing). Zero-Write Invariant coverage
+  extended to this composition path: `codex/activity-source.test.ts` and
+  `antigravity/activity-source.test.ts` each include a "discover + open + close never writes"
+  test, mirroring `claude-code/activity-source.test.ts`'s established pattern. End-to-end verified
+  live against the real server + temp fixture roots (see apply-progress): `curl -N
+  '.../stream?lastEventId=0'` showed real `tool_start` and `memory_write` frames for both Codex
+  and Antigravity, fixture files byte-identical after the run.
+  **Still open for OpenCode** (deliberately deferred at the review-budget boundary, not attempted
+  half-done): `mapOpenCodePartToEvents` (`src/adapters/driven/opencode/parse.ts`) now exists and
+  is fully wired to `OpenCodeMemoryWriteDetector` with the same mutation-verified guard and
+  adversarial near-miss test as the other three harnesses — but `OpenCodeActivitySource` (SQLite
+  seq/rowid polling, a genuinely different mechanism from JSONL tailing) does not exist yet, and
+  OpenCode is not wired into `src/server.ts`. This is the one remaining piece to fully close B.1.
 - [x] B.2 (`archive-animation-runtime` work unit) Render half of 21.2 built:
   `src/ui/scene/animation/trip-animation.ts` + wiring through `OfficeContainer`, the worker
   molecule, the office-floor organism, and the pixi scene renderer — `archiveTrip` now becomes
@@ -405,7 +435,8 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
 - [~] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each
   - [x] Automated path identity across all four harnesses (`archive-trip-cross-harness.test.ts`)
   - [x] **Claude Code visually confirmed** by the orchestrator in Chrome against a live fixture tree: a `mcp__engram__mem_save` appended to a watched session made the worker leave its desk and travel the dogleg path carrying a document badged `x7` (the batch collapse of 8 bursted saves), the archive counter advanced 1 -> 2 -> 3, and the worker returned to its original desk. No console errors beyond a pre-existing favicon 404
-  - [ ] Codex / Antigravity / OpenCode: still blocked on B.1 for those three — none of them emits `memory_write` at runtime, so there is nothing to replay yet
+  - [x] **Codex and Antigravity now emit `memory_write` at runtime** (`b1-remaining-harnesses`), confirmed via `curl -N '.../stream?lastEventId=0'` against the real server + temp fixture roots — `tool_start` and `memory_write` frames observed for both. Not yet visually confirmed in Chrome (that step is the orchestrator's, per the apply contract)
+  - [ ] OpenCode: still blocked on B.1's remaining piece (`OpenCodeActivitySource` + server wiring) — the mapper/detector wiring exists and is tested, but there is no live pipeline to replay through yet
 
 ---
 
