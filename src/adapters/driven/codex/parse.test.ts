@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { classifyCodexRecordFamily, extractMcpToolCallItem, isCodexCustomToolCall, parseCodexLine } from './parse';
+import {
+  classifyCodexRecordFamily,
+  extractMcpToolCallItem,
+  isCodexCustomToolCall,
+  parseCodexLine,
+  resolveCodexToolCaption,
+} from './parse';
 
 describe('parseCodexLine', () => {
   it('parses a well-formed event_msg record', () => {
@@ -62,6 +68,34 @@ describe('extractMcpToolCallItem', () => {
   it('returns null for a record with no payload', () => {
     const record = parseCodexLine('{"type":"session_meta"}')!;
     expect(extractMcpToolCallItem(record)).toBeNull();
+  });
+});
+
+describe('resolveCodexToolCaption (design.md "Captions": item.type; server/tool for McpToolCall, command head for CommandExecution)', () => {
+  it('sources toolLabel from item.type and toolDetail from server/tool for a McpToolCall', () => {
+    const record = parseCodexLine(
+      '{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"engram","tool":"mem_save"}}}',
+    )!;
+    expect(resolveCodexToolCaption(record)).toEqual({ toolLabel: 'McpToolCall', toolDetail: 'engram/mem_save' });
+  });
+
+  it('sources toolDetail from the command head for a CommandExecution', () => {
+    const record = parseCodexLine(
+      '{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":"ls -la /tmp"}}}',
+    )!;
+    expect(resolveCodexToolCaption(record)).toEqual({ toolLabel: 'CommandExecution', toolDetail: 'ls -la /tmp' });
+  });
+
+  it('never false-positives on a response_item/custom_tool_call record (same exclusion as extractMcpToolCallItem)', () => {
+    const record = parseCodexLine(
+      '{"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"mem_save"}}',
+    )!;
+    expect(resolveCodexToolCaption(record)).toBeNull();
+  });
+
+  it('returns null for a record with no payload item at all', () => {
+    const record = parseCodexLine('{"type":"session_meta"}')!;
+    expect(resolveCodexToolCaption(record)).toBeNull();
   });
 });
 

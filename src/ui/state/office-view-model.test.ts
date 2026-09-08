@@ -15,6 +15,10 @@ function parent(id: number, sessionKey: string, correlationId: string): AgentEve
   return { id, kind: 'parent', harness: 'claude-code', sessionKey, at: id, correlationId };
 }
 
+function memoryWrite(id: number, harness: HarnessId, sessionKey: string, at: number): AgentEvent {
+  return { id, kind: 'memory_write', harness, sessionKey, at, toolLabel: 'mem_save' };
+}
+
 describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
   it('projects an empty office to an empty view model', () => {
     const vm = buildOfficeViewModel(createOfficeState());
@@ -63,5 +67,43 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
     // Non-overlapping: every worker occupies a distinct (x, y) position.
     const positions = vm.workers.map((w) => `${w.x},${w.y}`);
     expect(new Set(positions).size).toBe(3);
+  });
+
+  it('has no archiveTrip for a worker that never received a memory_write', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.archiveTrip).toBeUndefined();
+  });
+
+  // Task 21.3: a memory_write event for S1 animates a path to the fixed archive destination
+  // (office-scene-renderer spec: "Archive Destination Rendering").
+  it('projects an archiveTrip path ending at the fixed archive destination once memory_write arrives', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, memoryWrite(2, 'claude-code', 'claude-code:s1', 1000));
+
+    const vm = buildOfficeViewModel(state);
+    const worker = vm.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+
+    expect(worker.archiveTrip).toBeDefined();
+    expect(worker.archiveTrip!.path[0]).toEqual({ x: worker.x, y: worker.y });
+    expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual({ x: 1720, y: 540 });
+    expect(worker.archiveTrip!.carryCount).toBe(1);
+  });
+
+  // Task 21.4: any harness's memory_write (incl. antigravity) triggers the identical animation
+  // path — the projection never branches on `harness`.
+  it('produces the identical archive path shape for every harness, from an antigravity memory_write too', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStartFor(1, 'antigravity', 'antigravity:cli:s1'));
+    state = applyEventToOfficeState(state, memoryWrite(2, 'antigravity', 'antigravity:cli:s1', 1000));
+
+    const vm = buildOfficeViewModel(state);
+    const worker = vm.workers.find((w) => w.sessionKey === 'antigravity:cli:s1')!;
+
+    expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual({ x: 1720, y: 540 });
   });
 });

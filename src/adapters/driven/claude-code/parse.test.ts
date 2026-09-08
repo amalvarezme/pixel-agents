@@ -4,6 +4,7 @@ import {
   extractToolUseBlocks,
   mapClaudeCodeRecordToEvents,
   parseClaudeCodeLine,
+  resolveClaudeCodeToolCaption,
   resolveWorkerLabel,
 } from './parse';
 
@@ -80,6 +81,18 @@ describe('resolveWorkerLabel', () => {
   });
 });
 
+describe('resolveClaudeCodeToolCaption (design.md "Captions": tool_use.name + short input digest)', () => {
+  it('resolves toolLabel from block.name and toolDetail from a recognized input key', () => {
+    const caption = resolveClaudeCodeToolCaption({ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'design.md' } });
+    expect(caption).toEqual({ toolLabel: 'Read', toolDetail: 'design.md' });
+  });
+
+  it('resolves toolLabel alone when the input has no recognized digest key', () => {
+    const caption = resolveClaudeCodeToolCaption({ type: 'tool_use', id: 't1', name: 'WebSearch', input: { unrelated: 1 } });
+    expect(caption).toEqual({ toolLabel: 'WebSearch' });
+  });
+});
+
 describe('mapClaudeCodeRecordToEvents', () => {
   function context(sessionKey = 'claude-code:session-abc') {
     let id = 0;
@@ -94,6 +107,15 @@ describe('mapClaudeCodeRecordToEvents', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ kind: 'tool_start', harness: 'claude-code', sessionKey: 'claude-code:session-abc' });
+  });
+
+  it('carries the normalized toolLabel/toolDetail caption pair on the tool_start event', () => {
+    const record = parseClaudeCodeLine(
+      '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"design.md"}}]}}',
+    )!;
+    const events = mapClaudeCodeRecordToEvents(record, context());
+
+    expect(events[0]).toMatchObject({ toolLabel: 'Read', toolDetail: 'design.md' });
   });
 
   it('maps a tool_result content block to a tool_end event', () => {

@@ -8,7 +8,16 @@
  */
 import type { HarnessId } from '../../domain/events/types';
 import type { OfficeState } from '../../domain/office/office';
+import { computeArchivePath, type ScenePoint } from '../scene/layout/archive-path';
 import { computeOfficeLayout, type DeskLane, type LayoutWorkerInput } from '../scene/layout/office-layout';
+
+/** memory_write archive-trip animation data (tasks.md 21.2-21.4). `path` is harness-agnostic —
+ * it is computed from the worker's desk position alone, never from `harness`. */
+export interface ArchiveTripView {
+  path: ScenePoint[];
+  /** ×N badge count — 1 for a single document, >1 once a batch (carry-queue.ts) is promoted. */
+  carryCount: number;
+}
 
 export interface WorkerViewModel {
   sessionKey: string;
@@ -17,6 +26,10 @@ export interface WorkerViewModel {
   x: number;
   y: number;
   lane: DeskLane;
+  /** Normalized tool_start caption pair (design.md "Captions"), resolved upstream per-harness. */
+  toolLabel?: string;
+  toolDetail?: string;
+  archiveTrip?: ArchiveTripView;
 }
 
 export interface OfficeViewModel {
@@ -38,6 +51,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
   for (const worker of workers) {
     const desk = deskBySessionKey.get(worker.sessionKey);
     if (!desk) continue; // beyond MAX_PACKED_WORKERS — counted in overflowCount instead
+    const held = state.carryQueues.get(worker.sessionKey)?.held;
     viewModelWorkers.push({
       sessionKey: worker.sessionKey,
       harness: worker.harness,
@@ -45,6 +59,8 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       x: desk.x,
       y: desk.y,
       lane: desk.lane,
+      ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
+      ...(held ? { archiveTrip: { path: computeArchivePath({ x: desk.x, y: desk.y }), carryCount: held.count } } : {}),
     });
   }
 

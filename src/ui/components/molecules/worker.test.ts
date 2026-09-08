@@ -31,4 +31,18 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
 
     expect(view.caption).toBe('(unnamed worker)');
   });
+
+  // Task 21.5: renders the normalized toolLabel/toolDetail caption when present, in preference
+  // to the plain label — same assertion regardless of `harness`, proving this molecule does not
+  // branch on it either.
+  it.each(['claude-code', 'codex', 'opencode', 'antigravity'] as const)(
+    'renders the normalized tool caption over the plain label for harness=%s',
+    (harness) => {
+      const view = buildWorkerView(
+        workerViewModel({ harness, label: 'my-session', toolLabel: 'Read', toolDetail: 'design.md' }),
+      );
+
+      expect(view.caption).toBe('Read: design.md');
+    },
+  );
 });

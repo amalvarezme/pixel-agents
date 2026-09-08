@@ -105,6 +105,28 @@ export interface ClaudeCodeEventMappingContext {
   allocateId: () => number;
 }
 
+export interface ToolCaption {
+  toolLabel: string;
+  toolDetail?: string;
+}
+
+const TOOL_INPUT_DIGEST_KEYS = ['file_path', 'file', 'path', 'command', 'pattern', 'query'] as const;
+
+/**
+ * Normalized {toolLabel, toolDetail} caption pair (design.md "Captions": "tool_use.name + short
+ * input digest, e.g. Read: design.md"). `toolDetail` is the first recognized, non-empty string
+ * value among the tool's own input fields — never a harness-agnostic guess.
+ */
+export function resolveClaudeCodeToolCaption(block: ClaudeCodeContentBlock): ToolCaption {
+  const toolLabel = typeof block.name === 'string' && block.name.length > 0 ? block.name : 'tool';
+  const input = block.input ?? {};
+  for (const key of TOOL_INPUT_DIGEST_KEYS) {
+    const value = input[key];
+    if (typeof value === 'string' && value.length > 0) return { toolLabel, toolDetail: value };
+  }
+  return { toolLabel };
+}
+
 /**
  * Maps one parsed record to zero or more normalized `AgentEvent`s (tasks.md 7.4). Only ever
  * produces LOG_SOURCED event kinds via `createEventFromLogRecord` — never `launch_requested`/
@@ -123,7 +145,8 @@ export function mapClaudeCodeRecordToEvents(
   const events: AgentEventBase[] = [];
 
   const toolUseBlocks = extractToolUseBlocks(record);
-  for (const _block of toolUseBlocks) {
+  for (const block of toolUseBlocks) {
+    const caption = resolveClaudeCodeToolCaption(block);
     events.push(
       createEventFromLogRecord(ctx.allocateId(), {
         kind: 'tool_start',
@@ -131,6 +154,8 @@ export function mapClaudeCodeRecordToEvents(
         sessionKey: ctx.sessionKey,
         at,
         label,
+        toolLabel: caption.toolLabel,
+        toolDetail: caption.toolDetail,
       }),
     );
   }

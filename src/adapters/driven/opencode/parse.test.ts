@@ -11,6 +11,7 @@ import {
   mapOpenCodeSessionToEvents,
   openCodeSessionKey,
   parseOpenCodePartData,
+  resolveOpenCodeToolCaption,
   resolveOpenCodeWorkerLabel,
   type OpenCodeSessionRow,
 } from './parse';
@@ -88,5 +89,22 @@ describe('parseOpenCodePartData', () => {
   it('parses valid JSON and returns null for malformed input', () => {
     expect(parseOpenCodePartData('{"type":"tool"}')).toEqual({ type: 'tool' });
     expect(parseOpenCodePartData('{not json')).toBeNull();
+  });
+});
+
+describe('resolveOpenCodeToolCaption (design.md "Captions": part.data.tool + state.title when non-empty)', () => {
+  it('sources toolLabel from data.tool and toolDetail from state.title', () => {
+    const data = parseOpenCodePartData('{"type":"tool","tool":"read","state":{"title":"design.md"}}')!;
+    expect(resolveOpenCodeToolCaption(data)).toEqual({ toolLabel: 'read', toolDetail: 'design.md' });
+  });
+
+  it('omits toolDetail when state.title is empty or absent', () => {
+    const data = parseOpenCodePartData('{"type":"tool","tool":"bash","state":{"title":""}}')!;
+    expect(resolveOpenCodeToolCaption(data)).toEqual({ toolLabel: 'bash' });
+  });
+
+  it('returns null for a non-tool part', () => {
+    const data = parseOpenCodePartData('{"type":"text"}')!;
+    expect(resolveOpenCodeToolCaption(data)).toBeNull();
   });
 });

@@ -45,6 +45,13 @@ export interface AgentEventBase {
   label?: string;
   /** Stable harness-agnostic correlation field (spec: Parent/Child Correlation Field Contract). */
   correlationId?: string;
+  /**
+   * Normalized caption pair on `tool_start`, sourced per-harness by each adapter's own resolver
+   * (design.md "Captions") so the renderer consumes one shared shape and never branches on
+   * `harness`.
+   */
+  toolLabel?: string;
+  toolDetail?: string;
 }
 
 export interface MemoryWriteEvent extends AgentEventBase {

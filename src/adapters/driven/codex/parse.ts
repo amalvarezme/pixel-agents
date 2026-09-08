@@ -102,3 +102,38 @@ export function isCodexCustomToolCall(record: CodexRecord): boolean {
   const payload = record.payload as CodexEventMsgPayload | undefined;
   return payload?.type === 'custom_tool_call';
 }
+
+export interface CodexToolCaption {
+  toolLabel: string;
+  toolDetail?: string;
+}
+
+const COMMAND_HEAD_MAX_LENGTH = 60;
+
+function commandHead(command: unknown): string | undefined {
+  const text = Array.isArray(command) ? command.join(' ') : typeof command === 'string' ? command : undefined;
+  if (!text || text.length === 0) return undefined;
+  return text.length > COMMAND_HEAD_MAX_LENGTH ? `${text.slice(0, COMMAND_HEAD_MAX_LENGTH)}…` : text;
+}
+
+/**
+ * Normalized {toolLabel, toolDetail} caption pair (design.md "Captions": "payload.item.type;
+ * server/tool for McpToolCall, command head for CommandExecution"). Sourced only from
+ * `event_msg`/`item_completed` records — the same family `extractMcpToolCallItem` reads — so a
+ * `response_item`/`custom_tool_call` record (sandboxed exec) never reaches this function either.
+ */
+export function resolveCodexToolCaption(record: CodexRecord): CodexToolCaption | null {
+  if (record.type !== 'event_msg') return null;
+  const payload = record.payload as CodexEventMsgPayload | undefined;
+  if (!payload || payload.type !== 'item_completed') return null;
+  const item = payload.item as { type?: string; server?: string; tool?: string; command?: unknown } | undefined;
+  if (!item || typeof item.type !== 'string') return null;
+
+  if (item.type === 'McpToolCall' && typeof item.server === 'string' && typeof item.tool === 'string') {
+    return { toolLabel: item.type, toolDetail: `${item.server}/${item.tool}` };
+  }
+  if (item.type === 'CommandExecution') {
+    return { toolLabel: item.type, toolDetail: commandHead(item.command) };
+  }
+  return { toolLabel: item.type };
+}

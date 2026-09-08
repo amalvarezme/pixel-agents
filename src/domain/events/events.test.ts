@@ -62,3 +62,34 @@ describe('event origination provenance', () => {
     expect(event.kind).toBe('launch_started');
   });
 });
+
+// Requirement: normalized {toolLabel, toolDetail} caption pair on tool_start (tasks.md 21.5,
+// design.md "Captions") — carried on the shared envelope so the renderer can consume it without
+// ever branching on `kind` or `harness`.
+describe('tool_start caption normalization fields', () => {
+  it('carries an optional toolLabel/toolDetail pair through the log-record factory', () => {
+    const event = createEventFromLogRecord(1, {
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+      toolLabel: 'Read',
+      toolDetail: 'design.md',
+    });
+
+    expect(event.toolLabel).toBe('Read');
+    expect(event.toolDetail).toBe('design.md');
+  });
+
+  it('omits toolLabel/toolDetail when the caller does not supply them', () => {
+    const event = createEventFromLogRecord(1, {
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+    });
+
+    expect(event.toolLabel).toBeUndefined();
+    expect(event.toolDetail).toBeUndefined();
+  });
+});

@@ -24,6 +24,6 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     y: worker.y,
     lane: worker.lane,
     badge: buildHarnessBadge(worker.harness),
-    caption: buildCaption(worker.label),
+    caption: buildCaption(worker.label, worker.toolLabel ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : undefined),
   };
 }
