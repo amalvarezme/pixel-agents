@@ -3,6 +3,7 @@ import {
   classifyCodexRecordFamily,
   extractMcpToolCallItem,
   isCodexCustomToolCall,
+  mapCodexRecordToEvents,
   parseCodexLine,
   resolveCodexToolCaption,
 } from './parse';
@@ -110,5 +111,94 @@ describe('isCodexCustomToolCall', () => {
       '{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"engram","tool":"mem_save"}}}',
     )!;
     expect(isCodexCustomToolCall(record)).toBe(false);
+  });
+});
+
+describe('mapCodexRecordToEvents', () => {
+  function context(sessionKey = 'codex:01a02fc7-3a34-7443-a79a-3ced988a0f20') {
+    let id = 0;
+    return { sessionKey, allocateId: () => ++id };
+  }
+
+  it('maps a CommandExecution item_completed record to a tool_start event', () => {
+    const record = parseCodexLine(
+      '{"type":"event_msg","timestamp":"2026-08-23T18:01:00.000Z","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":"ls -la /tmp"}}}',
+    )!;
+    const events = mapCodexRecordToEvents(record, context());
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: 'tool_start',
+      harness: 'codex',
+      sessionKey: 'codex:01a02fc7-3a34-7443-a79a-3ced988a0f20',
+      toolLabel: 'CommandExecution',
+      toolDetail: 'ls -la /tmp',
+    });
+  });
+
+  it('produces no events for a record with no resolvable tool caption (e.g. session_meta)', () => {
+    const record = parseCodexLine('{"type":"session_meta","timestamp":"2026-08-23T18:00:00.000Z"}')!;
+    expect(mapCodexRecordToEvents(record, context())).toEqual([]);
+  });
+
+  it('produces no events for a response_item/custom_tool_call record (exec sandbox, not a tool call the scene renders)', () => {
+    const record = parseCodexLine(
+      '{"type":"response_item","timestamp":"2026-08-23T18:01:10.000Z","payload":{"type":"custom_tool_call","name":"exec","input":"print(mem_save)","output":"mem_save"}}',
+    )!;
+    expect(mapCodexRecordToEvents(record, context())).toEqual([]);
+  });
+
+  // Blocker B.1 (tasks.md): CodexMemoryWriteDetector exists and is fixture-tested, but nothing
+  // ever called it at runtime. This wires it into the same item_completed mapping that already
+  // produces tool_start for a McpToolCall.
+  describe('memory_write wiring (blocker B.1, Codex)', () => {
+    it('emits a memory_write event IN ADDITION TO tool_start for a matching engram/mem_save McpToolCall', () => {
+      const record = parseCodexLine(
+        '{"type":"event_msg","timestamp":"2026-08-23T18:00:25.470Z","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"engram","tool":"mem_save","arguments":{"title":"Verified Gentle AI and Engram availability","topic_key":"config/gentle-ai-engram","type":"config"}}}}',
+      )!;
+      const events = mapCodexRecordToEvents(record, context());
+
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({ kind: 'tool_start', harness: 'codex' });
+      expect(events[1]).toMatchObject({
+        kind: 'memory_write',
+        harness: 'codex',
+        sessionKey: 'codex:01a02fc7-3a34-7443-a79a-3ced988a0f20',
+        title: 'Verified Gentle AI and Engram availability',
+        topicKey: 'config/gentle-ai-engram',
+        observationType: 'config',
+        toolLabel: 'mem_save',
+      });
+    });
+
+    // Adversarial twin: a McpToolCall for an unrelated server/tool must emit ONLY tool_start.
+    // This is the guard that proves the wiring is gated on detector.detect(), not merely on the
+    // presence of a McpToolCall — asserting "tool_start is emitted" alone would pass either way.
+    it('emits ONLY tool_start for a non-matching McpToolCall (near-miss: different server/tool)', () => {
+      const record = parseCodexLine(
+        '{"type":"event_msg","timestamp":"2026-08-23T18:02:00.000Z","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"context7","tool":"get-library-docs","arguments":{}}}}',
+      )!;
+      const events = mapCodexRecordToEvents(record, context());
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ kind: 'tool_start' });
+      expect(events.some((e) => e.kind === 'memory_write')).toBe(false);
+    });
+
+    it('never fires for the response_item/custom_tool_call exec false-positive trap', () => {
+      const record = parseCodexLine(
+        '{"type":"response_item","timestamp":"2026-08-23T18:01:10.000Z","payload":{"type":"custom_tool_call","name":"exec","input":"import subprocess","output":"./scratch.py: def mem_save(): pass"}}',
+      )!;
+      expect(mapCodexRecordToEvents(record, context())).toEqual([]);
+    });
+
+    it('allocates a distinct, monotonically increasing id for the memory_write event after tool_start', () => {
+      const record = parseCodexLine(
+        '{"type":"event_msg","timestamp":"2026-08-23T18:00:25.470Z","payload":{"type":"item_completed","item":{"type":"McpToolCall","server":"engram","tool":"mem_save","arguments":{"title":"x"}}}}',
+      )!;
+      const events = mapCodexRecordToEvents(record, context());
+
+      expect(events.map((e) => e.id)).toEqual([1, 2]);
+    });
   });
 });

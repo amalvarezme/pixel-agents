@@ -1,0 +1,112 @@
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { CodexActivitySource } from './activity-source';
+import { currentDayDirectory } from './discover';
+
+// b1-remaining-harnesses: `ActivitySource` composition for Codex, mirroring
+// `claude-code/activity-source.ts` exactly (design.md D1) — reuses the SAME `readTailIncrement`/
+// `watchAndTailFile` tailer (design.md: "JSONL tailing ... ONE shared mechanism for all three").
+describe('CodexActivitySource', () => {
+  let root: string;
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  async function makeRolloutFile(firstLine?: string): Promise<{ root: string; filePath: string }> {
+    root = await mkdtemp(join(tmpdir(), 'codex-activity-source-'));
+    const dayDir = currentDayDirectory(root);
+    await mkdir(dayDir, { recursive: true });
+    const filePath = join(dayDir, 'rollout-2026-08-23T12-59-40-01a02fc7-3a34-7443-a79a-3ced988a0f20.jsonl');
+    await writeFile(filePath, firstLine ? `${firstLine}\n` : '');
+    return { root, filePath };
+  }
+
+  it('discover() yields a session that already exists on disk before the source was constructed', async () => {
+    const mcpToolCallLine = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-08-23T18:00:25.470Z',
+      payload: { type: 'item_completed', item: { type: 'McpToolCall', server: 'engram', tool: 'mem_save', arguments: {} } },
+    });
+    const { root: harnessRoot } = await makeRolloutFile(mcpToolCallLine);
+    const source = new CodexActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+
+    expect(sessionRef?.sessionKey).toBe('codex:01a02fc7-3a34-7443-a79a-3ced988a0f20');
+    await source.close();
+  });
+
+  it('open() emits a synthetic session_start event first, then a memory_write-carrying tool_start for a matching McpToolCall', async () => {
+    const mcpToolCallLine = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-08-23T18:00:25.470Z',
+      payload: { type: 'item_completed', item: { type: 'McpToolCall', server: 'engram', tool: 'mem_save', arguments: { title: 'x' } } },
+    });
+    const { root: harnessRoot } = await makeRolloutFile(mcpToolCallLine);
+    const source = new CodexActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+
+    const second = await streamIterator.next();
+    expect(second.value?.event.kind).toBe('tool_start');
+
+    const third = await streamIterator.next();
+    expect(third.value?.event.kind).toBe('memory_write');
+
+    stream.stop();
+    await source.close();
+  });
+
+  it('live-tails a line appended AFTER open() was called', async () => {
+    const { root: harnessRoot, filePath } = await makeRolloutFile();
+    const source = new CodexActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const sessionStart = await streamIterator.next();
+    expect(sessionStart.value?.event.kind).toBe('session_start');
+
+    const commandLine = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-08-23T18:01:00.000Z',
+      payload: { type: 'item_completed', item: { type: 'CommandExecution', command: 'ls' } },
+    });
+    await writeFile(filePath, `${commandLine}\n`);
+
+    const next = await streamIterator.next();
+    expect(next.value?.event.kind).toBe('tool_start');
+
+    stream.stop();
+    await source.close();
+  });
+
+  it('discover + open + close never writes anything under the harness root (Global No-Write Invariant, composition level)', async () => {
+    const { root: harnessRoot, filePath } = await makeRolloutFile('{"type":"session_meta"}');
+    const source = new CodexActivitySource(harnessRoot);
+
+    const before = await stat(filePath);
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    await stream.events[Symbol.asyncIterator]().next(); // drain the synthetic session_start
+    stream.stop();
+    await source.close();
+    const after = await stat(filePath);
+
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+    expect(after.size).toBe(before.size);
+  });
+});
