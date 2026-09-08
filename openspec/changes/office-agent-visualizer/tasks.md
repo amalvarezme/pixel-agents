@@ -1,5 +1,33 @@
 # Tasks: Office Agent Visualizer
 
+## Review Budget Policy (maintainer decision, supersedes the forecast below)
+
+**The review budget counts PRODUCTION lines only: 700 per work unit.** Test files
+(`*.test.ts`), fixtures under `test/`, and `package-lock.json` are excluded.
+
+Rationale: the first three work units each exceeded a budget that counted tests, while every one
+of them stayed well under 500 production lines.
+
+| Work unit | Production | Total excl. lockfile |
+|---|---|---|
+| PR1 `slice-1a-contracts-toolchain` | 279 | 622 |
+| PR2 `slice-1a-ports-spikes` | 497 | 875 |
+| PR3 `slice-1b-claude-adapter` | 490 | 1194 |
+
+A budget that charges tests rewards writing fewer of them, which is the opposite of what strict TDD
+is for in this change: the four `memory_write` detectors are the highest-value tests here, and each
+spec scenario mandates its own RED/GREEN pair. In PR3 alone, 490 lines are production and 704 are
+tests and fixtures — a healthy ratio, not bloat.
+
+The `gentle-ai sdd-attempt` ledger cannot express "production only", so its `--max-changed-lines`
+is set generously and acts as a safety net. The 700-production-line rule is enforced by measuring
+each work unit before opening its PR:
+
+```sh
+git diff --numstat <base>..<head> -- 'src/**' ':(exclude)src/**/*.test.ts' \
+  | awk '{a+=$1; d+=$2} END {print a+d}'
+```
+
 ## Review Workload Forecast
 
 | Field | Value |
@@ -52,6 +80,19 @@ The runtime attempt ledger recorded 2698 changed lines for the first attempt bec
 maintainer with a 3000-line budget for this first unit to absorb the one-time lockfile, and 800 for
 every unit after it.
 
+Slice 1b was split the same way, before implementation started, once Phases 7-8 alone were
+estimated near the 400-450 line range for the whole slice (7-10) and the maintainer pre-approved a
+1000-line budget for the first slice-1b work unit to absorb strict-TDD test volume (discovery,
+tailing, parsing, correlation, and a false-positive-trap-driven detector each need dedicated
+RED/GREEN coverage per spec scenario):
+
+- **PR3 (`slice-1b-claude-adapter`, base: `slice-1a-ports-spikes`)** — Phases 7-8: Claude Code
+  adapter (discovery, tailing, parsing, parent/child correlation) and its `memory_write` detector
+  with sanitized fixtures. 1024 lines excluding `package-lock.json` (`chokidar` added as a
+  dependency), of which roughly 600 are tests. No PixiJS, SSE server, or UI code lands here.
+- **PR4 (base: PR3 branch)** — Phases 9-11: SSE server, minimal Pixi scene, atomic-design
+  components, and slice 1b verification — deliberately deferred, not dropped.
+
 ## Slice 1a — PR 1 (base: `main`) — Contracts & Toolchain (Phases 1-2)
 
 ### Phase 1: Toolchain Setup
@@ -100,27 +141,29 @@ every unit after it.
 
 ---
 
-## Slice 1b — PR 2 (base: PR1 branch) — Claude Code Adapter & Minimal Scene
+## Slice 1b — PR 3 (base: `slice-1a-ports-spikes`, split into two PRs; see Delivery Revision above) — Claude Code Adapter & Minimal Scene
 
 ### Phase 7: Claude Code Adapter — Discovery & Tailing
 
-- [ ] 7.1 Create `src/adapters/driven/claude-code/discover.ts` — glob `~/.claude/projects/*/*.jsonl` (read-only host path) plus `*/<sid>/subagents/agent-*.jsonl`; chokidar `add` for new files (Claude Code Session Discovery)
-- [ ] 7.2 Create `src/adapters/driven/claude-code/tail.ts` — `chokidar` watch → stat-based offset math: growth (read from offset), rotation/truncation (reset, `status(source_reset)`), no-op on equal size, partial trailing-line buffer never emitted
-- [ ] 7.3 RED+GREEN: temp-dir test — growth, rotation, truncation, partial-line-buffer cases, driving the read function directly (no chokidar)
-- [ ] 7.4 Create `src/adapters/driven/claude-code/parse.ts` — parse `assistant`/`user`/`system`/`tool_use`/`tool_result` records into `AgentEvent`
-- [ ] 7.5 Implement parent/child correlation via `toolUseResult.agentId` ↔ `agent-<agentId>.jsonl` filename; second independent edge via `<parent-session-id>/subagents/` directory name
-- [ ] 7.6 RED+GREEN: subagent correlates to parent via `agentId` alone, independent of `attributionAgent` (Requirement: Claude Code Session Discovery scenarios)
-- [ ] 7.7 RED+GREEN: missing `attributionAgent` still resolves a deterministic fallback label, correlation unaffected
-- [ ] 7.8 RED+GREEN: adapter startup performs zero writes under `~/.claude/` (Global No-Write Invariant, Claude Code)
+- [x] 7.1 Create `src/adapters/driven/claude-code/discover.ts` — glob `~/.claude/projects/*/*.jsonl` (read-only host path) plus `*/<sid>/subagents/agent-*.jsonl`; chokidar `add` for new files (Claude Code Session Discovery)
+- [x] 7.2 Create `src/adapters/driven/claude-code/tail.ts` — `chokidar` watch → stat-based offset math: growth (read from offset), rotation/truncation (reset, `status(source_reset)`), no-op on equal size, partial trailing-line buffer never emitted
+- [x] 7.3 RED+GREEN: temp-dir test — growth, rotation, truncation, partial-line-buffer cases, driving the read function directly (no chokidar)
+- [x] 7.4 Create `src/adapters/driven/claude-code/parse.ts` — parse `assistant`/`user`/`system`/`tool_use`/`tool_result` records into `AgentEvent`
+- [x] 7.5 Implement parent/child correlation via `toolUseResult.agentId` ↔ `agent-<agentId>.jsonl` filename; second independent edge via `<parent-session-id>/subagents/` directory name
+- [x] 7.6 RED+GREEN: subagent correlates to parent via `agentId` alone, independent of `attributionAgent` (Requirement: Claude Code Session Discovery scenarios)
+- [x] 7.7 RED+GREEN: missing `attributionAgent` still resolves a deterministic fallback label, correlation unaffected
+- [x] 7.8 RED+GREEN: adapter startup performs zero writes under `~/.claude/` (Global No-Write Invariant, Claude Code)
+
+> **Defect found and fixed on this branch (`slice-1b-claude-adapter`, work unit `fix-tail-string-too-long`):** task 11.2's manual smoke test against a real `~/.claude/projects/` tree hit `ERR_STRING_TOO_LONG` in `tail.ts`. Cause: `readFromOffset()` concatenated every stream chunk into one `Buffer` via `Buffer.concat`, and `splitCompleteLines()` then called `buffer.toString('utf8')` on that whole buffer, materializing the entire increment as a single JavaScript string — safe during steady-state tailing (small increments), but the very first read of an existing file starts at `offset = 0`, so the increment is the whole file. Any sufficiently large existing session (one real fixture was 854 MB) broke the adapter at startup. Fixed by reading and decoding the increment in bounded chunks (`createReadStream({ highWaterMark: maxChunkBytes })` + incremental `StringDecoder`, injectable chunk size, default 1 MiB) instead of one whole-buffer read; regression tests added to `tail.test.ts` cover bounded chunk sizes, tiny-chunk/whole-file equivalence, a multi-byte UTF-8 character split across a chunk boundary, and partial-line survival across an internal chunk boundary. Verified against the real 854 MB fixture: old code reproducibly threw `ERR_STRING_TOO_LONG`, fixed code reads it in ~45s with zero writes to the file.
 
 ### Phase 8: Claude Code memory_write Detector + Fixtures
 
-- [ ] 8.1 Capture and sanitize fixtures from `~/.claude/projects/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q4/Q5: strip absolute home paths, private project names, unrelated content — commit to `test/fixtures/claude-code/`
-- [ ] 8.2 Fixture: `tool_use` with `name: "mcp__engram__mem_save"` (true positive)
-- [ ] 8.3 Fixture: `tool_use` with `name: "mcp__plugin_engram_engram__mem_save"` (true positive)
-- [ ] 8.4 Fixture: `tool_use` with `name: "mcp__engram__mem_search"` (false-positive trap — MUST NOT fire)
-- [ ] 8.5 RED: write failing detector tests against all three fixtures above
-- [ ] 8.6 GREEN: implement `src/adapters/driven/claude-code/memory-write-detector.ts` matching `mcp__*engram*__mem_save`; both fixtures 8.2/8.3 fire, 8.4 does not
+- [x] 8.1 Capture and sanitize fixtures from `~/.claude/projects/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q4/Q5: strip absolute home paths, private project names, unrelated content — commit to `test/fixtures/claude-code/`
+- [x] 8.2 Fixture: `tool_use` with `name: "mcp__engram__mem_save"` (true positive)
+- [x] 8.3 Fixture: `tool_use` with `name: "mcp__plugin_engram_engram__mem_save"` (true positive)
+- [x] 8.4 Fixture: `tool_use` with `name: "mcp__engram__mem_search"` (false-positive trap — MUST NOT fire)
+- [x] 8.5 RED: write failing detector tests against all three fixtures above
+- [x] 8.6 GREEN: implement `src/adapters/driven/claude-code/memory-write-detector.ts` matching `mcp__*engram*__mem_save`; both fixtures 8.2/8.3 fire, 8.4 does not
 
 ### Phase 9: SSE Server
 
