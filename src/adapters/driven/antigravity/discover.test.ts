@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
-import { classifyAntigravityLogPath, discoverAntigravitySessions } from './discover';
+import { classifyAntigravityLogPath, discoverAntigravitySessions, watchAntigravitySessions } from './discover';
 
 describe('classifyAntigravityLogPath', () => {
   it('classifies a CLI transcript.jsonl path', () => {
@@ -143,5 +143,55 @@ describe('discoverAntigravitySessions', () => {
 
     expect(after).toBe(before);
     expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
+  });
+});
+
+describe('watchAntigravitySessions', () => {
+  let root: string;
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it('discovers a new CLI transcript.jsonl added after the watcher starts', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-watch-'));
+    await mkdir(join(root, 'antigravity-cli'), { recursive: true });
+
+    const discovered: string[] = [];
+    const watcher = watchAntigravitySessions(root, (ref) => discovered.push(ref.sessionKey));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-new', '.system_generated', 'logs');
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(join(logsDir, 'transcript.jsonl'), '{}\n');
+
+    await new Promise<void>((resolve) => {
+      const check = (): void => {
+        if (discovered.length > 0) return resolve();
+        setTimeout(check, 20);
+      };
+      check();
+    });
+
+    expect(discovered).toEqual(['antigravity:cli:uuid-new']);
+    await watcher.close();
+  });
+
+  it('ignores a newly added transcript_full.jsonl (the one-shot scan already excludes it as a primary source)', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-watch-full-'));
+    await mkdir(join(root, 'antigravity-cli'), { recursive: true });
+
+    const discovered: string[] = [];
+    const watcher = watchAntigravitySessions(root, (ref) => discovered.push(ref.sessionKey));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-full-only', '.system_generated', 'logs');
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(join(logsDir, 'transcript_full.jsonl'), '{}\n');
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(discovered).toEqual([]);
+    await watcher.close();
   });
 });

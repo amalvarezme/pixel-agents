@@ -17,6 +17,7 @@
  */
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import chokidar, { type FSWatcher } from 'chokidar';
 import type { SessionRef } from '../../../ports/activity-source.port';
 
 export type AntigravitySurface = 'cli' | 'ide';
@@ -132,4 +133,34 @@ export async function discoverAntigravitySessions(root: string): Promise<Antigra
     });
   }
   return refs;
+}
+
+/**
+ * Watches both surface roots for a newly added `transcript.jsonl` (b1-remaining-harnesses work
+ * unit). Only `transcript.jsonl` ever triggers discovery here, matching the one-shot scan's
+ * tail-only decision (design.md: "following both double-emits") — a lone new
+ * `transcript_full.jsonl` is ignored. Read-only: chokidar's `add` watcher never writes to the
+ * watched tree. The caller owns the returned watcher's lifecycle.
+ */
+export function watchAntigravitySessions(
+  root: string,
+  onDiscovered: (ref: AntigravitySessionRef) => void,
+): FSWatcher {
+  const watcher = chokidar.watch([join(root, 'antigravity-cli'), join(root, 'antigravity-ide')], {
+    ignoreInitial: true,
+  });
+  watcher.on('add', (filePath: string) => {
+    const classified = classifyAntigravityLogPath(filePath);
+    if (!classified || classified.isFull) return;
+    onDiscovered({
+      harness: 'antigravity',
+      sessionKey: `antigravity:${classified.surface}:${classified.conversationId}`,
+      filePath,
+      surface: classified.surface,
+      launchEligible: classified.surface === 'cli',
+      candidateFiles: [filePath],
+      discoveredAt: Date.now(),
+    });
+  });
+  return watcher;
 }
