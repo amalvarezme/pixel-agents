@@ -459,6 +459,12 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
 ### Gaps found by the four-harness runtime verification (orchestrator, Chrome + curl)
 
 - [x] G.1 **The `snapshot` frame carries no archive state.** Fixed (work unit
+  - [x] **Visually confirmed by the orchestrator in Chrome**: ingested three `mem_save` records
+    FIRST, then connected a fresh client — the page rendered `Archived: 3`, matching the ingested
+    count exactly. This was the original reproduction (a late client showed `Archived: 0`), so the
+    observable symptom is genuinely gone, not only the payload. The applier's caveat that the
+    visible counter is animation-playback state held, but did not block the outcome: the restored
+    domain state re-derives the trips and they play out to the correct total
   `snapshot-state-and-caption-layout`). `domain/office/office.ts` gained a pure
   `serializeOfficeState`/`deserializeOfficeState` round-trip pair — `OfficeState.carryQueues` is a
   `Map` and is not directly JSON-serializable (`JSON.stringify` silently produces `{}`), so the
@@ -476,6 +482,8 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
   docks and `carryQueues` with 3 held documents — see apply-progress for the full payload. 471/471
   tests, typecheck 0 errors, lint:deps 0 violations
 - [x] G.2 **Worker captions overlap horizontally.** Fixed (work unit
+  - [x] **Visually confirmed by the orchestrator in Chrome**: three adjacent workers on the packed
+    row render with cleanly separated captions, no overlap
   `snapshot-state-and-caption-layout`). Desk positions stay stable (`DESK_SPACING` unchanged);
   instead `components/atoms/caption.ts` gained a pure, canvas-free `computeMaxCaptionChars(deskSpacing)`
   deriving a character budget from the same `DESK_SPACING` the layout math already owns (now
