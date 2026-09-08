@@ -456,6 +456,18 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
   for the part stream. Now persisted per session and seeded from the checkpoint on resume;
   `nextSeqCheckpoint` preserves the field. Covered by a resume test verified against the reverted
   fix
+### Gaps found by the four-harness runtime verification (orchestrator, Chrome + curl)
+
+- [ ] G.1 **The `snapshot` frame carries no archive state.** A client connecting AFTER
+  `memory_write` events have been ingested sees the workers but `Archived: 0`. Reproduced: three
+  harnesses each emitted a `memory_write` before the browser connected, and the page rendered all
+  three workers with correct captions and a zero counter; a `mem_save` appended live then moved it
+  to 1. Phase 9.2 built the snapshot so a late or evicted client can reconstruct state — archive
+  count and in-flight carries are part of that state and are currently missing from it
+- [ ] G.2 **Worker captions overlap horizontally** when several workers sit adjacent on the packed
+  row; the harness-specific captions are long and the layout does not account for their width.
+  Cosmetic, no correctness impact
+
 - [x] B.2 (`archive-animation-runtime` work unit) Render half of 21.2 built:
   `src/ui/scene/animation/trip-animation.ts` + wiring through `OfficeContainer`, the worker
   molecule, the office-floor organism, and the pixi scene renderer — `archiveTrip` now becomes
