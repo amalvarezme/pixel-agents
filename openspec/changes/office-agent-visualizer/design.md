@@ -120,13 +120,17 @@ the Canvas-2D fallback a real option rather than a claim.
 
 ### Decision: read-only SQLite for OpenCode, never `immutable=1`
 
-**Choice** `better-sqlite3` behind the port, opened `{ readonly: true, fileMustExist: true }` plus
-`PRAGMA query_only = 1`, `busy_timeout = 0` (we own the backoff).
+**Choice** — **resolved in slice 3**: `node:sqlite`'s `DatabaseSync` behind the port, opened
+`{ readOnly: true }` plus `PRAGMA query_only = 1`, `busy_timeout = 0` (we own the backoff).
+`DatabaseSync` has no separate `fileMustExist` flag; a missing/unopenable path is instead reported
+as `disabled(reason:'wal_shm_unavailable')`, never a crash (see `db.ts`).
 
 **Alternatives considered** `immutable=1` (rejected: ignores the live WAL, yields stale/torn
 reads); the `opencode serve` SSE `/event` endpoint (rejected: requires a running server we do not
-control, and would make the adapter silently absent most of the time); `node:sqlite` (viable,
-deferred to slice 3 — the port makes it swappable).
+control, and would make the adapter silently absent most of the time); `better-sqlite3` (this
+section originally proposed it and deferred the final pick to slice 3 — resolved instead to
+`node:sqlite`, verified by `test/spikes/opencode-schema-probe.spike.mjs`; no new native dependency
+needed, and the port keeps the driver swappable if this ever changes).
 
 **Rationale** Since OpenCode v1.2 there is no file-based session log, so the prior art's avoidance
 of `opencode.db` has no fallback left. A read-only connection cannot checkpoint — that is the safety
@@ -188,8 +192,8 @@ handles that case.
 | Query | `SELECT seq, type, data FROM event WHERE aggregate_id = ? AND seq > ? ORDER BY seq LIMIT 500` via `event_aggregate_seq_idx`; hydrate referenced `part`/`message` rows. `LIMIT 500` is also the natural rate cap. |
 | Checkpoint | `max(seq)` per aggregate, committed only **after** the batch is published. |
 | `SQLITE_BUSY` / `_SNAPSHOT` / `LOCKED` | Exponential backoff 50→100→200→400→800→1600, cap 2000 ms, full jitter, reset on success. Never an error — a running OpenCode writes constantly, so busy is the normal case. After 30 s continuously busy, emit `status(degraded)` and keep retrying. |
-| Startup schema probe | `sqlite_master` + `PRAGMA table_info` for required: `event(aggregate_id, seq, type, data)`, `session(id, parent_id, title, time_created, time_updated)`, `message(id, session_id, data)`, `part(id, message_id, session_id, data)`. Missing required → `disabled(reason:'schema_drift', detail:'event.seq missing')`. Missing **optional** (`agent`, `tokens_*`, `cost`) → `ready` with a degraded-capability flag; labels/stats fall back. |
-| `-shm` absent (harness not running, WAL db) | A readonly open can fail `SQLITE_CANTOPEN`. Degrade to `disabled(reason:'wal_shm_unavailable')` and retry on an interval. Do **not** silently fall back to `immutable=1` — that would skip WAL frames and report stale state as live. |
+| Startup schema probe | `sqlite_master` + `PRAGMA table_info` for required: `event(aggregate_id, seq, type, data)`, `session(id, parent_id, title, time_created, time_updated, agent)`, `message(id, session_id, data)`, `part(id, message_id, session_id, data)`. Missing required → `disabled(reason:'schema_drift', detail:'<table>.<column> missing')`. Missing **optional** (`tokens_*`, `cost`) → `ready` with a degraded-capability flag; stats fall back. **Correction (slice 3):** `session.agent` was originally listed here as optional, contradicting the `harness-log-ingestion` spec's own "Missing expected column degrades gracefully" scenario, which requires dropping `session.agent` to DISABLE the adapter (tasks.md 16.4). `agent` is now REQUIRED; only the stats columns remain optional. |
+| `-shm` absent (harness not running, WAL db) | Experimentally, a same-process readonly `DatabaseSync` open can still SUCCEED even with `-shm` deleted rather than reliably throwing `SQLITE_CANTOPEN` — so the adapter checks the filesystem precondition explicitly (`-wal` present + `-shm` absent) BEFORE attempting to open, rather than depending on the open call to throw. Degrade to `disabled(reason:'wal_shm_unavailable')` and retry on an interval. Do **not** silently fall back to `immutable=1` — that would skip WAL frames and report stale state as live. **Also confirmed (slice 3, live smoke test):** a genuinely read-only reader legitimately mutates `-shm`'s CONTENT/mtime as normal WAL-mode bookkeeping — this is not a violation; the invariant that matters is that `-shm` is never DELETED and its size stays stable, not byte-identity. |
 
 ### Session discovery and aging out
 
@@ -456,7 +460,15 @@ continue, since `probe()` already models `disabled` as a first-class state.
 - [ ] Is Antigravity's `transcript.jsonl` genuinely truncated on compaction? Sample size is 1 and
       both files were byte-identical. Defensive path already designed (rotation branch handles it;
       `_full` is recovery-only), so this does not block.
-- [ ] `node:sqlite` vs `better-sqlite3` final pick — deferred to slice 3, isolated behind the port.
+- [x] `node:sqlite` vs `better-sqlite3` final pick — **RESOLVED in slice 3: `node:sqlite`'s
+      `DatabaseSync`.** `test/spikes/opencode-schema-probe.spike.mjs` verified on-machine that it
+      opens the real schema read-only with only an ExperimentalWarning and no new native
+      dependency. `better-sqlite3` was never installed. One environment note the spike did not
+      surface: the project's pinned Vite/vite-node (5.4.21/2.1.8) hardcodes an outdated Node
+      builtin-module allowlist that predates `node:sqlite`, so the driver is loaded via
+      `createRequire(import.meta.url)('node:sqlite')` rather than a static `import` — this
+      bypasses Vite's module graph entirely and lets Node's own loader resolve the real builtin.
+      See `src/adapters/driven/opencode/db.ts`.
 - [ ] Whether Claude Code appends subagent transcripts atomically. The partial-line buffer covers
       either behavior, so this is informational.
 - [ ] Antigravity IDE sessions are read-only by scope decision (launch is `agy`-only); confirm the
