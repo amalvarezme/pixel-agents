@@ -15,6 +15,13 @@ module.exports = {
       from: { path: '^src/domain', pathNot: '\\.test\\.ts$' },
       to: { dependencyTypes: ['npm', 'npm-dev'] },
     },
+    {
+      name: 'pixi-only-in-scene-pixi',
+      comment: 'Only src/ui/scene/pixi/ may import pixi.js — layout math and the rest of ui/ stay canvas-free and testable without a browser (design.md D3).',
+      severity: 'error',
+      from: { path: '^src/ui', pathNot: ['^src/ui/scene/pixi', '\\.test\\.ts$'] },
+      to: { path: 'pixi\\.js' },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
