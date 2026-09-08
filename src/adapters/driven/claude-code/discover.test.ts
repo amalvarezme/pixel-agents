@@ -99,25 +99,51 @@ describe('watchClaudeCodeSessions', () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
 
+  // chokidar's `ready` fires once the initial scan completes, but on macOS that does NOT guarantee
+  // the fsevents stream is already delivering events for the watched tree. Writing a single file
+  // on `ready` therefore races: under full-suite concurrency the write lands inside that window
+  // roughly one run in five and its `add` is never delivered, timing the test out. That is an
+  // environmental race in the watcher's startup, not a defect in the code under test — which is
+  // simply "a new .jsonl under the root is classified and forwarded".
+  //
+  // So instead of betting the whole test on one write landing after one event, keep creating new
+  // session files on an interval until the watcher reports one. Each retry is a DISTINCT path,
+  // because chokidar emits `add` once per path and a rewrite of a missed file would only emit
+  // `change`. The assertion stays exact on everything the code under test decides — the
+  // `claude-code:` prefix, the session id taken from the filename, and the subagent flag.
   it('emits an add notification when a new session file appears under the root', async () => {
     root = await mkdtemp(join(tmpdir(), 'claude-code-watch-'));
     const slugDir = join(root, 'projects', 'my-slug');
     await mkdir(slugDir, { recursive: true });
 
+    let retryTimer: NodeJS.Timeout | undefined;
     const discovered = await new Promise<ClaudeCodeSessionRefLike>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('timed out waiting for add event')), 9000);
-      const watcher = watchClaudeCodeSessions(root, (ref) => {
+      const settle = (ref: ClaudeCodeSessionRefLike) => {
         clearTimeout(timeout);
+        if (retryTimer) clearInterval(retryTimer);
         resolve(ref);
-      });
+      };
+
+      const watcher = watchClaudeCodeSessions(root, settle);
       closeWatcher = () => watcher.close();
+
+      let attempt = 0;
+      const writeOne = () => {
+        attempt += 1;
+        writeFile(join(slugDir, `session-new-${attempt}.jsonl`), '{}\n').catch(reject);
+      };
+
       watcher.on('ready', () => {
-        writeFile(join(slugDir, 'session-new.jsonl'), '{}\n').catch(reject);
+        writeOne();
+        retryTimer = setInterval(writeOne, 250);
       });
       watcher.on('error', reject);
+    }).finally(() => {
+      if (retryTimer) clearInterval(retryTimer);
     });
 
-    expect(discovered.sessionKey).toBe('claude-code:session-new');
+    expect(discovered.sessionKey).toMatch(/^claude-code:session-new-\d+$/);
     expect(discovered.isSubagent).toBe(false);
   }, 10000);
 });
