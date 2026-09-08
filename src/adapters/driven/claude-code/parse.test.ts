@@ -151,4 +151,61 @@ describe('mapClaudeCodeRecordToEvents', () => {
 
     expect(events.map((e) => e.id)).toEqual([1, 2]);
   });
+
+  // Blocker B.1 (tasks.md): the `ClaudeCodeMemoryWriteDetector` exists and is fixture-tested, but
+  // nothing ever called it at runtime — `memory_write` was never emitted. This wires it into the
+  // same tool_use loop that already produces `tool_start`.
+  describe('memory_write wiring (blocker B.1, Claude Code only)', () => {
+    it('emits a memory_write event IN ADDITION TO tool_start for a matching mcp__engram__mem_save call', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__engram__mem_save","input":{"title":"Example decision","topic_key":"example/topic","type":"decision"}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events).toHaveLength(2);
+      expect(events[0]).toMatchObject({ kind: 'tool_start', harness: 'claude-code' });
+      expect(events[1]).toMatchObject({
+        kind: 'memory_write',
+        harness: 'claude-code',
+        sessionKey: 'claude-code:session-abc',
+        title: 'Example decision',
+        topicKey: 'example/topic',
+        observationType: 'decision',
+        toolLabel: 'mem_save',
+      });
+    });
+
+    it('also fires on the plugin-wrapped mcp__plugin_engram_engram__mem_save spelling', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__plugin_engram_engram__mem_save","input":{"title":"Example discovery","type":"discovery"}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events).toHaveLength(2);
+      expect(events[1]).toMatchObject({ kind: 'memory_write', title: 'Example discovery', observationType: 'discovery' });
+    });
+
+    // Adversarial twin: a non-matching tool_use must emit ONLY tool_start. This is the guard that
+    // proves the wiring is actually gated on detector.detect() — asserting "tool_start is emitted"
+    // alone would pass whether or not the detector was ever connected.
+    it('emits ONLY tool_start for a non-matching tool_use (near-miss: mem_search, not mem_save)', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__engram__mem_search","input":{"query":"x"}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ kind: 'tool_start' });
+      expect(events.some((e) => e.kind === 'memory_write')).toBe(false);
+    });
+
+    it('allocates a distinct, monotonically increasing id for the memory_write event after tool_start', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__engram__mem_save","input":{"title":"x"}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events.map((e) => e.id)).toEqual([1, 2]);
+    });
+  });
 });

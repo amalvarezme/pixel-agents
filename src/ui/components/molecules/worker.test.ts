@@ -45,4 +45,25 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
       expect(view.caption).toBe('Read: design.md');
     },
   );
+
+  // Blocker B.2 (tasks.md 21.2): carries the archive-trip drawing data through unchanged, so
+  // `ui/scene/pixi/` can draw a carried-document indicator.
+  it('carries archiveTrip (carryCount, highlight) through when the worker has one', () => {
+    const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 3, highlight: true } }));
+
+    expect(view.archiveTrip).toEqual({ carryCount: 3, highlight: true });
+  });
+
+  it('defaults highlight to false when the view model omits it', () => {
+    const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 1 } }));
+
+    expect(view.archiveTrip).toEqual({ carryCount: 1, highlight: false });
+  });
+
+  // Adversarial twin: a worker with no archiveTrip must not gain one out of nowhere.
+  it('has no archiveTrip when the worker has none', () => {
+    const view = buildWorkerView(workerViewModel());
+
+    expect(view.archiveTrip).toBeUndefined();
+  });
 });

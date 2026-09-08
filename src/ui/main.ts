@@ -29,6 +29,15 @@ async function main(): Promise<void> {
 
   const container = new OfficeContainer(connectionFactory, stage);
   container.connect();
+
+  // Drives the archive-trip animation (blocker B.2, tasks.md 21.2) from the browser's own frame
+  // clock — deliberately never from `container`'s own SSE message handling, so ingestion speed
+  // and animation playback speed stay decoupled (`OfficeContainer.test.ts` pins this).
+  const animate = (now: number): void => {
+    container.tick(now);
+    requestAnimationFrame(animate);
+  };
+  requestAnimationFrame(animate);
 }
 
 void main();

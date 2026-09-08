@@ -11,6 +11,8 @@ export interface OfficeFloorView {
   desks: DeskView[];
   workers: WorkerView[];
   overflowCount: number;
+  /** Blocker B.2 (tasks.md 21.2): cumulative archive-trip count, drawn near the cabinet. */
+  archiveCount: number;
 }
 
 export function buildOfficeFloorView(viewModel: OfficeViewModel): OfficeFloorView {
@@ -19,5 +21,6 @@ export function buildOfficeFloorView(viewModel: OfficeViewModel): OfficeFloorVie
     desks: viewModel.workers.map((w) => buildDeskView({ sessionKey: w.sessionKey, x: w.x, y: w.y, lane: w.lane }, ctx)),
     workers: viewModel.workers.map((w) => buildWorkerView(w)),
     overflowCount: viewModel.overflowCount,
+    archiveCount: viewModel.archiveCount ?? 0,
   };
 }
