@@ -128,6 +128,36 @@ describe('SSE stream server (tasks.md 9.1, 9.2, 9.4)', () => {
     expect(parseFrame(frame!).event).toBe('snapshot');
   });
 
+  it('reconnecting with lastEventId as a QUERY PARAMETER (not a header) still resumes correctly', async () => {
+    // browser-entrypoint work unit: a manually re-created browser `EventSource` cannot set the
+    // `Last-Event-ID` header itself (that header is only sent by the browser's OWN automatic
+    // retry) — our client-side reconnect adapter resumes via `?lastEventId=` instead.
+    const hub = new SseEventHub();
+    for (let id = 1; id <= 5; id++) hub.publish(event(id));
+    const baseUrl = await startServer(hub);
+
+    const response = await fetch(`${baseUrl}/stream?lastEventId=3`);
+    const reader = new SseFrameReader(response);
+    readers.push(reader);
+
+    const frames = (await reader.readFrames(2)).map(parseFrame);
+    expect(frames.map((f) => f.id)).toEqual(['4', '5']);
+    expect(frames.some((f) => f.event === 'snapshot')).toBe(false);
+  });
+
+  it('a Last-Event-ID header takes precedence over a lastEventId query parameter when both are present', async () => {
+    const hub = new SseEventHub();
+    for (let id = 1; id <= 5; id++) hub.publish(event(id));
+    const baseUrl = await startServer(hub);
+
+    const response = await fetch(`${baseUrl}/stream?lastEventId=1`, { headers: { 'Last-Event-ID': '3' } });
+    const reader = new SseFrameReader(response);
+    readers.push(reader);
+
+    const frames = (await reader.readFrames(2)).map(parseFrame);
+    expect(frames.map((f) => f.id)).toEqual(['4', '5']);
+  });
+
   it('emits a heartbeat comment on the configured interval so idle connections stay alive', async () => {
     const hub = new SseEventHub({ heartbeatIntervalMs: 15 });
     const baseUrl = await startServer(hub);

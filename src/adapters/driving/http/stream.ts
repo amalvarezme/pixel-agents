@@ -148,17 +148,31 @@ export class SseEventHub implements EventPublisher {
   }
 }
 
+/**
+ * Resolves the resume id from either the standard `Last-Event-ID` header (sent automatically by
+ * the browser's own native retry) or a `?lastEventId=` query parameter (browser-entrypoint work
+ * unit: a manually re-created `EventSource` — used for our own backoff-controlled reconnect,
+ * `adapters/driving/browser/event-source-stream-connection.ts` — cannot set that header itself).
+ * The header wins when both are present.
+ */
 function parseLastEventId(req: IncomingMessage): number | null {
   const header = req.headers['last-event-id'];
-  const raw = Array.isArray(header) ? header[0] : header;
-  if (!raw) return null;
-  const parsed = Number(raw);
+  const rawHeader = Array.isArray(header) ? header[0] : header;
+  if (rawHeader) {
+    const parsed = Number(rawHeader);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const rawQuery = new URL(req.url ?? '/', 'http://localhost').searchParams.get('lastEventId');
+  if (!rawQuery) return null;
+  const parsed = Number(rawQuery);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 export function createStreamServer(hub: SseEventHub): Server {
   return createServer((req, res) => {
-    if (req.url !== '/stream') {
+    const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+    if (pathname !== '/stream') {
       res.writeHead(404);
       res.end();
       return;

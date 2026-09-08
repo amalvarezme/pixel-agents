@@ -31,5 +31,8 @@ venv/
 # Local code index (per-checkout, never shared)
 .codegraph/
 
+# Runtime checkpoint state (this project's own, never the watched harness tree)
+.data/
+
 # Skill registry local cache
 .atl/.skill-registry.cache.json
