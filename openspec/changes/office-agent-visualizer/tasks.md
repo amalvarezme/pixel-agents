@@ -402,7 +402,10 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
 ### Phase 22: Slice 4 Verification
 
 - [x] 22.1 Run `npm test` — carry queue, archive slot, waypoint, caption suites green (307/307, independently re-run by the orchestrator) (307/307)
-- [ ] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each — automated path-identity proven by `archive-trip-cross-harness.test.ts`, and the render trigger's harness-independence proven by `trip-animation.test.ts`. Codex, OpenCode, and Antigravity still emit no `memory_write` at runtime (see B.1) and none is wired into `src/server.ts`, so only Claude Code is demonstrable today. Claude Code's own end-to-end proof (real `CLAUDE_HOME` fixture → SSE stream → `memory_write` frame) is captured in this apply's report; the VISUAL confirmation in a real browser is left to the orchestrator (Chrome DevTools), not claimed here
+- [~] 22.2 Replay one `memory_write` fixture per harness (all four) through the SSE stream; visually confirm identical animation path for each
+  - [x] Automated path identity across all four harnesses (`archive-trip-cross-harness.test.ts`)
+  - [x] **Claude Code visually confirmed** by the orchestrator in Chrome against a live fixture tree: a `mcp__engram__mem_save` appended to a watched session made the worker leave its desk and travel the dogleg path carrying a document badged `x7` (the batch collapse of 8 bursted saves), the archive counter advanced 1 -> 2 -> 3, and the worker returned to its original desk. No console errors beyond a pre-existing favicon 404
+  - [ ] Codex / Antigravity / OpenCode: still blocked on B.1 for those three — none of them emits `memory_write` at runtime, so there is nothing to replay yet
 
 ---
 
