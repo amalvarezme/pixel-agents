@@ -52,6 +52,18 @@ export interface AgentEventBase {
    */
   toolLabel?: string;
   toolDetail?: string;
+  /**
+   * Launcher-only fields (design.md "The Launcher"). Populated exclusively by
+   * `createSelfOriginatedEvent` for `launch_requested`/`launch_started`, and by the launcher
+   * adapter's own `status(launch_failed)` construction — never by any ingestion adapter.
+   */
+  launchId?: string;
+  binaryPath?: string;
+  argv?: string[];
+  cwd?: string;
+  pid?: number;
+  startedAt?: number;
+  reason?: string;
 }
 
 export interface MemoryWriteEvent extends AgentEventBase {

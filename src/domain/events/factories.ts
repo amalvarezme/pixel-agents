@@ -43,6 +43,12 @@ export interface CreateSelfOriginatedEventInput {
   sessionKey: string;
   at: number;
   label?: string;
+  launchId?: string;
+  binaryPath?: string;
+  argv?: string[];
+  cwd?: string;
+  pid?: number;
+  startedAt?: number;
 }
 
 /** Only the launcher subsystem calls this — never an ingestion adapter. */

@@ -488,23 +488,23 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
 
 ### Phase 23: argv Builder & Injection Guard
 
-- [ ] 23.1 Implement `buildLaunchCommand(spec) → argv[]` — per-harness allowlisted template + user-supplied free arguments, pure function
-- [ ] 23.2 RED: write failing test asserting argv byte-identity against a manually-typed command line for a plain `claude` launch (Threat Matrix case a / success criterion #4)
-- [ ] 23.3 GREEN: implement the allowlisted template to satisfy 23.2
-- [ ] 23.4 RED+GREEN: user-supplied `--append-system-prompt`/`--system-prompt`/`--settings`/`--config` rejected unless the user explicitly typed it (Zero-Injection Spawn Invariant, Threat Matrix case b)
-- [ ] 23.5 RED+GREEN: an argument containing a destructive shell-metacharacter payload — a `;` command separator followed by `rm -rf` and the filesystem root path, spelled out literally in the test file, never here — is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
-- [ ] 23.6 RED+GREEN: internal env vars stripped, `process.env` otherwise passed through unchanged
+- [x] 23.1 Implement `buildLaunchCommand(spec) → argv[]` — per-harness allowlisted template + user-supplied free arguments, pure function
+- [x] 23.2 RED: write failing test asserting argv byte-identity against a manually-typed command line for a plain `claude` launch (Threat Matrix case a / success criterion #4)
+- [x] 23.3 GREEN: implement the allowlisted template to satisfy 23.2
+- [x] 23.4 RED+GREEN: user-supplied `--append-system-prompt`/`--system-prompt`/`--settings`/`--config` rejected unless the user explicitly typed it (Zero-Injection Spawn Invariant, Threat Matrix case b). Implemented as an assertion over the launcher's OWN allowlisted template (always empty in production; a test-only `templates` override proves the guard fires on a poisoned template via mutation testing) — a user-typed instance of any of these flags in their own free arguments is never inspected, stripped, or rejected, since that is the user's explicit choice, not injection, and altering it would break byte-identity (criterion #4).
+- [x] 23.5 RED+GREEN: an argument containing a destructive shell-metacharacter payload — a `;` command separator followed by `rm -rf` and the filesystem root path, spelled out literally in the test file, never here — is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
+- [x] 23.6 RED+GREEN: internal env vars stripped, `process.env` otherwise passed through unchanged
 
 ### Phase 24: Spawn Adapter & PTY Backend
 
-- [ ] 24.1 Implement `child_process.spawn` default path (`shell:false`, absolute-path binary resolution via explicit `PATH` lookup)
-- [ ] 24.2 RED+GREEN: missing binary → `status(launch_failed)`, never a throw (Threat Matrix case d / Unavailable Harness CLI Handling)
-- [ ] 24.3 Wire the slice-1a PTY probe (Phase 4.1) as the gate for interactive-session PTY backend selection; `{available:false}` surfaces a copyable command line, never a silent non-TTY degrade
-- [ ] 24.4 Implement tracked-child registry + `SIGTERM` on shutdown
-- [ ] 24.5 RED+GREEN: shutdown terminates all tracked children (Threat Matrix case e)
-- [ ] 24.6 RED+GREEN: `launch_requested` (accepted, carries `launchId`/binary path/argv/cwd) then `launch_started` (pid, `startedAt`) emitted only from launcher process state, never from a log parse (Self-Originated Launch Events Only)
-- [ ] 24.7 RED+GREEN: `agy` missing from `PATH` — `launch_requested` emitted, then a failure signal, `launch_started` never emitted (Unavailable Harness CLI Handling)
-- [ ] 24.8 RED+GREEN: Antigravity IDE session has no launch control presented (Supported Launch Targets)
+- [x] 24.1 Implement `child_process.spawn` default path (`shell:false`, absolute-path binary resolution via explicit `PATH` lookup). `resolveBinaryOnPath` (`resolve-binary-path.ts`) does the lookup as a pure, injectable-existence-check function — never a shell `which`; `ChildProcessSessionLauncher` (`child-process-session-launcher.ts`) hard-codes `shell:false` in its default spawn wrapper.
+- [x] 24.2 RED+GREEN: missing binary → `status(launch_failed)`, never a throw (Threat Matrix case d / Unavailable Harness CLI Handling)
+- [x] 24.3 Wire the slice-1a PTY probe (Phase 4.1) as the gate for interactive-session PTY backend selection; `{available:false}` surfaces a copyable command line, never a silent non-TTY degrade. Extended `LaunchSpec`/`LaunchResult` (`ports/session-launcher.port.ts`) with `interactive?` and the `unavailable_interactive` outcome. No real PTY backend exists in this repo (`node-pty` not installed, per instruction) — the `{available:true}` branch is therefore unreachable today and documented as such; only the reachable `{available:false}` path is implemented and tested.
+- [x] 24.4 Implement tracked-child registry + `SIGTERM` on shutdown
+- [x] 24.5 RED+GREEN: shutdown terminates all tracked children (Threat Matrix case e)
+- [x] 24.6 RED+GREEN: `launch_requested` (accepted, carries `launchId`/binary path/argv/cwd) then `launch_started` (pid, `startedAt`) emitted only from launcher process state, never from a log parse (Self-Originated Launch Events Only). Required extending `AgentEventBase`/`CreateSelfOriginatedEventInput` (`domain/events/types.ts`/`factories.ts`) with the launcher's own optional fields (`launchId`, `binaryPath`, `argv`, `cwd`, `pid`, `startedAt`, `reason`) — a RED test via `npm run typecheck` (vitest itself doesn't type-check object literals against interfaces at runtime) proved the fields didn't exist before this change.
+- [x] 24.7 RED+GREEN: `agy` missing from `PATH` — `launch_requested` emitted, then a failure signal, `launch_started` never emitted (Unavailable Harness CLI Handling)
+- [x] 24.8 RED+GREEN: Antigravity IDE session has no launch control presented (Supported Launch Targets). Implemented as `isLaunchEligibleSessionKey` (`launch-eligibility.ts`), a pure predicate over the antigravity adapter's own `sessionKey` format (`antigravity:ide:...` vs `antigravity:cli:...`) — no import of any antigravity adapter file (Subsystem Separation).
 
 ### Phase 25: Launch↔Log Correlation
 

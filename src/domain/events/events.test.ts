@@ -93,3 +93,40 @@ describe('tool_start caption normalization fields', () => {
     expect(event.toolDetail).toBeUndefined();
   });
 });
+
+// tasks.md 24.6: launch_requested/launch_started carry the launcher's OWN process state
+// (launchId, resolved binary path, argv, cwd, pid, startedAt) — design.md "The Launcher".
+describe('self-originated launch event payload fields (tasks.md 24.6)', () => {
+  it('carries launchId/binaryPath/argv/cwd on launch_requested', () => {
+    const event = createSelfOriginatedEvent(1, {
+      kind: 'launch_requested',
+      harness: 'claude-code',
+      sessionKey: 'launch:abc123',
+      at: 1000,
+      launchId: 'abc123',
+      binaryPath: '/usr/local/bin/claude',
+      argv: ['claude', '--resume', 'x'],
+      cwd: '/Users/dev/project',
+    });
+
+    expect(event.launchId).toBe('abc123');
+    expect(event.binaryPath).toBe('/usr/local/bin/claude');
+    expect(event.argv).toEqual(['claude', '--resume', 'x']);
+    expect(event.cwd).toBe('/Users/dev/project');
+  });
+
+  it('carries pid/startedAt on launch_started (triangulation: a different field set for a different kind)', () => {
+    const event = createSelfOriginatedEvent(2, {
+      kind: 'launch_started',
+      harness: 'claude-code',
+      sessionKey: 'launch:abc123',
+      at: 1005,
+      launchId: 'abc123',
+      pid: 4242,
+      startedAt: 1005,
+    });
+
+    expect(event.pid).toBe(4242);
+    expect(event.startedAt).toBe(1005);
+  });
+});
