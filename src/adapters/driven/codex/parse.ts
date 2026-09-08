@@ -18,7 +18,16 @@
  *
  * `parseCodexLine` never throws: malformed JSON returns `null`, matching every other adapter's
  * tailer contract (design.md: "Malformed JSON increments a counter ... it never throws").
+ *
+ * `mapCodexRecordToEvents` (blocker B.1) is the record->events mapper the runtime pipeline was
+ * missing entirely: it emits `tool_start` for any `event_msg`/`item_completed` record with a
+ * resolvable caption (McpToolCall or CommandExecution — the same family `resolveCodexToolCaption`
+ * already recognizes), and, for a matching `McpToolCall`, additionally (never instead of) a
+ * `memory_write` event via `CodexMemoryWriteDetector` (spec: "Codex memory_write Detection").
  */
+import { createEventFromLogRecord, createMemoryWriteEvent } from '../../../domain/events/factories';
+import type { AgentEventBase } from '../../../domain/events/types';
+import { CodexMemoryWriteDetector } from './memory-write-detector';
 
 export const CODEX_RECORD_FAMILIES = [
   'session_meta',
@@ -136,4 +145,58 @@ export function resolveCodexToolCaption(record: CodexRecord): CodexToolCaption |
     return { toolLabel: item.type, toolDetail: commandHead(item.command) };
   }
   return { toolLabel: item.type };
+}
+
+export interface CodexEventMappingContext {
+  sessionKey: string;
+  allocateId: () => number;
+}
+
+/**
+ * Stateless and adapter-private (spec: "Detector Interface Isolation"), so one shared instance is
+ * safe to reuse across every record this module maps.
+ */
+const codexMemoryWriteDetector = new CodexMemoryWriteDetector();
+
+/**
+ * Maps one parsed record to zero or more normalized `AgentEvent`s (blocker B.1). A record with no
+ * resolvable tool caption — anything other than an `event_msg`/`item_completed` McpToolCall or
+ * CommandExecution — yields nothing at this layer, including the `response_item`/`custom_tool_call`
+ * exec family (`resolveCodexToolCaption` already excludes it by construction).
+ */
+export function mapCodexRecordToEvents(record: CodexRecord, ctx: CodexEventMappingContext): AgentEventBase[] {
+  const caption = resolveCodexToolCaption(record);
+  if (!caption) return [];
+
+  const at = record.timestamp ? Date.parse(record.timestamp) : Date.now();
+  const events: AgentEventBase[] = [
+    createEventFromLogRecord(ctx.allocateId(), {
+      kind: 'tool_start',
+      harness: 'codex',
+      sessionKey: ctx.sessionKey,
+      at,
+      toolLabel: caption.toolLabel,
+      toolDetail: caption.toolDetail,
+    }),
+  ];
+
+  // Blocker B.1: a matching mem_save McpToolCall additionally emits `memory_write`, alongside
+  // (never instead of) its `tool_start`.
+  const signal = codexMemoryWriteDetector.detect(record);
+  if (signal) {
+    events.push(
+      createMemoryWriteEvent(ctx.allocateId(), {
+        harness: 'codex',
+        sessionKey: ctx.sessionKey,
+        at,
+        title: signal.title,
+        topicKey: signal.topicKey,
+        observationType: signal.observationType,
+        toolLabel: signal.toolLabel,
+        toolDetail: signal.toolDetail,
+      }),
+    );
+  }
+
+  return events;
 }
