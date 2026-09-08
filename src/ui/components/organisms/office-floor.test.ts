@@ -31,4 +31,15 @@ describe('buildOfficeFloorView (organism) — the full renderable scene descript
     expect(floor.workers).toEqual([]);
     expect(floor.overflowCount).toBe(0);
   });
+
+  // Blocker B.2 (tasks.md 21.2): the archive counter is a scene-level fact, not a per-worker one.
+  it('passes archiveCount through from the view model', () => {
+    const floor = buildOfficeFloorView({ workers: [], overflowCount: 0, archiveCount: 4 });
+    expect(floor.archiveCount).toBe(4);
+  });
+
+  it('defaults archiveCount to 0 when the view model omits it', () => {
+    const floor = buildOfficeFloorView({ workers: [], overflowCount: 0 });
+    expect(floor.archiveCount).toBe(0);
+  });
 });

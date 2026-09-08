@@ -8,6 +8,13 @@ import type { WorkerViewModel } from '../../state/office-view-model';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 
+/** Archive-trip drawing data (blocker B.2, tasks.md 21.2) — carried through unchanged from
+ * `WorkerViewModel.archiveTrip`; presence alone means "draw a carried document". */
+export interface WorkerArchiveTripView {
+  carryCount: number;
+  highlight: boolean;
+}
+
 export interface WorkerView {
   sessionKey: string;
   x: number;
@@ -15,6 +22,7 @@ export interface WorkerView {
   lane: DeskLane;
   badge: HarnessBadge;
   caption: string;
+  archiveTrip?: WorkerArchiveTripView;
 }
 
 export function buildWorkerView(worker: WorkerViewModel): WorkerView {
@@ -25,5 +33,8 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     lane: worker.lane,
     badge: buildHarnessBadge(worker.harness),
     caption: buildCaption(worker.label, worker.toolLabel ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : undefined),
+    ...(worker.archiveTrip
+      ? { archiveTrip: { carryCount: worker.archiveTrip.carryCount, highlight: worker.archiveTrip.highlight ?? false } }
+      : {}),
   };
 }

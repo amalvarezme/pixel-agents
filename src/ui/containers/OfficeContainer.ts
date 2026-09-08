@@ -10,9 +10,10 @@
  * parsing, reconnect/backoff) stay outside this projection logic.
  */
 import type { AgentEvent } from '../../domain/events/types';
-import { applyEventToOfficeState, createOfficeState, type OfficeState, type Worker } from '../../domain/office/office';
+import { applyEventToOfficeState, completeArchiveTripForWorker, createOfficeState, type OfficeState, type Worker } from '../../domain/office/office';
 import { buildOfficeViewModel } from '../state/office-view-model';
 import type { OfficeStage } from '../scene/OfficeStage';
+import { advanceTripAnimations, applyTripOverlay, createTripAnimatorState, type TripAnimatorState } from '../scene/animation/trip-animation';
 
 export interface OfficeSnapshotPayload {
   generatedAt: number;
@@ -37,6 +38,15 @@ export class OfficeContainer {
   private officeState: OfficeState = createOfficeState();
   private connection: StreamConnection | null = null;
 
+  /**
+   * Archive-trip animation state (blocker B.2, tasks.md 21.2) and the animation clock's last
+   * known instant. Deliberately separate from `officeState`/ingestion: `handleMessage` never
+   * reads or advances either of these, so an arbitrarily fast burst of incoming events is never
+   * slowed down by, or coupled to, animation playback (design.md: "ingestion never blocks").
+   */
+  private tripAnimatorState: TripAnimatorState = createTripAnimatorState();
+  private lastTickAt = 0;
+
   constructor(
     private readonly connectionFactory: StreamConnectionFactory,
     private readonly stage: OfficeStage,
@@ -50,6 +60,22 @@ export class OfficeContainer {
   disconnect(): void {
     this.connection?.close();
     this.connection = null;
+  }
+
+  /**
+   * Advances the archive-trip animation to `now` and re-renders. Called from the browser's own
+   * `requestAnimationFrame` loop (`ui/main.ts`) — never from `handleMessage` — so ingestion speed
+   * and animation playback speed can never affect each other.
+   */
+  tick(now: number): void {
+    this.lastTickAt = now;
+    const structuralViewModel = buildOfficeViewModel(this.officeState);
+    const { state, completed } = advanceTripAnimations(this.tripAnimatorState, structuralViewModel.workers, now);
+    this.tripAnimatorState = state;
+    for (const sessionKey of completed) {
+      this.officeState = completeArchiveTripForWorker(this.officeState, sessionKey, now);
+    }
+    this.render();
   }
 
   private handleMessage(message: StreamMessage): void {
@@ -67,6 +93,17 @@ export class OfficeContainer {
         this.officeState = createOfficeState();
         break;
     }
-    this.stage.update(buildOfficeViewModel(this.officeState));
+    this.render();
+  }
+
+  /**
+   * Renders against `lastTickAt`, NEVER `Date.now()` — this is what actually decouples ingestion
+   * from animation: `handleMessage` re-renders on every event, but always through whatever the
+   * animation clock last was, so overlaying a trip's current position never advances time on its
+   * own just because an event arrived.
+   */
+  private render(): void {
+    const viewModel = buildOfficeViewModel(this.officeState);
+    this.stage.update(applyTripOverlay(viewModel, this.tripAnimatorState, this.lastTickAt));
   }
 }

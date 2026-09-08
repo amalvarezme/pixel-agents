@@ -17,6 +17,13 @@ export interface ArchiveTripView {
   path: ScenePoint[];
   /** ×N badge count — 1 for a single document, >1 once a batch (carry-queue.ts) is promoted. */
   carryCount: number;
+  /** Set by the render half (`ui/scene/animation/trip-animation.ts`'s `applyTripOverlay`) while
+   * the worker is dwelling at the archive cabinet (blocker B.2: "a brief highlight fires").
+   * `undefined` from `buildOfficeViewModel` itself — this field is animation-clock state, not
+   * something the structural projection can know. */
+  highlight?: boolean;
+  /** Set by the render half: true for the whole trip once animation playback has started. */
+  showDocument?: boolean;
 }
 
 export interface WorkerViewModel {
@@ -35,6 +42,10 @@ export interface WorkerViewModel {
 export interface OfficeViewModel {
   workers: WorkerViewModel[];
   overflowCount: number;
+  /** Cumulative count of trips that have reached the archive cabinet (blocker B.2: "a per-archive
+   * counter increments"). Set by the render half's `applyTripOverlay`; `undefined`/`0` from
+   * `buildOfficeViewModel` itself, which has no animation clock to count against. */
+  archiveCount?: number;
 }
 
 /** Projects the current `OfficeState` into a renderable `OfficeViewModel`. Pure — no I/O. */
