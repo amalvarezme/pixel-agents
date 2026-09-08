@@ -10,15 +10,26 @@
  * parsing, reconnect/backoff) stay outside this projection logic.
  */
 import type { AgentEvent } from '../../domain/events/types';
-import { applyEventToOfficeState, completeArchiveTripForWorker, createOfficeState, type OfficeState, type Worker } from '../../domain/office/office';
+import {
+  applyEventToOfficeState,
+  completeArchiveTripForWorker,
+  createOfficeState,
+  deserializeOfficeState,
+  type OfficeSnapshotState,
+  type OfficeState,
+} from '../../domain/office/office';
 import { buildOfficeViewModel } from '../state/office-view-model';
 import type { OfficeStage } from '../scene/OfficeStage';
 import { advanceTripAnimations, applyTripOverlay, createTripAnimatorState, type TripAnimatorState } from '../scene/animation/trip-animation';
 import type { LaunchResult, LaunchSpec } from '../../ports/session-launcher.port';
 
-export interface OfficeSnapshotPayload {
+/**
+ * G.1 fix: the wire shape is `OfficeSnapshotState` (domain/office/office.ts) plus `generatedAt` —
+ * archive docking and in-flight carry queues, not just workers, so a late-connecting or evicted
+ * client can reconstruct FULL office state, not merely the worker list.
+ */
+export interface OfficeSnapshotPayload extends OfficeSnapshotState {
   generatedAt: number;
-  workers: Worker[];
 }
 
 export type StreamMessage =
@@ -102,7 +113,10 @@ export class OfficeContainer {
         this.officeState = applyEventToOfficeState(this.officeState, message.event);
         break;
       case 'snapshot':
-        this.officeState = { ...createOfficeState(), workers: new Map(message.snapshot.workers.map((w) => [w.sessionKey, w])) };
+        // G.1: a snapshot rebuild must reconstruct archive docking + carry queues too, not just
+        // discard them the way `{ ...createOfficeState(), workers: ... }` used to — otherwise a
+        // late-connecting client shows every worker's document/archive-trip indicator as gone.
+        this.officeState = deserializeOfficeState(message.snapshot);
         break;
       case 'snapshot_required':
         // Minimal slice-1b handling: drop the (possibly desynced) projection and wait for the

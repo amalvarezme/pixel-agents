@@ -102,10 +102,72 @@ describe('OfficeContainer (tasks.md 10.4) — owns the SSE subscription and clie
       snapshot: {
         generatedAt: 1000,
         workers: [{ sessionKey: 'claude-code:fresh', harness: 'claude-code', label: 'fresh', activity: 'working', parentSessionKey: null }],
+        archive: { slots: [], waitQueue: [], nextSlotCursor: 0 },
+        carryQueues: [],
       },
     });
 
     expect(renderer.latest.workers.map((w) => w.sessionKey)).toEqual(['claude-code:fresh']);
+  });
+
+  // G.1: "the snapshot frame carries no archive state" — a late-connecting client must reconstruct
+  // archive docking + in-flight carry queues from the snapshot, not just workers.
+  it('a snapshot carrying archive + carry-queue state reconstructs an in-flight archive trip (G.1)', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({
+      kind: 'snapshot',
+      snapshot: {
+        generatedAt: 1000,
+        workers: [{ sessionKey: 'claude-code:w1', harness: 'claude-code', label: 'w1', activity: 'working', parentSessionKey: null }],
+        archive: {
+          slots: [
+            { slotIndex: 0, occupiedBySessionKey: 'claude-code:w1' },
+            { slotIndex: 1, occupiedBySessionKey: null },
+            { slotIndex: 2, occupiedBySessionKey: null },
+            { slotIndex: 3, occupiedBySessionKey: null },
+          ],
+          waitQueue: [],
+          nextSlotCursor: 1,
+        },
+        carryQueues: [
+          {
+            sessionKey: 'claude-code:w1',
+            queue: { held: { sessionKey: 'claude-code:w1', queuedAt: 500, count: 1 }, queued: [], batch: null },
+          },
+        ],
+      },
+    });
+
+    const worker = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:w1');
+    expect(worker?.archiveTrip).toBeDefined();
+    expect(worker?.archiveTrip?.carryCount).toBe(1);
+  });
+
+  // Adversarial near-miss: the SAME worker with an EMPTY carry queue (no held document) must NOT
+  // get an archiveTrip — proving the test above is exercising the real held-document path, not a
+  // trivial "any worker gets archiveTrip" pass-through.
+  it('adversarial near-miss: a snapshot with an empty carry queue produces NO archive trip', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({
+      kind: 'snapshot',
+      snapshot: {
+        generatedAt: 1000,
+        workers: [{ sessionKey: 'claude-code:w1', harness: 'claude-code', label: 'w1', activity: 'working', parentSessionKey: null }],
+        archive: { slots: [], waitQueue: [], nextSlotCursor: 0 },
+        carryQueues: [],
+      },
+    });
+
+    const worker = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:w1');
+    expect(worker?.archiveTrip).toBeUndefined();
   });
 
   it('disconnect closes the underlying stream connection', () => {
