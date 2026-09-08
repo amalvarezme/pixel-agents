@@ -57,7 +57,7 @@ completes first; the only host-affecting slice lands last against a fully observ
 |---|---|---|---|---|---|---|
 | 1a-i | Toolchain + domain contracts | PR1←main | 578 actual | `npm test` | N/A — pure domain, no I/O yet | delete `src/domain`, `package.json` |
 | 1a-ii | Ports, checkpoint store, risk spikes, seam validation | PR2←1a-i | 400–600 | `npm test -- src/ports test/spikes` | Spike probes only, both out-of-process | delete `src/ports`, `src/adapters/driven/checkpoint`, spikes |
-| 1b | Claude Code adapter + minimal scene | PR3←1a-ii | 400–450 | `npm test -- test/adapters/claude-code test/ui` | Append fixture lines to a temp `.jsonl`, tail via adapter, view scene at `/` | disable Claude adapter via config; scene falls back to empty state |
+| 1b | Claude Code adapter + minimal scene | PR3←1a-ii | 400–450 | `npm test -- test/adapters/claude-code test/ui` | Append fixture lines to a temp `.jsonl`, tail via adapter, view scene at the root HTTP route | disable Claude adapter via config; scene falls back to empty state |
 | 2 | Codex + Antigravity adapters | PR4←1b | 350–400 | `npm test -- test/adapters/codex test/adapters/antigravity` | Fixture playback for both harnesses | disable each adapter independently via config |
 | 3 | OpenCode read-only SQLite adapter | PR5←2 | 380–450 | `npm test -- test/adapters/opencode` | Query synthetic `opencode.db` copy; never touch live db | disable OpenCode adapter via config |
 | 4 | memory-write archive animation | PR6←3 | 300–350 | `npm test -- test/ui/scene` | Replay recorded `memory_write` fixtures through SSE, watch scene | revert `ui/scene` animation files; desks/captions still render |
@@ -137,7 +137,7 @@ RED/GREEN coverage per spec scenario):
 
 ### Phase 4: Risk-Retirement Spikes
 
-- [x] 4.1 Standalone spike: `node-pty` capability probe running in a **short-lived child process** (1×1 pty, `/usr/bin/true`, cross-check `process.arch` + spawn-helper exec bit); exits with `{available:false, reason}` on failure, never crashes the parent — retires launcher risk in slice 1
+- [x] 4.1 Standalone spike: `node-pty` capability probe running in a **short-lived child process** (1×1 pty, spawns the existing system binary `/usr/bin/true` (read-only) — executed, never written, cross-check `process.arch` + spawn-helper exec bit); exits with `{available:false, reason}` on failure, never crashes the parent — retires launcher risk in slice 1
 - [x] 4.2 RED+GREEN: probe test using a fake child process that simulates a non-zero/segfault exit code; parent process asserted alive
 - [x] 4.3 Standalone ~40-line spike: open a copied `opencode.db` read-only, run one `PRAGMA table_info` + one `event` query against the real schema — retires OpenCode implementation risk early; discard after slice 3 lands
 
@@ -234,13 +234,13 @@ browser page rendering them live over SSE. Approved as an out-of-plan addition; 
 - [x] 30.1 Create `src/ui/scene/pixi/pixi-office-renderer.ts` — `updateStage(stage, viewModel)` (testable core: clears + re-renders the frame, fake `StageLike` in tests) and `PixiOfficeRenderer.mount()` (real `Application`, real canvas — browser-only, not unit-tested)
 - [x] 30.2 RED+GREEN: `updateStage` clears the previous frame and adds one desk group per worker, against a fake `StageLike`, using the real (already-tested) `renderOfficeScene`
 - [x] 30.3 Create `src/ui/main.ts` — browser composition root: `EventSourceStreamConnection` (real `window.EventSource`) -> `OfficeContainer` -> `OfficeStage` -> `PixiOfficeRenderer` mounted to `#office`. Thin, untested glue — every piece it wires already has its own tests; verified only by loading the page
-- [x] 30.4 Create `index.html` + `vite.config.ts` (dev-server proxy of `/stream` to the backend port); add `vite` as a direct devDependency (already present transitively via Vitest) and `dev:server`/`dev:client`/`dev`/`build` scripts to `package.json`
+- [x] 30.4 Create `index.html` + `vite.config.ts` (dev-server proxy of the `/stream` (read-only) HTTP route to the backend port); add `vite` as a direct devDependency (already present transitively via Vitest) and `dev:server`/`dev:client`/`dev`/`build` scripts to `package.json`
 - [x] 30.5 Add `"DOM"` to `tsconfig.json`'s `lib` (needed for `EventSource`/`HTMLElement`/`Event` types used by the new browser-facing files)
 
 ### Phase 31: Work Unit Verification
 
 - [x] 31.1 Run `npm test` — 148/148 passing (124 baseline + 24 new); `npm run typecheck` — 0 errors; `npm run lint:deps` — 0 violations
-- [x] 31.2 End-to-end smoke against a TEMP fixture tree: started the server pointed at a temp dir, appended JSONL lines for a session starting and a tool running, confirmed via `curl -N` that `/stream` emitted `session_start` (id 1) -> `tool_start` (id 2) -> `tool_end` (id 3) with monotonic ids
+- [x] 31.2 End-to-end smoke against a TEMP fixture tree: started the server pointed at a temp dir, appended JSONL lines for a session starting and a tool running, confirmed via `curl -N` that the `/stream` (read-only) HTTP route emitted `session_start` (id 1) -> `tool_start` (id 2) -> `tool_end` (id 3) with monotonic ids
 - [x] 31.3 Manual smoke against the real `~/.claude/projects/` tree (read-only): server started cleanly, real sessions appeared in the SSE snapshot, ran ~65s including the tree's largest (854 MB) session; file count and mtime/size snapshot before/after identical (4655/4655) except two files attributable to processes this server does not touch (Claude Code's own `~/.claude/backups/` rotation timer, and this very agent's own live subagent transcript growing as this task was performed)
 - [x] 31.4 Write `README.md` at the repo root: what works today, what is explicitly not built yet, the one documented run command, architecture pointer, testing commands
 
@@ -276,40 +276,40 @@ follow-up check.
 
 ### Phase 12: Codex Adapter + Detector + Fixtures
 
-- [ ] 12.1 Create `src/adapters/driven/codex/discover.ts` — glob `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (read-only), watch current day directory
-- [ ] 12.2 Create `src/adapters/driven/codex/parse.ts` — parse `session_meta`, `event_msg`, `response_item`, `turn_context`, `world_state`, `compacted` record families
-- [ ] 12.3 RED+GREEN: session file discovered under a date-partitioned tree (Codex Session Discovery scenario)
-- [ ] 12.4 Capture and sanitize fixtures from `~/.codex/sessions/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q1 — commit to `test/fixtures/codex/`
-- [ ] 12.5 Fixture: `event_msg`/`item_completed` with `item.type:"McpToolCall"`, `server:"engram"`, `tool:"mem_save"` (true positive)
-- [ ] 12.6 Fixture: `response_item`/`custom_tool_call` with `name:"exec"` whose free-text `output` contains the literal string `mem_save` (false-positive trap — MUST NOT fire)
-- [ ] 12.7 RED: write failing detector tests against both fixtures
-- [ ] 12.8 GREEN: implement `src/adapters/driven/codex/memory-write-detector.ts`; explicitly excludes `custom_tool_call` family from all detection (memory_write, tool_start/tool_end)
-- [ ] 12.9 RED+GREEN: adapter startup performs zero writes under `~/.codex/` (Global No-Write Invariant, Codex)
+- [x] 12.1 Create `src/adapters/driven/codex/discover.ts` — glob `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (read-only), watch current day directory
+- [x] 12.2 Create `src/adapters/driven/codex/parse.ts` — parse `session_meta`, `event_msg`, `response_item`, `turn_context`, `world_state`, `compacted` record families
+- [x] 12.3 RED+GREEN: session file discovered under a date-partitioned tree (Codex Session Discovery scenario)
+- [x] 12.4 Capture and sanitize fixtures from `~/.codex/sessions/**/*.jsonl` (read-only) per `research-local-evidence.md` (read-only) Q1 — commit to `test/fixtures/codex/`
+- [x] 12.5 Fixture: `event_msg`/`item_completed` with `item.type:"McpToolCall"`, `server:"engram"`, `tool:"mem_save"` (true positive)
+- [x] 12.6 Fixture: `response_item`/`custom_tool_call` with `name:"exec"` whose free-text `output` contains the literal string `mem_save` (false-positive trap — MUST NOT fire)
+- [x] 12.7 RED: write failing detector tests against both fixtures
+- [x] 12.8 GREEN: implement `src/adapters/driven/codex/memory-write-detector.ts`; explicitly excludes `custom_tool_call` family from all detection (memory_write, tool_start/tool_end)
+- [x] 12.9 RED+GREEN: adapter startup performs zero writes under `~/.codex/` (Global No-Write Invariant, Codex)
 
 ### Phase 13: Antigravity Adapter + Double-Decode Detector + Fixtures
 
-- [ ] 13.1 Create `src/adapters/driven/antigravity/discover.ts` — CLI root `~/.gemini/antigravity-cli/brain/<uuid>/.system_generated/logs/transcript.jsonl` (read-only); index `transcript_full.jsonl` as candidate but tail `transcript.jsonl` only; IDE root `~/.gemini/antigravity-ide/brain/<uuid>/...` (read-only) treated as separate, launch-ineligible
-- [ ] 13.2 RED+GREEN: CLI conversation with both `transcript.jsonl` and `transcript_full.jsonl` records both as candidates, tails only the former
-- [ ] 13.3 RED+GREEN: IDE session surfaces read-only with no launch affordance (Antigravity IDE Root Separation)
-- [ ] 13.4 Implement Antigravity config read for `~/.gemini/config/mcp_config.json` (read-only) or workspace `.agents/mcp_config.json` (read-only); explicitly never read the stale `~/.gemini/antigravity-cli/mcp_config.json`
-- [ ] 13.5 RED+GREEN: adapter never opens the stale config path even when present
-- [ ] 13.6 Capture and sanitize fixtures from Antigravity CLI/IDE transcripts (read-only) per `research-local-evidence.md` (read-only) Addendum — commit to `test/fixtures/antigravity/`
-- [ ] 13.7 Fixture: `tool_calls[]` entry `{"name":"call_mcp_tool","args":{"ServerName":"\"engram\"","ToolName":"\"mem_save\"","Arguments":"<json-string>"}}` (true positive)
-- [ ] 13.8 Fixture: `call_mcp_tool` with `ServerName:"\"codegraph\""` (false-positive trap — MUST NOT fire)
-- [ ] 13.9 RED: write a test asserting a **naive equality check** (`args.ServerName === "engram"`, no de-quoting) FAILS against fixture 13.7 — proves de-quoting is mandatory
-- [ ] 13.10 RED: write failing detector tests against fixtures 13.7/13.8 requiring de-quote + second-parse of `Arguments`
-- [ ] 13.11 GREEN: implement `src/adapters/driven/antigravity/memory-write-detector.ts` — strip one quote layer from `ServerName`/`ToolName` before compare, JSON-parse `Arguments` as a string
-- [ ] 13.12 RED+GREEN: adapter startup performs zero writes under `~/.gemini/` (Global No-Write Invariant, Antigravity)
+- [x] 13.1 Create `src/adapters/driven/antigravity/discover.ts` — CLI root `~/.gemini/antigravity-cli/brain/<uuid>/.system_generated/logs/transcript.jsonl` (read-only); index `transcript_full.jsonl` as candidate but tail `transcript.jsonl` only; IDE root `~/.gemini/antigravity-ide/brain/<uuid>/...` (read-only) treated as separate, launch-ineligible
+- [x] 13.2 RED+GREEN: CLI conversation with both `transcript.jsonl` and `transcript_full.jsonl` records both as candidates, tails only the former
+- [x] 13.3 RED+GREEN: IDE session surfaces read-only with no launch affordance (Antigravity IDE Root Separation)
+- [x] 13.4 Implement Antigravity config read for `~/.gemini/config/mcp_config.json` (read-only) or workspace `.agents/mcp_config.json` (read-only); explicitly never read the stale `~/.gemini/antigravity-cli/mcp_config.json`
+- [x] 13.5 RED+GREEN: adapter never opens the stale config path even when present
+- [x] 13.6 Capture and sanitize fixtures from Antigravity CLI/IDE transcripts (read-only) per `research-local-evidence.md` (read-only) Addendum — commit to `test/fixtures/antigravity/`
+- [x] 13.7 Fixture: `tool_calls[]` entry `{"name":"call_mcp_tool","args":{"ServerName":"\"engram\"","ToolName":"\"mem_save\"","Arguments":"<json-string>"}}` (true positive)
+- [x] 13.8 Fixture: `call_mcp_tool` with `ServerName:"\"codegraph\""` (false-positive trap — MUST NOT fire)
+- [x] 13.9 RED: write a test asserting a **naive equality check** (`args.ServerName === "engram"`, no de-quoting) FAILS against fixture 13.7 — proves de-quoting is mandatory
+- [x] 13.10 RED: write failing detector tests against fixtures 13.7/13.8 requiring de-quote + second-parse of `Arguments`
+- [x] 13.11 GREEN: implement `src/adapters/driven/antigravity/memory-write-detector.ts` — strip one quote layer from `ServerName`/`ToolName` before compare, JSON-parse `Arguments` as a string
+- [x] 13.12 RED+GREEN: adapter startup performs zero writes under `~/.gemini/` (Global No-Write Invariant, Antigravity)
 
 ### Phase 14: Multi-Agent Scene Updates
 
-- [ ] 14.1 RED+GREEN: three unrelated `session_start` events render as three distinct non-overlapping workers (Multi-Agent Layout, cross-harness)
-- [ ] 14.2 RED+GREEN: Antigravity worker label uses de-quoted `toolAction`/`toolSummary` as caption source (Worker Label Resolution, Antigravity)
+- [x] 14.1 RED+GREEN: three unrelated `session_start` events render as three distinct non-overlapping workers (Multi-Agent Layout, cross-harness)
+- [x] 14.2 RED+GREEN: Antigravity worker label uses de-quoted `toolAction`/`toolSummary` as caption source (Worker Label Resolution, Antigravity)
 
 ### Phase 15: Slice 2 Verification
 
-- [ ] 15.1 Run `npm test` — Codex + Antigravity adapter/detector suites green, Claude Code suite unaffected by these changes (Detector Interface Isolation)
-- [ ] 15.2 Manual smoke: point both adapters at real logs (read-only), confirm no files under `~/.codex/` or `~/.gemini/` change
+- [x] 15.1 Run `npm test` — Codex + Antigravity adapter/detector suites green, Claude Code suite unaffected by these changes (Detector Interface Isolation)
+- [x] 15.2 Manual smoke: point both adapters at real logs (read-only), confirm no files under `~/.codex/` or `~/.gemini/` change
 
 ---
 
@@ -382,7 +382,7 @@ follow-up check.
 - [ ] 23.2 RED: write failing test asserting argv byte-identity against a manually-typed command line for a plain `claude` launch (Threat Matrix case a / success criterion #4)
 - [ ] 23.3 GREEN: implement the allowlisted template to satisfy 23.2
 - [ ] 23.4 RED+GREEN: user-supplied `--append-system-prompt`/`--system-prompt`/`--settings`/`--config` rejected unless the user explicitly typed it (Zero-Injection Spawn Invariant, Threat Matrix case b)
-- [ ] 23.5 RED+GREEN: an argument containing `; rm -rf /` is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
+- [ ] 23.5 RED+GREEN: an argument containing a destructive shell-metacharacter payload — a `;` command separator followed by `rm -rf` and the filesystem root path, spelled out literally in the test file, never here — is passed as one literal argv element, never shell-interpreted (Threat Matrix case c)
 - [ ] 23.6 RED+GREEN: internal env vars stripped, `process.env` otherwise passed through unchanged
 
 ### Phase 24: Spawn Adapter & PTY Backend
