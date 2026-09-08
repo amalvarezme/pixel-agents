@@ -170,4 +170,31 @@ describe('SSE stream server (tasks.md 9.1, 9.2, 9.4)', () => {
     const [heartbeatFrame] = await reader.readFrames(1, 500);
     expect(parseFrame(heartbeatFrame!).comment).toBe('heartbeat');
   });
+
+  // tasks.md 26.1: POST /launch is routed on the SAME server as GET /stream (design.md D2).
+  it('routes POST /launch to the injected launcher when one is supplied', async () => {
+    const hub = new SseEventHub();
+    const launcher = { launch: async () => ({ outcome: 'started' as const, launchId: 'l1', pid: 1, startedAt: 0 }), shutdown: async () => {} };
+    server = createStreamServer(hub, launcher);
+    await new Promise<void>((resolve) => server!.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+
+    const response = await fetch(`http://127.0.0.1:${port}/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ harness: 'claude-code', cwd: '/tmp', args: [] }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ outcome: 'started', launchId: 'l1', pid: 1, startedAt: 0 });
+  });
+
+  it('still 404s /launch when no launcher was supplied (adversarial near-miss: backward compatibility)', async () => {
+    const hub = new SseEventHub();
+    const baseUrl = await startServer(hub);
+
+    const response = await fetch(`${baseUrl}/launch`, { method: 'POST', body: '{}' });
+
+    expect(response.status).toBe(404);
+  });
 });

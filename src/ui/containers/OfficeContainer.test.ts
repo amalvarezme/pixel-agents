@@ -266,3 +266,27 @@ describe('OfficeContainer — archive-trip animation (blocker B.2, tasks.md 21.2
     expect(worker.y).toBe(desk.y);
   });
 });
+
+// tasks.md 26.2: the launcher UI control is wired through OfficeContainer.
+describe('OfficeContainer.requestLaunch', () => {
+  it('delegates to the injected LaunchClient and returns its result unchanged', async () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const stage = new OfficeStage(renderer);
+    const expected = { outcome: 'started' as const, launchId: 'l1', pid: 1, startedAt: 0 };
+    let received: unknown = null;
+    const launchClient = {
+      requestLaunch: async (spec: unknown) => {
+        received = spec;
+        return expected;
+      },
+    };
+    const container = new OfficeContainer(connection, stage, launchClient);
+    const spec = { harness: 'claude-code' as const, cwd: '/tmp', args: [] };
+
+    const result = await container.requestLaunch(spec);
+
+    expect(result).toBe(expected);
+    expect(received).toBe(spec);
+  });
+});

@@ -14,6 +14,7 @@ import { applyEventToOfficeState, completeArchiveTripForWorker, createOfficeStat
 import { buildOfficeViewModel } from '../state/office-view-model';
 import type { OfficeStage } from '../scene/OfficeStage';
 import { advanceTripAnimations, applyTripOverlay, createTripAnimatorState, type TripAnimatorState } from '../scene/animation/trip-animation';
+import type { LaunchResult, LaunchSpec } from '../../ports/session-launcher.port';
 
 export interface OfficeSnapshotPayload {
   generatedAt: number;
@@ -34,6 +35,16 @@ export interface StreamConnectionFactory {
   connect(): StreamConnection;
 }
 
+/**
+ * tasks.md 26.2: the launcher UI control is wired through `OfficeContainer`, mirroring the
+ * `StreamConnection`/`StreamConnectionFactory` seam pattern above — the real implementation
+ * (`adapters/driving/browser/fetch-launch-client.ts`'s `FetchLaunchClient`) is injected, never
+ * imported here directly.
+ */
+export interface LaunchClient {
+  requestLaunch(spec: LaunchSpec): Promise<LaunchResult>;
+}
+
 export class OfficeContainer {
   private officeState: OfficeState = createOfficeState();
   private connection: StreamConnection | null = null;
@@ -50,7 +61,14 @@ export class OfficeContainer {
   constructor(
     private readonly connectionFactory: StreamConnectionFactory,
     private readonly stage: OfficeStage,
+    private readonly launchClient?: LaunchClient,
   ) {}
+
+  /** tasks.md 26.2: pure delegation, mirroring `launchAgentSession`'s own delegation on the server side. */
+  async requestLaunch(spec: LaunchSpec): Promise<LaunchResult> {
+    if (!this.launchClient) throw new Error('OfficeContainer.requestLaunch: no LaunchClient was configured');
+    return this.launchClient.requestLaunch(spec);
+  }
 
   connect(): void {
     this.connection = this.connectionFactory.connect();

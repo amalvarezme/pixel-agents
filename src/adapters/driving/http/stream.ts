@@ -15,9 +15,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AgentEvent } from '../../../domain/events/types';
 import type { EventPublisher } from '../../../ports/event-publisher.port';
+import type { SessionLauncher } from '../../../ports/session-launcher.port';
 import { applyEventToOfficeState, createOfficeState, type OfficeState, type Worker } from '../../../domain/office/office';
 import { appendToRing, createRingBuffer, planReplay, RING_CAPACITY, type RingBuffer } from './ring-buffer';
 import { acknowledgeDesync, createClientQueueState, enqueueForClient, type ClientQueueState } from './client-queue';
+import { handleLaunchRequest } from './launch';
 
 export const HEARTBEAT_INTERVAL_MS = 15000;
 const HEARTBEAT_COMMENT = ': heartbeat\n\n';
@@ -169,9 +171,18 @@ function parseLastEventId(req: IncomingMessage): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function createStreamServer(hub: SseEventHub): Server {
+/**
+ * `launcher` is optional (tasks.md 26.1, design.md D2: "Launch is `POST /launch`, not a socket
+ * frame") — every existing caller that never wires a launcher keeps getting a 404 on `/launch`,
+ * exactly as before this route existed.
+ */
+export function createStreamServer(hub: SseEventHub, launcher?: SessionLauncher): Server {
   return createServer((req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+    if (pathname === '/launch' && req.method === 'POST' && launcher) {
+      void handleLaunchRequest(req, res, launcher);
+      return;
+    }
     if (pathname !== '/stream') {
       res.writeHead(404);
       res.end();
