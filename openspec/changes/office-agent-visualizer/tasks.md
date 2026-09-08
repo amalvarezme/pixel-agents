@@ -458,15 +458,41 @@ detector" and stop. Closing it needed two pieces of work that no current phase c
   fix
 ### Gaps found by the four-harness runtime verification (orchestrator, Chrome + curl)
 
-- [ ] G.1 **The `snapshot` frame carries no archive state.** A client connecting AFTER
-  `memory_write` events have been ingested sees the workers but `Archived: 0`. Reproduced: three
-  harnesses each emitted a `memory_write` before the browser connected, and the page rendered all
-  three workers with correct captions and a zero counter; a `mem_save` appended live then moved it
-  to 1. Phase 9.2 built the snapshot so a late or evicted client can reconstruct state — archive
-  count and in-flight carries are part of that state and are currently missing from it
-- [ ] G.2 **Worker captions overlap horizontally** when several workers sit adjacent on the packed
-  row; the harness-specific captions are long and the layout does not account for their width.
-  Cosmetic, no correctness impact
+- [x] G.1 **The `snapshot` frame carries no archive state.** Fixed (work unit
+  - [x] **Visually confirmed by the orchestrator in Chrome**: ingested three `mem_save` records
+    FIRST, then connected a fresh client — the page rendered `Archived: 3`, matching the ingested
+    count exactly. This was the original reproduction (a late client showed `Archived: 0`), so the
+    observable symptom is genuinely gone, not only the payload. The applier's caveat that the
+    visible counter is animation-playback state held, but did not block the outcome: the restored
+    domain state re-derives the trips and they play out to the correct total
+  `snapshot-state-and-caption-layout`). `domain/office/office.ts` gained a pure
+  `serializeOfficeState`/`deserializeOfficeState` round-trip pair — `OfficeState.carryQueues` is a
+  `Map` and is not directly JSON-serializable (`JSON.stringify` silently produces `{}`), so the
+  wire shape (`OfficeSnapshotState`) is arrays of entries, reused verbatim by both
+  `adapters/driving/http/stream.ts`'s `buildSnapshot` (server) and
+  `ui/containers/OfficeContainer.ts`'s `handleMessage` snapshot case (client), which previously
+  discarded archive/carry state with `{ ...createOfficeState(), workers: ... }` even when the
+  server sent it. Guard tests (`office.test.ts`, `stream.test.ts`, `OfficeContainer.test.ts`)
+  assert a NON-ZERO, non-one archive count survives the round trip, include an adversarial
+  near-miss proving a workers-only (pre-fix) shape reconstructs a ZERO archive count, and were
+  each verified red-then-green by deliberately reverting the fix and re-running. End-to-end
+  verified live: a synthetic `CLAUDE_HOME` fixture with 3 sessions each containing a
+  `mcp__engram__mem_save` tool_use, server composed against it, then `curl -N .../stream` (bare
+  connect, no `lastEventId`) returned a `snapshot` frame with `archive.slots` showing 3 occupied
+  docks and `carryQueues` with 3 held documents — see apply-progress for the full payload. 471/471
+  tests, typecheck 0 errors, lint:deps 0 violations
+- [x] G.2 **Worker captions overlap horizontally.** Fixed (work unit
+  - [x] **Visually confirmed by the orchestrator in Chrome**: three adjacent workers on the packed
+    row render with cleanly separated captions, no overlap
+  `snapshot-state-and-caption-layout`). Desk positions stay stable (`DESK_SPACING` unchanged);
+  instead `components/atoms/caption.ts` gained a pure, canvas-free `computeMaxCaptionChars(deskSpacing)`
+  deriving a character budget from the same `DESK_SPACING` the layout math already owns (now
+  exported), and `truncateCaption` applies an ellipsis once a caption exceeds that budget.
+  `buildCaption` truncates by default via `CAPTION_MAX_CHARS`, still taking NO `harness` parameter
+  (renderer harness-isolation preserved). Unit-tested with boundary twins (exactly-at-budget vs.
+  one-over) and both repro captions (`McpToolCall: engram/mem_save`,
+  `Saving to Engram: Engram save`), each verified red-then-green. Visual confirmation in Chrome is
+  the orchestrator's to close, not claimed here
 
 - [x] B.2 (`archive-animation-runtime` work unit) Render half of 21.2 built:
   `src/ui/scene/animation/trip-animation.ts` + wiring through `OfficeContainer`, the worker

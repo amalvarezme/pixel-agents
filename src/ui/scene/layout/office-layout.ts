@@ -17,7 +17,10 @@ export const FLOOR_WIDTH = 1920;
 export const FLOOR_HEIGHT = 1080;
 export const MAX_PACKED_WORKERS = 8;
 
-const DESK_SPACING = 200;
+/** Exported so `components/atoms/caption.ts` can derive a caption-width budget from the same
+ * single source of truth (G.2: "worker captions overlap horizontally" — the fix keeps desk
+ * positions stable and instead bounds caption width to this spacing). */
+export const DESK_SPACING = 200;
 const ROOT_LANE_Y = FLOOR_HEIGHT / 2;
 const CHILD_LANE_OFFSET_Y = 220;
 

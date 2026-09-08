@@ -60,6 +60,47 @@ export function createOfficeState(archiveSlotCount?: number): OfficeState {
   };
 }
 
+/**
+ * JSON-safe wire shape for `OfficeState` (G.1: the `snapshot` frame must let a late-connecting or
+ * evicted client reconstruct FULL state, not just workers — design.md/tasks.md 9.2). `workers` is
+ * already an array; `archive` is already plain objects/arrays; `carryQueues` is the only `Map`
+ * field, so it is the only one that needs an explicit entries shape — `JSON.stringify(aMap)`
+ * silently produces `{}`, which is exactly how G.1 happened.
+ */
+export interface OfficeSnapshotState {
+  workers: Worker[];
+  archive: ArchiveDockState;
+  carryQueues: Array<{ sessionKey: string; queue: CarryQueueState }>;
+}
+
+/** Pure conversion, reused verbatim by both the SSE server (building a resume snapshot) and the
+ * browser `OfficeContainer` (consuming one) — see the module comment above for the shared-fold
+ * rationale that already applies to `applyEventToOfficeState`. */
+export function serializeOfficeState(state: OfficeState): OfficeSnapshotState {
+  return {
+    workers: [...state.workers.values()],
+    archive: state.archive,
+    carryQueues: [...state.carryQueues.entries()].map(([sessionKey, queue]) => ({ sessionKey, queue })),
+  };
+}
+
+/**
+ * Inverse of `serializeOfficeState`. `archive`/`carryQueues` are optional on the input so a
+ * snapshot missing them (an older wire payload, or a bare `{ workers }` literal in a test)
+ * degrades to an empty archive/carry state instead of throwing.
+ */
+export function deserializeOfficeState(snapshot: {
+  workers: Worker[];
+  archive?: ArchiveDockState;
+  carryQueues?: Array<{ sessionKey: string; queue: CarryQueueState }>;
+}): OfficeState {
+  return {
+    workers: new Map(snapshot.workers.map((w) => [w.sessionKey, w])),
+    archive: snapshot.archive ?? createArchiveDockState(),
+    carryQueues: new Map((snapshot.carryQueues ?? []).map(({ sessionKey, queue }) => [sessionKey, queue])),
+  };
+}
+
 function upsertWorker(
   state: OfficeState,
   sessionKey: string,

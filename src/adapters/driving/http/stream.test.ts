@@ -8,6 +8,14 @@ function event(id: number, sessionKey = 'claude-code:s1'): AgentEvent {
   return { id, kind: 'tool_start', harness: 'claude-code', sessionKey, at: id * 1000 };
 }
 
+function sessionStart(id: number, sessionKey: string): AgentEvent {
+  return { id, kind: 'session_start', harness: 'claude-code', sessionKey, at: id };
+}
+
+function memoryWrite(id: number, sessionKey: string): AgentEvent {
+  return { id, kind: 'memory_write', harness: 'claude-code', sessionKey, at: id, toolLabel: 'mem_save' };
+}
+
 /** Incrementally reads SSE frames (blocks of text separated by a blank line) off one response body. */
 class SseFrameReader {
   private buffer = '';
@@ -81,6 +89,34 @@ describe('SSE stream server (tasks.md 9.1, 9.2, 9.4)', () => {
     const [frame] = await reader.readFrames(1);
     expect(frame).toBeDefined();
     expect(parseFrame(frame!).event).toBe('snapshot');
+  });
+
+  // G.1: "A client connecting AFTER memory_write events have been ingested sees the workers but
+  // Archived: 0." The snapshot frame must carry archive state, not just workers.
+  it('a client connecting AFTER memory_write events were ingested receives a NON-ZERO archive count in the snapshot', async () => {
+    const hub = new SseEventHub();
+    hub.publish(sessionStart(1, 'claude-code:s1'));
+    hub.publish(sessionStart(2, 'claude-code:s2'));
+    hub.publish(sessionStart(3, 'claude-code:s3'));
+    hub.publish(memoryWrite(4, 'claude-code:s1'));
+    hub.publish(memoryWrite(5, 'claude-code:s2'));
+    hub.publish(memoryWrite(6, 'claude-code:s3'));
+
+    const baseUrl = await startServer(hub);
+    const response = await fetch(`${baseUrl}/stream`);
+    const reader = new SseFrameReader(response);
+    readers.push(reader);
+
+    const [frame] = await reader.readFrames(1);
+    const parsed = parseFrame(frame!);
+    expect(parsed.event).toBe('snapshot');
+    const snapshot = JSON.parse(parsed.data!);
+
+    const dockedCount = snapshot.archive.slots.filter((s: { occupiedBySessionKey: string | null }) => s.occupiedBySessionKey !== null).length;
+    expect(dockedCount).toBe(3); // deliberately not 0, not 1 — cannot pass by accident
+    expect(snapshot.carryQueues.find((entry: { sessionKey: string }) => entry.sessionKey === 'claude-code:s1')?.queue.held).toMatchObject({
+      count: 1,
+    });
   });
 
   it('delivers live events published after connecting, each carrying a monotonic id: field', async () => {

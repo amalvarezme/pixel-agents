@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applyEventToOfficeState, completeArchiveTripForWorker, createOfficeState } from './office';
+import {
+  applyEventToOfficeState,
+  completeArchiveTripForWorker,
+  createOfficeState,
+  deserializeOfficeState,
+  serializeOfficeState,
+} from './office';
 import type { AgentEvent } from '../events/types';
 
 function sessionStart(id: number, sessionKey: string): AgentEvent {
@@ -273,5 +279,68 @@ describe('applyEventToOfficeState — memory_write drives the carry queue and ar
 
     expect(result).not.toBeInstanceOf(Promise);
     expect(state.carryQueues.get('claude-code:s1')?.batch).toMatchObject({ count: 499 });
+  });
+});
+
+// G.1: "A client connecting AFTER memory_write events have been ingested sees the workers but
+// Archived: 0" — the snapshot frame must carry archive + carry-queue state, not just workers.
+// `OfficeState.carryQueues` is a `Map`, which is not directly JSON-serializable (`JSON.stringify`
+// silently produces `{}`), so this wire shape is arrays of entries, converted by one pure
+// round-trip pair reused verbatim by both the SSE server and the browser client projection.
+describe('serializeOfficeState / deserializeOfficeState (G.1: snapshot wire shape round trip)', () => {
+  it('round-trips a non-zero, non-one archive count so a late-connecting client reconstructs it exactly', () => {
+    let state = createOfficeState();
+    for (const worker of ['w1', 'w2', 'w3']) {
+      state = applyEventToOfficeState(state, sessionStart(1, worker));
+      state = applyEventToOfficeState(state, memoryWrite(2, worker, 1000));
+    }
+    const dockedBefore = state.archive.slots.filter((s) => s.occupiedBySessionKey !== null).length;
+    expect(dockedBefore).toBe(3); // deliberately not 0, not 1 — cannot pass by accident
+
+    const restored = deserializeOfficeState(serializeOfficeState(state));
+
+    const dockedAfter = restored.archive.slots.filter((s) => s.occupiedBySessionKey !== null).length;
+    expect(dockedAfter).toBe(3);
+    expect(dockedAfter).not.toBe(0);
+    expect(dockedAfter).not.toBe(1);
+  });
+
+  // Adversarial near-miss: the PRE-FIX wire shape (`{ workers }` only, exactly what `buildSnapshot`
+  // used to return) must reconstruct a ZERO archive count. This proves the round-trip test above
+  // actually exercises the fix — a snapshot missing archive/carryQueues is observably different.
+  it('adversarial near-miss: a workers-only snapshot (the pre-fix shape) reconstructs a ZERO archive count', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, memoryWrite(2, 'claude-code:s1', 1000));
+    expect(state.archive.slots.some((s) => s.occupiedBySessionKey !== null)).toBe(true);
+
+    const preFixWire = { workers: [...state.workers.values()] };
+    const restored = deserializeOfficeState(preFixWire);
+
+    expect(restored.archive.slots.every((s) => s.occupiedBySessionKey === null)).toBe(true);
+  });
+
+  it('round-trips an in-flight carry queue (held + one queued) for a worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, memoryWrite(2, 'claude-code:s1', 1000));
+    state = applyEventToOfficeState(state, memoryWrite(3, 'claude-code:s1', 1001));
+
+    const restored = deserializeOfficeState(serializeOfficeState(state));
+
+    expect(restored.carryQueues.get('claude-code:s1')?.held).toMatchObject({ count: 1 });
+    expect(restored.carryQueues.get('claude-code:s1')?.queued).toHaveLength(1);
+  });
+
+  it('produces a JSON-safe wire shape — no Map survives an actual JSON.stringify/parse round trip', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, memoryWrite(2, 'claude-code:s1', 1000));
+
+    const wireBytes = JSON.stringify(serializeOfficeState(state));
+    const restored = deserializeOfficeState(JSON.parse(wireBytes));
+
+    expect(restored.carryQueues.get('claude-code:s1')?.held).toMatchObject({ count: 1 });
+    expect(restored.archive.slots.some((s) => s.occupiedBySessionKey === 'claude-code:s1')).toBe(true);
   });
 });

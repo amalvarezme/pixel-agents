@@ -16,7 +16,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AgentEvent } from '../../../domain/events/types';
 import type { EventPublisher } from '../../../ports/event-publisher.port';
 import type { SessionLauncher } from '../../../ports/session-launcher.port';
-import { applyEventToOfficeState, createOfficeState, type OfficeState, type Worker } from '../../../domain/office/office';
+import {
+  applyEventToOfficeState,
+  createOfficeState,
+  serializeOfficeState,
+  type OfficeSnapshotState,
+  type OfficeState,
+} from '../../../domain/office/office';
 import { appendToRing, createRingBuffer, planReplay, RING_CAPACITY, type RingBuffer } from './ring-buffer';
 import { acknowledgeDesync, createClientQueueState, enqueueForClient, type ClientQueueState } from './client-queue';
 import { handleLaunchRequest } from './launch';
@@ -24,13 +30,19 @@ import { handleLaunchRequest } from './launch';
 export const HEARTBEAT_INTERVAL_MS = 15000;
 const HEARTBEAT_COMMENT = ': heartbeat\n\n';
 
-export interface OfficeSnapshot {
+/**
+ * G.1 fix: a resume `snapshot` must let a late-connecting or evicted client reconstruct FULL
+ * office state, not just workers — Phase 9.2 built this frame precisely so archive count and
+ * in-flight carries survive a reconnect. `OfficeSnapshotState` (domain/office/office.ts) is
+ * already the JSON-safe wire shape (its `carryQueues` is an array of entries, not a `Map`, since
+ * `JSON.stringify` on a `Map` silently produces `{}`), so this frame only adds `generatedAt`.
+ */
+export interface OfficeSnapshot extends OfficeSnapshotState {
   generatedAt: number;
-  workers: Worker[];
 }
 
 function buildSnapshot(state: OfficeState): OfficeSnapshot {
-  return { generatedAt: Date.now(), workers: [...state.workers.values()] };
+  return { generatedAt: Date.now(), ...serializeOfficeState(state) };
 }
 
 function formatEventFrame(event: AgentEvent): string {
