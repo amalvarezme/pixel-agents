@@ -33,11 +33,21 @@ import { createEventFromLogRecord } from '../../../domain/events/factories';
 import { createAsyncQueue } from '../../../shared/async-queue';
 import { discoverClaudeCodeSessions, watchClaudeCodeSessions, type ClaudeCodeSessionRef } from './discover';
 import { readTailIncrement, watchAndTailFile } from './tail';
-import { mapClaudeCodeRecordToEvents, parseClaudeCodeLine } from './parse';
+import { mapClaudeCodeRecordToEvents, parseClaudeCodeLine, type ClaudeCodeRecord } from './parse';
 
 export interface ClaudeCodeActivitySourceOptions {
   /** Injectable monotonic id allocator. Defaults to an in-process counter starting at 1. */
   allocateId?: () => number;
+  /**
+   * Reports every parsed record from a PARENT (non-subagent) session's own transcript, so the
+   * composition root can feed the `toolUseResult.agentId` correlation edge (`correlate.ts`'s
+   * `correlateFromParentRecord`, spec: "the system MUST correlate parent and child sessions using
+   * toolUseResult.agentId"). Never invoked for a subagent transcript itself — that file's records
+   * are its own tool activity, not a launch record naming a further child. A throwing callback
+   * never breaks the tail loop (design.md "A correlation ... failure degrades that concern only"),
+   * matching the try/catch precedent already applied to `onSessionDiscovered`.
+   */
+  onParentRecord?: (parentSessionKey: string, record: ClaudeCodeRecord) => void;
 }
 
 function defaultAllocateId(): () => number {
@@ -52,11 +62,14 @@ export class ClaudeCodeActivitySource implements ActivitySource {
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
 
+  private readonly onParentRecord?: (parentSessionKey: string, record: ClaudeCodeRecord) => void;
+
   constructor(
     private readonly root: string,
     options: ClaudeCodeActivitySourceOptions = {},
   ) {
     this.allocateId = options.allocateId ?? defaultAllocateId();
+    this.onParentRecord = options.onParentRecord;
   }
 
   async probe(): Promise<SourceHealth> {
@@ -78,8 +91,10 @@ export class ClaudeCodeActivitySource implements ActivitySource {
   }
 
   open(session: SessionRef, from: Checkpoint | null): ActivityStream {
-    const filePath = (session as ClaudeCodeSessionRef).filePath;
+    const claudeCodeSession = session as ClaudeCodeSessionRef;
+    const filePath = claudeCodeSession.filePath;
     const sessionKey = session.sessionKey;
+    const isSubagent = claudeCodeSession.isSubagent;
     const initialCheckpoint: ByteOffsetCheckpoint | null = from && from.kind === 'byte-offset' ? from : null;
     const queue = createAsyncQueue<ActivityStreamItem>();
     let stopped = false;
@@ -89,6 +104,13 @@ export class ClaudeCodeActivitySource implements ActivitySource {
       for (const line of lines) {
         const record = parseClaudeCodeLine(line);
         if (!record) continue;
+        if (!isSubagent && this.onParentRecord) {
+          try {
+            this.onParentRecord(sessionKey, record);
+          } catch {
+            // A correlation failure degrades that concern only — it must never break the tail.
+          }
+        }
         for (const event of mapClaudeCodeRecordToEvents(record, { sessionKey, allocateId: this.allocateId })) {
           queue.push({ event, checkpoint });
         }
