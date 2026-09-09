@@ -129,6 +129,9 @@ export async function discoverAntigravitySessions(root: string): Promise<Antigra
       surface: entry.surface,
       launchEligible: entry.surface === 'cli',
       candidateFiles,
+      // Antigravity's transcript carries no cwd field at all (design.md "Launch <-> log
+      // correlation") — never guessed, so the correlator falls back to harness+window only.
+      cwd: null,
       discoveredAt: now,
     });
   }
@@ -159,6 +162,7 @@ export function watchAntigravitySessions(
       surface: classified.surface,
       launchEligible: classified.surface === 'cli',
       candidateFiles: [filePath],
+      cwd: null,
       discoveredAt: Date.now(),
     });
   });

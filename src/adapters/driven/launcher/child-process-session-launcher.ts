@@ -14,7 +14,7 @@
  * emits `launch_started` (task 24.7).
  */
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import type { AgentEvent } from '../../../domain/events/types';
 import { createSelfOriginatedEvent } from '../../../domain/events/factories';
 import type { EventPublisher } from '../../../ports/event-publisher.port';
@@ -52,6 +52,8 @@ export interface ChildProcessSessionLauncherOptions {
   env?: NodeJS.ProcessEnv;
   spawnFn?: SpawnFn;
   existsFn?: BinaryExistsFn;
+  /** Separate from `existsFn`: that one answers "is this a binary on PATH", this one "is this a usable working directory". Conflating them would make a binary fake decide cwd validity too. */
+  dirExistsFn?: (path: string) => boolean;
   mintLaunchId?: () => string;
   allocateId?: () => number;
   terminalBackend?: TerminalBackend;
@@ -72,6 +74,7 @@ export class ChildProcessSessionLauncher implements SessionLauncher {
   private readonly env: NodeJS.ProcessEnv;
   private readonly spawnFn: SpawnFn;
   private readonly existsFn: BinaryExistsFn;
+  private readonly dirExistsFn: (path: string) => boolean;
   private readonly mintLaunchId: () => string;
   private readonly allocateId: () => number;
   private readonly terminalBackend: TerminalBackend | undefined;
@@ -83,6 +86,7 @@ export class ChildProcessSessionLauncher implements SessionLauncher {
     this.env = options.env ?? process.env;
     this.spawnFn = options.spawnFn ?? defaultSpawnFn;
     this.existsFn = options.existsFn ?? existsSync;
+    this.dirExistsFn = options.dirExistsFn ?? ((path: string) => existsSync(path) && statSync(path).isDirectory());
     this.mintLaunchId = options.mintLaunchId ?? (() => `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     this.allocateId = options.allocateId ?? defaultAllocateId();
     this.terminalBackend = options.terminalBackend;
@@ -127,6 +131,15 @@ export class ChildProcessSessionLauncher implements SessionLauncher {
 
     if (!resolvedPath) {
       const reason = `binary not found on PATH: ${binaryName}`;
+      this.publisher.publish(this.buildFailedStatusEvent(spec.harness, launchId, reason));
+      return { outcome: 'failed', launchId, reason };
+    }
+
+    // Node reports a missing `cwd` as ENOENT naming the BINARY, so a stale directory looks
+    // exactly like a PATH problem — observed live against a binary that was present and
+    // executable. Check the directory explicitly so the reason names what is actually missing.
+    if (!this.dirExistsFn(spec.cwd)) {
+      const reason = `working directory does not exist: ${spec.cwd}`;
       this.publisher.publish(this.buildFailedStatusEvent(spec.harness, launchId, reason));
       return { outcome: 'failed', launchId, reason };
     }

@@ -12,8 +12,8 @@ function event(id: number, sessionKey: string): AgentEvent {
 describe('FakeActivitySource', () => {
   it('discovers every scripted session', async () => {
     const source = new FakeActivitySource('claude-code', [
-      { session: { harness: 'claude-code', sessionKey: 'claude-code:s1', discoveredAt: 0 }, events: [] },
-      { session: { harness: 'claude-code', sessionKey: 'claude-code:s2', discoveredAt: 0 }, events: [] },
+      { session: { harness: 'claude-code', sessionKey: 'claude-code:s1', cwd: null, discoveredAt: 0 }, events: [] },
+      { session: { harness: 'claude-code', sessionKey: 'claude-code:s2', cwd: null, discoveredAt: 0 }, events: [] },
     ]);
 
     const discovered: string[] = [];
@@ -25,7 +25,7 @@ describe('FakeActivitySource', () => {
   });
 
   it('open() replays scripted events in order from the start when no checkpoint is given', async () => {
-    const sessionRef = { harness: 'claude-code' as const, sessionKey: 'claude-code:s1', discoveredAt: 0 };
+    const sessionRef = { harness: 'claude-code' as const, sessionKey: 'claude-code:s1', cwd: null, discoveredAt: 0 };
     const source = new FakeActivitySource('claude-code', [
       { session: sessionRef, events: [event(1, 'claude-code:s1'), event(2, 'claude-code:s1')] },
     ]);
@@ -40,7 +40,7 @@ describe('FakeActivitySource', () => {
   });
 
   it('open() resumes from a seq checkpoint, skipping already-published events', async () => {
-    const sessionRef = { harness: 'claude-code' as const, sessionKey: 'claude-code:s1', discoveredAt: 0 };
+    const sessionRef = { harness: 'claude-code' as const, sessionKey: 'claude-code:s1', cwd: null, discoveredAt: 0 };
     const source = new FakeActivitySource('claude-code', [
       { session: sessionRef, events: [event(1, 'claude-code:s1'), event(2, 'claude-code:s1'), event(3, 'claude-code:s1')] },
     ]);

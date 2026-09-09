@@ -126,6 +126,21 @@ describe('discoverAntigravitySessions', () => {
     expect(sessions[0]?.launchEligible).toBe(true);
   });
 
+  // design.md "Launch <-> log correlation": Antigravity's transcript carries no cwd signal at
+  // all, so the correlator must fall back to harness+window alone for it. `cwd` MUST be `null`
+  // here, never a guessed/derived value, even though the launch spec that started this session
+  // did have a real cwd.
+  it('reports cwd: null — Antigravity transcripts carry no cwd signal to correlate on', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-discover-cwd-'));
+    const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-cwd-1', '.system_generated', 'logs');
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(join(logsDir, 'transcript.jsonl'), '{}\n');
+
+    const sessions = await discoverAntigravitySessions(root);
+
+    expect(sessions[0]?.cwd).toBeNull();
+  });
+
   it('performs zero writes under the discovered root', async () => {
     root = await mkdtemp(join(tmpdir(), 'antigravity-discover-write-'));
     const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-1', '.system_generated', 'logs');

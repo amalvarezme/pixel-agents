@@ -147,13 +147,15 @@ export class OpenCodeActivitySource implements ActivitySource {
 
   private selectActiveSessions(db: DatabaseSync, seen: Set<string>): OpenCodeSessionRef[] {
     const rows = db
-      .prepare('SELECT id, time_updated FROM session WHERE time_updated > ?')
-      .all(this.now() - this.activeWindowMs) as Array<{ id: string; time_updated: number }>;
+      .prepare('SELECT id, directory, time_updated FROM session WHERE time_updated > ?')
+      .all(this.now() - this.activeWindowMs) as Array<{ id: string; directory: string; time_updated: number }>;
     const fresh: OpenCodeSessionRef[] = [];
     for (const row of rows) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
-      fresh.push({ harness: 'opencode', sessionKey: openCodeSessionKey(row.id), discoveredAt: this.now(), sessionId: row.id });
+      // `directory` is the launch correlator's OpenCode cwd signal (design.md "Launch <-> log
+      // correlation"; real schema: `directory text NOT NULL`, research-local-evidence.md Q3).
+      fresh.push({ harness: 'opencode', sessionKey: openCodeSessionKey(row.id), cwd: row.directory, discoveredAt: this.now(), sessionId: row.id });
     }
     return fresh;
   }

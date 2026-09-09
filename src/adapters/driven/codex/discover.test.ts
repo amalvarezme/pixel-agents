@@ -43,6 +43,31 @@ describe('discoverCodexSessions', () => {
     expect(sessions.map((s) => s.sessionKey)).toEqual([`codex:${ROLLOUT_SESSION_ID}`]);
   });
 
+  // design.md "Launch <-> log correlation": Codex's `session_meta` record carries `payload.cwd`
+  // (research-local-evidence.md), the launch correlator's exact-match signal for Codex.
+  it('reports session_meta\'s payload.cwd as cwd, for launch correlation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'codex-discover-cwd-'));
+    const dayDir = join(root, 'sessions', '2026', '08', '23');
+    await mkdir(dayDir, { recursive: true });
+    const sessionMeta = JSON.stringify({ type: 'session_meta', payload: { session_id: ROLLOUT_SESSION_ID, cwd: '/Users/dev/codex-project' } });
+    await writeFile(join(dayDir, ROLLOUT_FILENAME), `${sessionMeta}\n`);
+
+    const sessions = await discoverCodexSessions(root);
+
+    expect(sessions[0]?.cwd).toBe('/Users/dev/codex-project');
+  });
+
+  it('adversarial near-miss: a rollout file with no session_meta record reports cwd: null, never a guess', async () => {
+    root = await mkdtemp(join(tmpdir(), 'codex-discover-no-cwd-'));
+    const dayDir = join(root, 'sessions', '2026', '08', '23');
+    await mkdir(dayDir, { recursive: true });
+    await writeFile(join(dayDir, ROLLOUT_FILENAME), `${JSON.stringify({ type: 'event_msg', payload: { type: 'other' } })}\n`);
+
+    const sessions = await discoverCodexSessions(root);
+
+    expect(sessions[0]?.cwd).toBeNull();
+  });
+
   it('performs zero writes under the discovered root', async () => {
     root = await mkdtemp(join(tmpdir(), 'codex-discover-write-'));
     const dayDir = join(root, 'sessions', '2026', '08', '23');

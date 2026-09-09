@@ -24,6 +24,14 @@ export interface IngestAgentActivityDeps {
   source: ActivitySource;
   publisher: EventPublisher;
   checkpointStore: CheckpointStore;
+  /**
+   * Optional generic discovery hook, called once per session as it is discovered (composition-
+   * root follow-up: wiring the launch<->log correlator). Deliberately untyped beyond `SessionRef`
+   * — this use case has no knowledge of the launcher subsystem it may be feeding; the composition
+   * root is the only place that connects the two (design.md "Subsystem Separation from
+   * Ingestion").
+   */
+  onSessionDiscovered?: (session: SessionRef) => void;
 }
 
 async function ingestSession(
@@ -41,6 +49,14 @@ async function ingestSession(
 export async function ingestAgentActivity(deps: IngestAgentActivityDeps): Promise<void> {
   const sessionTasks: Promise<void>[] = [];
   for await (const session of deps.source.discover()) {
+    // A failed bind degrades attribution only — it must never affect ingestion (design.md
+    // "Launch <-> log correlation"). This hook is generic and untrusted by this use case, so a
+    // throw here is swallowed rather than aborting the discover() loop for every session after it.
+    try {
+      deps.onSessionDiscovered?.(session);
+    } catch {
+      // intentionally ignored — see comment above
+    }
     sessionTasks.push(ingestSession(session, deps));
   }
   await Promise.all(sessionTasks);

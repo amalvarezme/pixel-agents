@@ -69,6 +69,38 @@ describe('discoverClaudeCodeSessions', () => {
     expect(subagent?.parentSessionKey).toBe('claude-code:session-abc');
   });
 
+  // design.md "Launch <-> log correlation": Claude Code JSONL records carry a top-level `cwd`
+  // field (not necessarily on the first line — earlier bootstrap-only records omit it), which is
+  // the launch correlator's exact-match signal. tasks.md 25.2's recorded blocker was precisely
+  // that SessionRef carried no cwd to feed it.
+  it('reports the cwd field found in the session file\'s records, for launch correlation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-discover-cwd-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    // First record has no cwd (bootstrap-only record, matches real observed shape); a later
+    // record carries it.
+    const lines = [
+      JSON.stringify({ type: 'summary', sessionId: 'session-abc' }),
+      JSON.stringify({ type: 'user', sessionId: 'session-abc', cwd: '/Users/dev/my-project' }),
+    ];
+    await writeFile(join(slugDir, 'session-abc.jsonl'), `${lines.join('\n')}\n`);
+
+    const sessions = await discoverClaudeCodeSessions(root);
+
+    expect(sessions[0]?.cwd).toBe('/Users/dev/my-project');
+  });
+
+  it('adversarial near-miss: a session file with NO cwd field anywhere reports cwd: null, never a guess', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-discover-no-cwd-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    await writeFile(join(slugDir, 'session-abc.jsonl'), `${JSON.stringify({ type: 'summary', sessionId: 'session-abc' })}\n`);
+
+    const sessions = await discoverClaudeCodeSessions(root);
+
+    expect(sessions[0]?.cwd).toBeNull();
+  });
+
   it('performs zero writes under the discovered root', async () => {
     root = await mkdtemp(join(tmpdir(), 'claude-code-discover-write-'));
     const slugDir = join(root, 'projects', 'my-slug');
@@ -146,9 +178,46 @@ describe('watchClaudeCodeSessions', () => {
     expect(discovered.sessionKey).toMatch(/^claude-code:session-new-\d+$/);
     expect(discovered.isSubagent).toBe(false);
   }, 10000);
+
+  it('resolves cwd from the new file\'s own content, for launch correlation', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-watch-cwd-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    const line = JSON.stringify({ type: 'user', cwd: '/Users/dev/watched-project' });
+
+    let retryTimer: NodeJS.Timeout | undefined;
+    const discovered = await new Promise<ClaudeCodeSessionRefLike>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for add event')), 9000);
+      const settle = (ref: ClaudeCodeSessionRefLike) => {
+        clearTimeout(timeout);
+        if (retryTimer) clearInterval(retryTimer);
+        resolve(ref);
+      };
+
+      const watcher = watchClaudeCodeSessions(root, settle);
+      closeWatcher = () => watcher.close();
+
+      let attempt = 0;
+      const writeOne = () => {
+        attempt += 1;
+        writeFile(join(slugDir, `session-cwd-${attempt}.jsonl`), `${line}\n`).catch(reject);
+      };
+
+      watcher.on('ready', () => {
+        writeOne();
+        retryTimer = setInterval(writeOne, 250);
+      });
+      watcher.on('error', reject);
+    }).finally(() => {
+      if (retryTimer) clearInterval(retryTimer);
+    });
+
+    expect(discovered.cwd).toBe('/Users/dev/watched-project');
+  }, 10000);
 });
 
 interface ClaudeCodeSessionRefLike {
   sessionKey: string;
   isSubagent: boolean;
+  cwd?: string | null;
 }

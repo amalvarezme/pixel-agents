@@ -36,6 +36,7 @@ describe('ChildProcessSessionLauncher — successful launch', () => {
     let now = 1000;
 
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => now },
       env: { PATH: '/usr/local/bin' },
@@ -76,6 +77,7 @@ describe('ChildProcessSessionLauncher — missing binary (Threat Matrix case d, 
   it('resolves status(launch_failed), never throws, when the binary is not on PATH', async () => {
     const publisher = createRecordingPublisher();
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 2000 },
       env: { PATH: '/usr/bin' },
@@ -93,9 +95,62 @@ describe('ChildProcessSessionLauncher — missing binary (Threat Matrix case d, 
     expect(publisher.events[1]).toMatchObject({ kind: 'status', reason: expect.stringContaining('claude') });
   });
 
+  // Node's spawn reports a MISSING CWD as `ENOENT` naming the BINARY, not the directory. Observed
+  // live: launching into a stale path returned "spawn failed: spawn /.../claude ENOENT" while the
+  // binary was present and executable. That sends whoever reads it hunting for a PATH problem that
+  // does not exist. Check the directory explicitly so the reason names the real cause.
+  it('resolves status(launch_failed) naming the CWD, not the binary, when the cwd does not exist', async () => {
+    const publisher = createRecordingPublisher();
+    const launcher = new ChildProcessSessionLauncher({
+      publisher,
+      clock: { now: () => 4000 },
+      env: { PATH: '/usr/bin' },
+      // The binary resolves fine; only the working directory is missing.
+      existsFn: () => true,
+      dirExistsFn: (path: string) => path !== '/gone/missing-dir',
+      spawnFn: () => {
+        throw new Error('spawnFn must never be called when the cwd cannot exist');
+      },
+      mintLaunchId: () => 'launch-cwd',
+    });
+
+    const result = await launcher.launch({ harness: 'claude-code', cwd: '/gone/missing-dir', args: [] });
+
+    expect(result).toMatchObject({ outcome: 'failed', launchId: 'launch-cwd' });
+    expect(result.outcome === 'failed' ? result.reason : '').toContain('/gone/missing-dir');
+    // The old message blamed the binary; assert it does NOT, or the fix is cosmetic only.
+    expect(result.outcome === 'failed' ? result.reason : '').not.toContain('not found on PATH');
+    expect(publisher.events.some((e) => e.kind === 'launch_started')).toBe(false);
+  });
+
+  it('adversarial near-miss: an EXISTING cwd still reaches spawn (the guard targets the directory, not every launch)', async () => {
+    const publisher = createRecordingPublisher();
+    let spawned = false;
+    const launcher = new ChildProcessSessionLauncher({
+      publisher,
+      clock: { now: () => 4100 },
+      env: { PATH: '/usr/bin' },
+      existsFn: () => true,
+      dirExistsFn: () => true,
+      spawnFn: () => {
+        spawned = true;
+        return createFakeChild() as never;
+      },
+      mintLaunchId: () => 'launch-cwd-ok',
+    });
+
+    // Deliberately not awaited: the fake child never emits `spawn`, so the launch promise never
+    // settles. Reaching spawnFn at all is the whole point of this near-miss, and that happens
+    // before any awaiting.
+    void launcher.launch({ harness: 'claude-code', cwd: '/exists', args: [] });
+
+    expect(spawned).toBe(true);
+  });
+
   it('agy missing from PATH: launch_requested then a failure signal, launch_started NEVER emitted (task 24.7)', async () => {
     const publisher = createRecordingPublisher();
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 3000 },
       env: { PATH: '/usr/bin' },
@@ -116,6 +171,7 @@ describe('ChildProcessSessionLauncher — spawn-time error (adversarial near-mis
     const child = createFakeChild();
     const publisher = createRecordingPublisher();
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 4000 },
       env: { PATH: '/usr/local/bin' },
@@ -140,6 +196,7 @@ describe('ChildProcessSessionLauncher — tracked-child registry + shutdown (Thr
     const spawnedChildren = [childA, childB];
     const publisher = createRecordingPublisher();
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 5000 },
       env: { PATH: '/usr/local/bin' },
@@ -167,6 +224,7 @@ describe('ChildProcessSessionLauncher — tracked-child registry + shutdown (Thr
   it('adversarial near-miss: a child whose launch FAILED (never tracked) is never SIGTERMed on shutdown', async () => {
     const publisher = createRecordingPublisher();
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 6000 },
       env: { PATH: '/usr/bin' },
@@ -187,6 +245,7 @@ describe('ChildProcessSessionLauncher — PTY backend gate (task 24.3)', () => {
     const terminalBackend: TerminalBackend = { probe: async () => ({ available: false, reason: 'node-pty beta segfault risk' }) };
     let spawnCalled = false;
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 7000 },
       env: { PATH: '/usr/local/bin' },
@@ -217,6 +276,7 @@ describe('ChildProcessSessionLauncher — PTY backend gate (task 24.3)', () => {
       },
     };
     const launcher = new ChildProcessSessionLauncher({
+      dirExistsFn: () => true,
       publisher,
       clock: { now: () => 7100 },
       env: { PATH: '/usr/local/bin' },

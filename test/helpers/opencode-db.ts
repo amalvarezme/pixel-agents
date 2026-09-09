@@ -21,6 +21,10 @@ export interface SeedSessionRow {
   parent_id?: string | null;
   title?: string;
   agent?: string | null;
+  /** Real schema (research-local-evidence.md Q3): `slug text NOT NULL`. Defaults to `id`. */
+  slug?: string;
+  /** Real schema: `directory text NOT NULL` — the launch correlator's OpenCode cwd signal. */
+  directory?: string;
   time_created?: number;
   time_updated?: number;
 }
@@ -57,6 +61,8 @@ export function buildSyntheticOpenCodeDb(dbPath: string): DatabaseSync {
     CREATE TABLE session (
       id TEXT PRIMARY KEY,
       parent_id TEXT,
+      slug TEXT NOT NULL,
+      directory TEXT NOT NULL,
       title TEXT NOT NULL,
       agent TEXT,
       cost REAL DEFAULT 0 NOT NULL,
@@ -104,11 +110,13 @@ export function buildSyntheticOpenCodeDb(dbPath: string): DatabaseSync {
 
 export function seedSession(db: DatabaseSync, row: SeedSessionRow): void {
   db.prepare(
-    `INSERT INTO session (id, parent_id, title, agent, time_created, time_updated)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO session (id, parent_id, slug, directory, title, agent, time_created, time_updated)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.parent_id ?? null,
+    row.slug ?? row.id,
+    row.directory ?? `/tmp/opencode-test/${row.id}`,
     row.title ?? row.id,
     row.agent ?? null,
     row.time_created ?? Date.now(),
