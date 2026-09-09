@@ -71,24 +71,30 @@ function createIdAllocator(): () => number {
   return () => next++;
 }
 
-function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator, claudeCodeAllocateId: () => number): ActivitySource[] {
+/**
+ * `allocateId` is ONE allocator shared by every source (and by `subagentCorrelator`). Each source
+ * class otherwise defaults to its own counter starting at 1, which makes ids collide across
+ * harnesses — and `ring-buffer.ts`'s `planReplay` resumes with `e.id > lastEventId`, so colliding
+ * ids silently drop another harness's unseen events on reconnect. Pinned by
+ * `event-id-allocator.test.ts`.
+ */
+function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator, allocateId: () => number): ActivitySource[] {
   const sources: ActivitySource[] = [];
   if (isHarnessEnabled('CLAUDE_CODE_ENABLED')) {
-    // `claudeCodeAllocateId` is shared with `subagentCorrelator` (same instance, built in `main()`)
-    // so a `parent` event and this session's own tail-derived events never collide on `id` — the
-    // SSE ring buffer's resume logic (`ring-buffer.ts`) depends on `id` being monotonic per stream.
+    // Shared with `subagentCorrelator` (same instance, built in `main()`) so a `parent` event and
+    // this session's own tail-derived events never collide on `id`.
     sources.push(
       new ClaudeCodeActivitySource(CLAUDE_HOME, {
-        allocateId: claudeCodeAllocateId,
+        allocateId,
         // Edge 2 (spec: "MUST correlate ... using toolUseResult.agentId"): fed straight from the
         // parsed PARENT-transcript record, alongside (never instead of) edge 1 below.
         onParentRecord: (parentSessionKey, record) => subagentCorrelator.offerParentRecord(parentSessionKey, record),
       }),
     );
   }
-  if (isHarnessEnabled('CODEX_ENABLED')) sources.push(new CodexActivitySource(CODEX_HOME));
-  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) sources.push(new AntigravityActivitySource(GEMINI_HOME));
-  if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH));
+  if (isHarnessEnabled('CODEX_ENABLED')) sources.push(new CodexActivitySource(CODEX_HOME, { allocateId }));
+  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId }));
+  if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH, { allocateId }));
   return sources;
 }
 
