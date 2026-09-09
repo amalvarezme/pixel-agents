@@ -30,15 +30,19 @@ import { join } from 'node:path';
 import type { ActivitySource } from './ports/activity-source.port';
 import { AntigravityActivitySource } from './adapters/driven/antigravity/activity-source';
 import { ClaudeCodeActivitySource } from './adapters/driven/claude-code/activity-source';
+import type { ClaudeCodeSessionRef } from './adapters/driven/claude-code/discover';
+import { ClaudeCodeSubagentCorrelationCoordinator } from './adapters/driven/claude-code/subagent-correlation-coordinator';
 import { CodexActivitySource } from './adapters/driven/codex/activity-source';
 import { OpenCodeActivitySource } from './adapters/driven/opencode/activity-source';
 import { FileCheckpointStore } from './adapters/driven/checkpoint/file-checkpoint-store';
 import { ChildProcessSessionLauncher } from './adapters/driven/launcher/child-process-session-launcher';
 import { CorrelatingSessionLauncher } from './adapters/driven/launcher/correlating-session-launcher';
 import { LaunchCorrelationCoordinator } from './adapters/driven/launcher/launch-correlation-coordinator';
+import { SessionLifecycleCoordinator } from './adapters/driven/sessions/session-lifecycle-coordinator';
 import { createNodePtyProbe } from './adapters/driven/terminal/node-pty-probe';
 import { createStreamServer, SseEventHub } from './adapters/driving/http/stream';
 import { ingestAgentActivity } from './application/ingest-agent-activity/ingest-agent-activity';
+import type { EventPublisher } from './ports/event-publisher.port';
 
 const PORT = Number(process.env.PORT ?? 4317);
 const HOST = '127.0.0.1';
@@ -53,31 +57,75 @@ const CHECKPOINT_FILE = join(process.cwd(), '.data', 'checkpoints.json');
 // design.md "Launch <-> log correlation": CLAIM_POST_WINDOW_MS is 30s, so a 1s tick expires a
 // timed-out claim within one second of its window closing without a tight busy-poll.
 const LAUNCH_CORRELATION_TICK_MS = 1000;
+// design.md "Session discovery and aging out": IDLE_TIMEOUT_MS/EVICT_TIMEOUT_MS are 10/60 minutes,
+// so a 30s tick is frequent enough that no session lingers long past either boundary.
+const SESSION_LIFECYCLE_TICK_MS = 30_000;
 
 /** `<HARNESS>_ENABLED=false` opts a harness out; any other value (including unset) keeps it on. */
 function isHarnessEnabled(envVar: string): boolean {
   return process.env[envVar] !== 'false';
 }
 
-function buildSources(): ActivitySource[] {
+function createIdAllocator(): () => number {
+  let next = 1;
+  return () => next++;
+}
+
+/**
+ * `allocateId` is ONE allocator shared by every source (and by `subagentCorrelator`). Each source
+ * class otherwise defaults to its own counter starting at 1, which makes ids collide across
+ * harnesses — and `ring-buffer.ts`'s `planReplay` resumes with `e.id > lastEventId`, so colliding
+ * ids silently drop another harness's unseen events on reconnect. Pinned by
+ * `event-id-allocator.test.ts`.
+ */
+function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator, allocateId: () => number): ActivitySource[] {
   const sources: ActivitySource[] = [];
-  if (isHarnessEnabled('CLAUDE_CODE_ENABLED')) sources.push(new ClaudeCodeActivitySource(CLAUDE_HOME));
-  if (isHarnessEnabled('CODEX_ENABLED')) sources.push(new CodexActivitySource(CODEX_HOME));
-  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) sources.push(new AntigravityActivitySource(GEMINI_HOME));
-  if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH));
+  if (isHarnessEnabled('CLAUDE_CODE_ENABLED')) {
+    // Shared with `subagentCorrelator` (same instance, built in `main()`) so a `parent` event and
+    // this session's own tail-derived events never collide on `id`.
+    sources.push(
+      new ClaudeCodeActivitySource(CLAUDE_HOME, {
+        allocateId,
+        // Edge 2 (spec: "MUST correlate ... using toolUseResult.agentId"): fed straight from the
+        // parsed PARENT-transcript record, alongside (never instead of) edge 1 below.
+        onParentRecord: (parentSessionKey, record) => subagentCorrelator.offerParentRecord(parentSessionKey, record),
+      }),
+    );
+  }
+  if (isHarnessEnabled('CODEX_ENABLED')) sources.push(new CodexActivitySource(CODEX_HOME, { allocateId }));
+  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId }));
+  if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH, { allocateId }));
   return sources;
 }
 
 async function main(): Promise<void> {
   const hub = new SseEventHub();
   const checkpointStore = new FileCheckpointStore(CHECKPOINT_FILE);
-  const sources = buildSources();
+  const clock = { now: () => Date.now() };
+  // Session idle-out and eviction (design.md "Session discovery and aging out"): observes every
+  // event any ingestion adapter publishes so it can age each session on the injected clock, and
+  // publishes the domain's own synthetic `session_end(reason: 'timeout')` straight to `hub` (never
+  // back through `trackedPublisher`, so its own eviction never re-enters `observe`) once a session
+  // stops writing for `EVICT_TIMEOUT_MS`.
+  const lifecycleCoordinator = new SessionLifecycleCoordinator(hub, clock);
+  const trackedPublisher: EventPublisher = {
+    publish: (event) => {
+      lifecycleCoordinator.observe(event);
+      hub.publish(event);
+    },
+  };
+  // Claude Code subagent lanes (design.md "Correlation and the Agent Tree"): wires the two
+  // independent, already-tested `correlate.ts` edges into the live bus, matching the shape of the
+  // launch correlator below. Claude-code-only — the other three harnesses derive `parent` events
+  // their own way (e.g. OpenCode's `session.parent_id`, mapped directly in its own `parse.ts`).
+  const claudeCodeAllocateId = createIdAllocator();
+  const subagentCorrelator = new ClaudeCodeSubagentCorrelationCoordinator(trackedPublisher, clock, claudeCodeAllocateId);
+  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId);
   // Subsystem Separation from Ingestion (spec: agent-launcher): the launcher shares the bus
   // (`hub` as `EventPublisher`) but no code path with any of the four adapters above. The
   // correlator itself lives entirely inside the launcher subsystem too — this composition root is
   // the ONLY place that connects it to the ingestion adapters' `discover()` output, exactly as
   // design.md's "Subsystem Separation from Ingestion" requires (no adapter-to-adapter import).
-  const clock = { now: () => Date.now() };
   const correlator = new LaunchCorrelationCoordinator({ publisher: hub, clock });
   const launcher = new CorrelatingSessionLauncher(
     new ChildProcessSessionLauncher({ publisher: hub, terminalBackend: createNodePtyProbe() }),
@@ -88,15 +136,25 @@ async function main(): Promise<void> {
   for (const source of sources) {
     void ingestAgentActivity({
       source,
-      publisher: hub,
+      publisher: trackedPublisher,
       checkpointStore,
-      onSessionDiscovered: (session) => correlator.offerCandidate(session),
+      onSessionDiscovered: (session) => {
+        correlator.offerCandidate(session);
+        // Edge 1 (directory-name edge): only claude-code sessions carry `isSubagent`/
+        // `parentSessionKey` (`discover.ts`'s classifier); every other harness's `SessionRef` is
+        // structurally compatible but semantically a no-op for `offerSession` since it never sets
+        // `isSubagent`.
+        if (source.harness === 'claude-code') {
+          subagentCorrelator.offerSession(session as ClaudeCodeSessionRef);
+        }
+      },
     }).catch((error: unknown) => {
       console.error(`[office-agent-visualizer] ${source.harness} ingestion stopped unexpectedly:`, error);
     });
   }
 
   const correlationTimer = setInterval(() => correlator.expireTimedOutClaims(), LAUNCH_CORRELATION_TICK_MS);
+  const lifecycleTimer = setInterval(() => lifecycleCoordinator.tick(), SESSION_LIFECYCLE_TICK_MS);
 
   const server = createStreamServer(hub, launcher);
   server.listen(PORT, HOST, () => {
@@ -108,6 +166,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     clearInterval(correlationTimer);
+    clearInterval(lifecycleTimer);
     server.close();
     await Promise.all(sources.map((source) => source.close()));
     await launcher.shutdown();

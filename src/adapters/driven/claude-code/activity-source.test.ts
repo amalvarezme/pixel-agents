@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeActivitySource } from './activity-source';
 
 // browser-entrypoint work unit: `ActivitySource` is the one port `application/ingest-agent-
@@ -88,6 +88,50 @@ describe('ClaudeCodeActivitySource', () => {
     clearInterval(keepAppending);
     expect(next.value?.event.kind).toBe('message');
     expect(next.value?.event.sessionKey).toBe('claude-code:session-1');
+
+    stream.stop();
+    await source.close();
+  });
+
+  it('open() reports a parent session record carrying toolUseResult.agentId via onParentRecord', async () => {
+    const launchLine = JSON.stringify({ type: 'assistant', toolUseResult: { agentId: 'abc123' } });
+    const { root: harnessRoot } = await makeSessionFile(launchLine);
+    const onParentRecord = vi.fn();
+    const source = new ClaudeCodeActivitySource(harnessRoot, { onParentRecord });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+    await streamIterator.next(); // session_start
+    await streamIterator.next(); // the launch line's own `message` event
+
+    expect(onParentRecord).toHaveBeenCalledTimes(1);
+    expect(onParentRecord).toHaveBeenCalledWith('claude-code:session-1', expect.objectContaining({ toolUseResult: { agentId: 'abc123' } }));
+
+    stream.stop();
+    await source.close();
+  });
+
+  it('open() never reports onParentRecord for a subagent session (the edge only reads PARENT transcripts)', async () => {
+    root = await mktempRoot();
+    const subagentDir = join(root, 'projects', 'my-slug', 'parent-1', 'subagents');
+    await mkdir(subagentDir, { recursive: true });
+    const filePath = join(subagentDir, 'agent-abc123.jsonl');
+    const line = JSON.stringify({ type: 'assistant', toolUseResult: { agentId: 'nested-should-be-ignored' } });
+    await writeFile(filePath, `${line}\n`);
+    const onParentRecord = vi.fn();
+    const source = new ClaudeCodeActivitySource(root, { onParentRecord });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    expect((sessionRef as { isSubagent?: boolean })?.isSubagent).toBe(true);
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+    await streamIterator.next(); // session_start
+    await streamIterator.next(); // the subagent's own `message` event
+
+    expect(onParentRecord).not.toHaveBeenCalled();
 
     stream.stop();
     await source.close();
