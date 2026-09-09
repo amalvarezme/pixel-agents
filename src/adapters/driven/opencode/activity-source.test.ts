@@ -62,6 +62,39 @@ describe('OpenCodeActivitySource', () => {
       await source.close();
     });
 
+    // design.md "Launch <-> log correlation": the real `session` table schema has a NOT NULL
+    // `directory` column (research-local-evidence.md Q3) — this is the launch correlator's cwd
+    // signal for OpenCode, exact string match required.
+    it('reports the session row\'s directory column as cwd, for launch correlation', async () => {
+      const dbPath = freshDbPath();
+      seedToolSession(dbPath, { id: 'ses_1', agent: 'observador', directory: '/Users/dev/my-project' }, TOOL_PART_DATA);
+      const source = new OpenCodeActivitySource(dbPath);
+
+      const { value: sessionRef } = await source.discover()[Symbol.asyncIterator]().next();
+
+      expect(sessionRef?.cwd).toBe('/Users/dev/my-project');
+      await source.close();
+    });
+
+    it('adversarial near-miss: two sessions with DIFFERENT directories report DIFFERENT cwd values (not a hardcoded constant)', async () => {
+      const dbPath = freshDbPath();
+      const writer = buildSyntheticOpenCodeDb(dbPath);
+      seedSession(writer, { id: 'ses_a', agent: 'general', directory: '/Users/dev/project-a' });
+      seedSession(writer, { id: 'ses_b', agent: 'general', directory: '/Users/dev/project-b' });
+      writer.close();
+      const source = new OpenCodeActivitySource(dbPath);
+
+      const refs: { sessionKey: string; cwd: string | null }[] = [];
+      for await (const ref of source.discover()) {
+        refs.push({ sessionKey: ref.sessionKey, cwd: ref.cwd });
+        if (refs.length === 2) break;
+      }
+
+      expect(refs.find((r) => r.sessionKey === 'opencode:ses_a')?.cwd).toBe('/Users/dev/project-a');
+      expect(refs.find((r) => r.sessionKey === 'opencode:ses_b')?.cwd).toBe('/Users/dev/project-b');
+      await source.close();
+    });
+
     it('does not yield a session whose time_updated is outside the 24h active window', async () => {
       const dbPath = freshDbPath();
       const now = 1_000_000_000_000;
@@ -266,7 +299,7 @@ describe('OpenCodeActivitySource', () => {
       writer.close();
       const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 20 });
 
-      const childRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_child', discoveredAt: 0, sessionId: 'ses_child' };
+      const childRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_child', cwd: null, discoveredAt: 0, sessionId: 'ses_child' };
       const stream = source.open(childRef, null);
       const iterator = stream.events[Symbol.asyncIterator]();
 
@@ -286,7 +319,7 @@ describe('OpenCodeActivitySource', () => {
       // `writer` stays open for the whole test, simulating a live OpenCode process.
       const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 15 });
 
-      const sessionRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_1', discoveredAt: 0, sessionId: 'ses_1' };
+      const sessionRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_1', cwd: null, discoveredAt: 0, sessionId: 'ses_1' };
       const stream = source.open(sessionRef, null);
       const iterator = stream.events[Symbol.asyncIterator]();
 
@@ -309,7 +342,7 @@ describe('OpenCodeActivitySource', () => {
       seedToolSession(dbPath, { id: 'ses_1', agent: 'general' }, TOOL_PART_DATA);
       const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 20 });
 
-      const sessionRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_1', discoveredAt: 0, sessionId: 'ses_1' };
+      const sessionRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_1', cwd: null, discoveredAt: 0, sessionId: 'ses_1' };
       const stream = source.open(sessionRef, { kind: 'seq', bySession: { ses_1: 1 } });
       const iterator = stream.events[Symbol.asyncIterator]();
 

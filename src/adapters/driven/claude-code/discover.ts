@@ -10,6 +10,7 @@
  * This module never opens a file for writing. `discoverClaudeCodeSessions` only reads directory
  * entries; it never creates, modifies, or deletes anything under `root`.
  */
+import { createReadStream } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
@@ -30,7 +31,7 @@ const SESSION_FILENAME_PATTERN = /^(.+)\.jsonl$/;
  * subagent transcript, and extracts both session identity and the directory-derived parent edge.
  * Returns `null` for any path that does not match either shape. No I/O.
  */
-export function classifyClaudeCodeSessionPath(filePath: string): Omit<ClaudeCodeSessionRef, 'discoveredAt'> | null {
+export function classifyClaudeCodeSessionPath(filePath: string): Omit<ClaudeCodeSessionRef, 'discoveredAt' | 'cwd'> | null {
   const fileName = basename(filePath);
   const parentDir = dirname(filePath);
   const parentDirName = basename(parentDir);
@@ -59,6 +60,48 @@ export function classifyClaudeCodeSessionPath(filePath: string): Omit<ClaudeCode
     isSubagent: false,
     parentSessionKey: null,
   };
+}
+
+/**
+ * Bound on how much of a session file is scanned for a `cwd` field (design.md "Launch <-> log
+ * correlation"). Read-only, and bounded so a large pre-existing session's discovery scan never
+ * reads the whole file — a fresh, correlation-relevant file's `cwd` record appears within this
+ * prefix in practice.
+ */
+const CWD_PROBE_MAX_BYTES = 64 * 1024;
+
+/** Reads only the first `maxBytes` of `filePath`. Never touches the rest of the file. */
+async function readFilePrefix(filePath: string, maxBytes: number): Promise<string> {
+  const stream = createReadStream(filePath, { start: 0, end: maxBytes - 1, encoding: 'utf8' });
+  let out = '';
+  for await (const chunk of stream) out += chunk as string;
+  return out;
+}
+
+/**
+ * Task 25.2 (blocker resolution): scans the bounded file prefix for the first record carrying a
+ * string `cwd` field — Claude Code JSONL records carry a top-level `cwd`, but not necessarily on
+ * the first line (an early bootstrap-only record may omit it). Returns `null`, never a guess,
+ * when no `cwd` is found within the bound or the file cannot be read.
+ */
+export async function resolveClaudeCodeSessionCwd(filePath: string): Promise<string | null> {
+  let raw: string;
+  try {
+    raw = await readFilePrefix(filePath, CWD_PROBE_MAX_BYTES);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.includes('"cwd"')) continue;
+    try {
+      const record = JSON.parse(line) as { cwd?: unknown };
+      if (typeof record.cwd === 'string') return record.cwd;
+    } catch {
+      continue; // a truncated trailing line at the byte bound is expected — try the next line
+    }
+  }
+  return null;
 }
 
 /** Recursively lists every regular file under `dir`. Read-only: uses `readdir` only. */
@@ -96,7 +139,9 @@ export async function discoverClaudeCodeSessions(root: string): Promise<ClaudeCo
   for (const filePath of files) {
     if (!filePath.endsWith('.jsonl')) continue;
     const classified = classifyClaudeCodeSessionPath(filePath);
-    if (classified) refs.push({ ...classified, discoveredAt: now });
+    if (!classified) continue;
+    const cwd = await resolveClaudeCodeSessionCwd(filePath);
+    refs.push({ ...classified, cwd, discoveredAt: now });
   }
   return refs;
 }
@@ -116,7 +161,10 @@ export function watchClaudeCodeSessions(
   watcher.on('add', (filePath: string) => {
     if (!filePath.endsWith('.jsonl')) return;
     const classified = classifyClaudeCodeSessionPath(filePath);
-    if (classified) onDiscovered({ ...classified, discoveredAt: Date.now() });
+    if (!classified) return;
+    void resolveClaudeCodeSessionCwd(filePath).then((cwd) => {
+      onDiscovered({ ...classified, cwd, discoveredAt: Date.now() });
+    });
   });
   return watcher;
 }

@@ -22,7 +22,7 @@ describe('stub stream HTTP endpoint (seam validation)', () => {
   });
 
   it('serves every scripted event as one ndjson line over a real HTTP GET /stream', async () => {
-    const sessionRef = { harness: 'claude-code' as const, sessionKey: 'claude-code:s1', discoveredAt: 0 };
+    const sessionRef = { harness: 'claude-code' as const, sessionKey: 'claude-code:s1', cwd: null, discoveredAt: 0 };
     const source = new FakeActivitySource('claude-code', [
       { session: sessionRef, events: [event(1, 'claude-code:s1'), event(2, 'claude-code:s1')] },
     ]);

@@ -11,6 +11,7 @@ function subagentRef(overrides: Partial<ClaudeCodeSessionRef> = {}): ClaudeCodeS
     filePath: '/tmp/subagents/agent-abc123.jsonl',
     isSubagent: true,
     parentSessionKey: 'claude-code:parent-session-1',
+    cwd: null,
     discoveredAt: 0,
     ...overrides,
   };

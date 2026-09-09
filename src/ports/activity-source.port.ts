@@ -13,6 +13,14 @@ import type { AgentEvent, HarnessId } from '../domain/events/types';
 export interface SessionRef {
   harness: HarnessId;
   sessionKey: string;
+  /**
+   * The working directory this session was launched in, when the harness's own log records or
+   * schema report it; `null` when the harness's transcript carries no cwd signal at all
+   * (Antigravity — design.md "Launch <-> log correlation"). Feeds the launch<->log correlator's
+   * `CandidateSession.cwd` (`adapters/driven/launcher/launch-correlator.ts`); never guessed or
+   * derived by approximation when the real signal is unavailable.
+   */
+  cwd: string | null;
   discoveredAt: number;
 }
 

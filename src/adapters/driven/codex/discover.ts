@@ -9,6 +9,7 @@
  * This module never opens a file for writing. `discoverCodexSessions` only reads directory
  * entries; it never creates, modifies, or deletes anything under `root`.
  */
+import { createReadStream } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
@@ -27,7 +28,7 @@ const ROLLOUT_FILENAME_PATTERN =
  * extracts its session id (the trailing UUID). Returns `null` for any path that does not match.
  * No I/O.
  */
-export function classifyCodexSessionPath(filePath: string): Omit<CodexSessionRef, 'discoveredAt'> | null {
+export function classifyCodexSessionPath(filePath: string): Omit<CodexSessionRef, 'discoveredAt' | 'cwd'> | null {
   const fileName = basename(filePath);
   const match = ROLLOUT_FILENAME_PATTERN.exec(fileName);
   if (!match) return null;
@@ -37,6 +38,45 @@ export function classifyCodexSessionPath(filePath: string): Omit<CodexSessionRef
     sessionKey: `codex:${sessionId}`,
     filePath,
   };
+}
+
+/**
+ * Bound on how much of a rollout file is scanned for its `session_meta` record (design.md
+ * "Launch <-> log correlation"). `session_meta` is always ordinal 0 in practice
+ * (research-local-evidence.md), so this bound is generous, not tight.
+ */
+const CWD_PROBE_MAX_BYTES = 64 * 1024;
+
+async function readFilePrefix(filePath: string, maxBytes: number): Promise<string> {
+  const stream = createReadStream(filePath, { start: 0, end: maxBytes - 1, encoding: 'utf8' });
+  let out = '';
+  for await (const chunk of stream) out += chunk as string;
+  return out;
+}
+
+/**
+ * Task 25.2 (blocker resolution): scans the bounded file prefix for the `session_meta` record's
+ * `payload.cwd` — Codex's exact-match cwd signal for the launch correlator. Returns `null`, never
+ * a guess, when no `session_meta` record is found within the bound or the file cannot be read.
+ */
+export async function resolveCodexSessionCwd(filePath: string): Promise<string | null> {
+  let raw: string;
+  try {
+    raw = await readFilePrefix(filePath, CWD_PROBE_MAX_BYTES);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.includes('"session_meta"')) continue;
+    try {
+      const record = JSON.parse(line) as { type?: string; payload?: { cwd?: unknown } };
+      if (record.type === 'session_meta' && typeof record.payload?.cwd === 'string') return record.payload.cwd;
+    } catch {
+      continue; // a truncated trailing line at the byte bound is expected — try the next line
+    }
+  }
+  return null;
 }
 
 /** Recursively lists every regular file under `dir`. Read-only: uses `readdir` only. */
@@ -73,7 +113,9 @@ export async function discoverCodexSessions(root: string): Promise<CodexSessionR
   for (const filePath of files) {
     if (!filePath.endsWith('.jsonl')) continue;
     const classified = classifyCodexSessionPath(filePath);
-    if (classified) refs.push({ ...classified, discoveredAt: now });
+    if (!classified) continue;
+    const cwd = await resolveCodexSessionCwd(filePath);
+    refs.push({ ...classified, cwd, discoveredAt: now });
   }
   return refs;
 }
@@ -100,7 +142,10 @@ export function watchCodexSessions(
   watcher.on('add', (filePath: string) => {
     if (!filePath.endsWith('.jsonl')) return;
     const classified = classifyCodexSessionPath(filePath);
-    if (classified) onDiscovered({ ...classified, discoveredAt: Date.now() });
+    if (!classified) return;
+    void resolveCodexSessionCwd(filePath).then((cwd) => {
+      onDiscovered({ ...classified, cwd, discoveredAt: Date.now() });
+    });
   });
   return watcher;
 }
