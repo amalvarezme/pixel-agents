@@ -38,9 +38,11 @@ import { FileCheckpointStore } from './adapters/driven/checkpoint/file-checkpoin
 import { ChildProcessSessionLauncher } from './adapters/driven/launcher/child-process-session-launcher';
 import { CorrelatingSessionLauncher } from './adapters/driven/launcher/correlating-session-launcher';
 import { LaunchCorrelationCoordinator } from './adapters/driven/launcher/launch-correlation-coordinator';
+import { SessionLifecycleCoordinator } from './adapters/driven/sessions/session-lifecycle-coordinator';
 import { createNodePtyProbe } from './adapters/driven/terminal/node-pty-probe';
 import { createStreamServer, SseEventHub } from './adapters/driving/http/stream';
 import { ingestAgentActivity } from './application/ingest-agent-activity/ingest-agent-activity';
+import type { EventPublisher } from './ports/event-publisher.port';
 
 const PORT = Number(process.env.PORT ?? 4317);
 const HOST = '127.0.0.1';
@@ -55,6 +57,9 @@ const CHECKPOINT_FILE = join(process.cwd(), '.data', 'checkpoints.json');
 // design.md "Launch <-> log correlation": CLAIM_POST_WINDOW_MS is 30s, so a 1s tick expires a
 // timed-out claim within one second of its window closing without a tight busy-poll.
 const LAUNCH_CORRELATION_TICK_MS = 1000;
+// design.md "Session discovery and aging out": IDLE_TIMEOUT_MS/EVICT_TIMEOUT_MS are 10/60 minutes,
+// so a 30s tick is frequent enough that no session lingers long past either boundary.
+const SESSION_LIFECYCLE_TICK_MS = 30_000;
 
 /** `<HARNESS>_ENABLED=false` opts a harness out; any other value (including unset) keeps it on. */
 function isHarnessEnabled(envVar: string): boolean {
@@ -91,12 +96,24 @@ async function main(): Promise<void> {
   const hub = new SseEventHub();
   const checkpointStore = new FileCheckpointStore(CHECKPOINT_FILE);
   const clock = { now: () => Date.now() };
+  // Session idle-out and eviction (design.md "Session discovery and aging out"): observes every
+  // event any ingestion adapter publishes so it can age each session on the injected clock, and
+  // publishes the domain's own synthetic `session_end(reason: 'timeout')` straight to `hub` (never
+  // back through `trackedPublisher`, so its own eviction never re-enters `observe`) once a session
+  // stops writing for `EVICT_TIMEOUT_MS`.
+  const lifecycleCoordinator = new SessionLifecycleCoordinator(hub, clock);
+  const trackedPublisher: EventPublisher = {
+    publish: (event) => {
+      lifecycleCoordinator.observe(event);
+      hub.publish(event);
+    },
+  };
   // Claude Code subagent lanes (design.md "Correlation and the Agent Tree"): wires the two
   // independent, already-tested `correlate.ts` edges into the live bus, matching the shape of the
   // launch correlator below. Claude-code-only — the other three harnesses derive `parent` events
   // their own way (e.g. OpenCode's `session.parent_id`, mapped directly in its own `parse.ts`).
   const claudeCodeAllocateId = createIdAllocator();
-  const subagentCorrelator = new ClaudeCodeSubagentCorrelationCoordinator(hub, clock, claudeCodeAllocateId);
+  const subagentCorrelator = new ClaudeCodeSubagentCorrelationCoordinator(trackedPublisher, clock, claudeCodeAllocateId);
   const sources = buildSources(subagentCorrelator, claudeCodeAllocateId);
   // Subsystem Separation from Ingestion (spec: agent-launcher): the launcher shares the bus
   // (`hub` as `EventPublisher`) but no code path with any of the four adapters above. The
@@ -113,7 +130,7 @@ async function main(): Promise<void> {
   for (const source of sources) {
     void ingestAgentActivity({
       source,
-      publisher: hub,
+      publisher: trackedPublisher,
       checkpointStore,
       onSessionDiscovered: (session) => {
         correlator.offerCandidate(session);
@@ -131,6 +148,7 @@ async function main(): Promise<void> {
   }
 
   const correlationTimer = setInterval(() => correlator.expireTimedOutClaims(), LAUNCH_CORRELATION_TICK_MS);
+  const lifecycleTimer = setInterval(() => lifecycleCoordinator.tick(), SESSION_LIFECYCLE_TICK_MS);
 
   const server = createStreamServer(hub, launcher);
   server.listen(PORT, HOST, () => {
@@ -142,6 +160,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     clearInterval(correlationTimer);
+    clearInterval(lifecycleTimer);
     server.close();
     await Promise.all(sources.map((source) => source.close()));
     await launcher.shutdown();
