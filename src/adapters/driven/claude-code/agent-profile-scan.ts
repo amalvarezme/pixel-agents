@@ -15,9 +15,9 @@
 import { trackAgentLaunches, resolveAgentLaunchFromRecord } from './correlate';
 import type { ClaudeCodeSessionRef } from './discover';
 import type { AgentLaunchClaim, ClaudeCodeRecord } from './parse';
-import { parseClaudeCodeLine } from './parse';
+import { extractRecordModel, parseClaudeCodeLine } from './parse';
 import type { ClaudeCodeSubagentCorrelationCoordinator } from './subagent-correlation-coordinator';
-import { scanFileLines } from './tail';
+import { scanFileLines, scanLatestFromEnd } from './tail';
 
 export interface ResolvedAgentProfile {
   childSessionKey: string;
@@ -63,19 +63,62 @@ export async function scanParentTranscriptForAgentProfiles(
 }
 
 /**
- * Fire-and-forget discovery-time hook: scans a PARENT session's transcript and applies whatever
- * resolves onto `coordinator` (which itself guards against double-publishing via its own
- * `emittedProfileFor`, so this is safe to run alongside the live path without ever double-firing).
- * A no-op for a subagent's own session — its profile lives in its PARENT's transcript, never its
- * own. Never throws: a slow or failing scan must degrade profiles only, mirroring the precedent
- * already applied to `ingestAgentActivity`'s `onSessionDiscovered` hook. Returns its promise (never
- * awaited by the composition root) purely so tests can observe completion deterministically.
+ * A real, non-sentinel `message.model` value cannot appear on a line lacking either literal
+ * substring — the cheap pre-filter that lets `scanLatestFromEnd` skip `JSON.parse` on the vast
+ * majority of a large transcript's lines while walking backward from EOF.
+ */
+function couldCarryModelFact(line: string): boolean {
+  return line.includes('"type":"assistant"') && line.includes('"model"');
+}
+
+/**
+ * Agent profile tracking, live-model recovery (fix: "the resolved model is 1 of 21" — EOF
+ * bootstrap means the live tail never reads a session's pre-existing history for its OWN
+ * `message.model`, exactly the same gap `scanParentTranscriptForAgentProfiles` fixes for `Agent`
+ * launches). Unlike a launch, the resolved model is by definition the LAST real occurrence in the
+ * file, so this walks `filePath` BACKWARD from EOF via `scanLatestFromEnd`, bounded per read, and
+ * stops at the first real value — never a whole-file scan. Reuses `extractRecordModel` unchanged,
+ * so the `<synthetic>` sentinel filter keeps applying: a record with no model, or with the
+ * sentinel, is skipped in favor of the real value before it.
+ */
+export async function scanLatestModelForSession(
+  filePath: string,
+  options: AgentProfileScanOptions = {},
+): Promise<string | undefined> {
+  return await scanLatestFromEnd(
+    filePath,
+    (line) => {
+      if (!couldCarryModelFact(line)) return undefined;
+      const record = parseClaudeCodeLine(line);
+      return record ? extractRecordModel(record) : undefined;
+    },
+    options.maxChunkBytes,
+  );
+}
+
+/**
+ * Fire-and-forget discovery-time hook: for EVERY discovered session (orchestrator or subagent
+ * alike), reads that session's OWN transcript for its latest resolved model and seeds it onto
+ * `coordinator`. Additionally, for a PARENT (non-subagent) session only, scans its transcript for
+ * historical `Agent` launches and applies whatever resolves — a no-op for a subagent's own
+ * session, since a launch's agentType/requestedModel/task live in its PARENT's transcript, never
+ * its own. Both halves independently degrade on failure (never throw): a slow or failing scan
+ * must never break discovery/ingestion, mirroring the precedent already applied to
+ * `ingestAgentActivity`'s `onSessionDiscovered` hook. Returns its promise (never awaited by the
+ * composition root) purely so tests can observe completion deterministically.
  */
 export async function scanAndApplyAgentProfiles(
   coordinator: ClaudeCodeSubagentCorrelationCoordinator,
   session: ClaudeCodeSessionRef,
   options: AgentProfileScanOptions = {},
 ): Promise<void> {
+  try {
+    const model = await scanLatestModelForSession(session.filePath, options);
+    if (model) coordinator.offerScannedModel(session.sessionKey, session.isSubagent ? 'subagent' : 'orchestrator', model);
+  } catch {
+    // A failing scan degrades profiles only — discovery/ingestion must keep flowing.
+  }
+
   if (session.isSubagent) return;
   try {
     const resolved = await scanParentTranscriptForAgentProfiles(session.filePath, options);

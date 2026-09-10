@@ -260,3 +260,61 @@ describe('ClaudeCodeSubagentCorrelationCoordinator (scanned/historical profiles)
     expect(publish).not.toHaveBeenCalled();
   });
 });
+
+// Agent profile tracking, live-model recovery (fix: "the resolved model is 1 of 21"): the
+// discovery-time scan's one-time seed for a session's OWN resolved model — orchestrator or
+// subagent alike, unlike the launch-only scan above.
+describe('ClaudeCodeSubagentCorrelationCoordinator (scanned/seeded model)', () => {
+  it('publishes a profile event carrying the seeded model for a SUBAGENT session', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedModel('claude-code:agent-one', 'subagent', 'claude-sonnet-5');
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      kind: 'parent',
+      sessionKey: 'claude-code:agent-one',
+      agentProfile: { role: 'subagent', model: 'claude-sonnet-5' },
+    });
+  });
+
+  it('publishes a profile event carrying the seeded model for an ORCHESTRATOR session', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedModel('claude-code:parent-1', 'orchestrator', 'claude-opus-5');
+
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      sessionKey: 'claude-code:parent-1',
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
+  });
+
+  it('never re-publishes a stale re-seed once a model is already resolved for that session', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedModel('claude-code:agent-one', 'subagent', 'claude-sonnet-5');
+    publish.mockClear();
+
+    coordinator.offerScannedModel('claude-code:agent-one', 'subagent', 'claude-opus-5');
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  // The discriminating "Live wins" guard: a genuine LIVE observation (this parent session's own
+  // message.model, arriving via the already-wired `offerParentRecord` record stream) must never
+  // be clobbered by a stale value the discovery-time scan seeds afterward.
+  it('never lets a scanned seed override a newer LIVE model observation for the same session', () => {
+    const { coordinator, publish } = makeCoordinator();
+    const liveRecord: ClaudeCodeRecord = {
+      type: 'assistant',
+      message: { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: 'hi' }] },
+    };
+
+    coordinator.offerParentRecord('claude-code:parent-1', liveRecord);
+    publish.mockClear();
+
+    coordinator.offerScannedModel('claude-code:parent-1', 'orchestrator', 'claude-opus-5');
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});

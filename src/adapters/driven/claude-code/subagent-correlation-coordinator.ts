@@ -15,6 +15,7 @@
  * child whose parent is already known being re-published on a later, redundant offer.
  */
 import { createAgentTree, type AgentTree } from '../../../domain/agents/agent-tree';
+import type { AgentRole } from '../../../domain/agents/agent-profile';
 import type { AgentEvent } from '../../../domain/events/types';
 import type { Clock } from '../../../ports/clock.port';
 import type { EventPublisher } from '../../../ports/event-publisher.port';
@@ -25,6 +26,7 @@ import {
   trackAgentLaunches,
 } from './correlate';
 import type { ClaudeCodeSessionRef } from './discover';
+import { extractRecordModel } from './parse';
 import type { AgentLaunchClaim, ClaudeCodeRecord } from './parse';
 
 function defaultAllocateId(): () => number {
@@ -43,6 +45,12 @@ export class ClaudeCodeSubagentCorrelationCoordinator {
    * real live-stream ordering resolves the directory-name edge, and thus `emitted`, LONG before a
    * launch's tool_result ever arrives — a profile must still get its own publish afterward. */
   private readonly emittedProfileFor = new Set<string>();
+  /** Agent profile tracking, live-model recovery: the RESOLVED model already known for a session,
+   * keyed by sessionKey — from either a one-time discovery-time seed (`offerScannedModel`) or a
+   * genuine live observation (`offerParentRecord`'s own `message.model`). Once a session has an
+   * entry here, a later scanned seed for that SAME session is never applied — "seed" means
+   * establish an initial value only; a live observation is what keeps it current afterward. */
+  private readonly resolvedModel = new Map<string, string>();
   private readonly allocateId: () => number;
 
   constructor(
@@ -71,6 +79,40 @@ export class ClaudeCodeSubagentCorrelationCoordinator {
     const resolved = resolveAgentLaunchFromRecord(this.pendingLaunches, record);
     this.flushResolvedLinks();
     if (resolved) this.publishProfile(resolved.childSessionKey, resolved.claim);
+
+    // Agent profile tracking, live-model recovery: this record is ALSO this PARENT session's own
+    // live model observation (parentSessionKey's own transcript) — always applied, and always
+    // wins over an earlier scanned seed, since it reflects a REAL, currently-happening turn.
+    const liveModel = extractRecordModel(record);
+    if (liveModel) this.applyModel(parentSessionKey, 'orchestrator', liveModel);
+  }
+
+  /**
+   * Agent profile tracking, live-model recovery (fix: "the resolved model is 1 of 21"): applies
+   * the discovery-time scan's ONE-TIME seed for a session's OWN resolved model — orchestrator or
+   * subagent alike, unlike `offerScannedProfiles` above (launch-only, parent transcripts only).
+   * "Seed" means establish an initial value only: a session already present in `resolvedModel`
+   * (whether from an earlier seed, or a genuine live observation via `offerParentRecord`) is left
+   * untouched — a stale scan result must never override a value already known.
+   */
+  offerScannedModel(sessionKey: string, role: AgentRole, model: string): void {
+    if (this.resolvedModel.has(sessionKey)) return;
+    this.applyModel(sessionKey, role, model);
+  }
+
+  private applyModel(sessionKey: string, role: AgentRole, model: string): void {
+    if (this.resolvedModel.get(sessionKey) === model) return;
+    this.resolvedModel.set(sessionKey, model);
+    const correlationId = this.tree.nodes.get(sessionKey)?.parentSessionKey ?? undefined;
+    this.publisher.publish({
+      id: this.allocateId(),
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey,
+      at: this.clock.now(),
+      ...(correlationId ? { correlationId } : {}),
+      agentProfile: { role, model },
+    });
   }
 
   /**

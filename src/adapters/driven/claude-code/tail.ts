@@ -192,6 +192,71 @@ export async function scanFileLines(
 }
 
 /**
+ * Reads `filePath` for the byte range `[start, end)` in one bounded read (never larger than the
+ * caller-chosen window), decoding via `StringDecoder` exactly like the forward-reading helpers
+ * above. Used only by `scanLatestFromEnd`'s backward walk, where the window size is already
+ * capped by the caller at `maxChunkBytes`.
+ */
+async function readByteRange(filePath: string, start: number, end: number): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const decoder = new StringDecoder('utf8');
+    let result = '';
+    const stream = createReadStream(filePath, { start, end: end - 1 });
+    stream.on('data', (chunk) => {
+      result += decoder.write(chunk as Buffer);
+    });
+    stream.on('end', () => {
+      result += decoder.end();
+      resolve(result);
+    });
+    stream.on('error', reject);
+  });
+}
+
+/**
+ * Agent profile tracking, live-model recovery: walks `filePath` BACKWARD from EOF, in chunks
+ * bounded by `maxChunkBytes`, checking each complete line (newest-to-oldest) against
+ * `resolveFromLine` and returning the first defined result. Unlike `scanFileLines` (forward,
+ * whole-file — needed because an `Agent` launch can sit anywhere from 4% to 98% through a
+ * transcript), the resolved LIVE model is by definition the LAST real occurrence in the file, so
+ * this can stop as soon as it finds one instead of paying for a whole-file read.
+ *
+ * Each backward step reads one bounded window `[start, pos)`; a line straddling the window
+ * boundary is carried (as `leftover`, missing its own beginning) into the NEXT, earlier window
+ * rather than being treated as complete — mirroring the forward `pending`-carry in
+ * `readLinesInChunks`/`scanFileLines`, just walking the other direction.
+ */
+export async function scanLatestFromEnd<T>(
+  filePath: string,
+  resolveFromLine: (line: string) => T | undefined,
+  maxChunkBytes: number = DEFAULT_MAX_CHUNK_BYTES,
+): Promise<T | undefined> {
+  const stats = await stat(filePath);
+  let pos = stats.size;
+  let leftover = '';
+
+  while (pos > 0) {
+    const start = Math.max(0, pos - maxChunkBytes);
+    const chunk = await readByteRange(filePath, start, pos);
+    const combined = chunk + leftover;
+    const parts = combined.split('\n');
+    // Every part except parts[0] ends exactly where a real '\n' was in the file (see doc comment
+    // above), so it is always a complete line. parts[0] is only complete when `start === 0` (the
+    // true beginning of the file) — otherwise it is missing its own beginning and must be carried
+    // into the next, earlier window instead of being checked here.
+    const firstCompleteIndex = start === 0 ? 0 : 1;
+    for (let i = parts.length - 1; i >= firstCompleteIndex; i--) {
+      const resolved = resolveFromLine(parts[i] ?? '');
+      if (resolved !== undefined) return resolved;
+    }
+    if (start === 0) return undefined;
+    leftover = parts[0] ?? '';
+    pos = start;
+  }
+  return undefined;
+}
+
+/**
  * Wraps `readTailIncrement` with a chokidar watcher on a single file (design.md: "`chokidar`
  * watch -> `stat` on `change`"). Each `change` (and any late `add`, e.g. the file did not exist
  * yet at watch-start time) triggers exactly one `readTailIncrement` call; `onIncrement` is skipped

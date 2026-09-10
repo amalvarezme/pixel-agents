@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../../../domain/events/types';
 import { ClaudeCodeActivitySource } from './activity-source';
-import { scanAndApplyAgentProfiles, scanParentTranscriptForAgentProfiles } from './agent-profile-scan';
+import { scanAndApplyAgentProfiles, scanLatestModelForSession, scanParentTranscriptForAgentProfiles } from './agent-profile-scan';
 import type { ClaudeCodeSessionRef } from './discover';
 import { ClaudeCodeSubagentCorrelationCoordinator } from './subagent-correlation-coordinator';
 
@@ -13,6 +13,10 @@ function launchLine(toolUseId: string, input: Record<string, unknown>): string {
     type: 'assistant',
     message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input }] },
   });
+}
+
+function assistantModelLine(model: string, text = 'hi'): string {
+  return JSON.stringify({ type: 'assistant', message: { role: 'assistant', model, content: [{ type: 'text', text }] } });
 }
 
 function resultLine(toolUseId: string, agentId: string): string {
@@ -109,6 +113,72 @@ describe('scanParentTranscriptForAgentProfiles', () => {
   });
 });
 
+// Agent profile tracking, live-model recovery (fix: "the resolved model is 1 of 21" — EOF
+// bootstrap means the live tail never reads a session's pre-existing history for its own model).
+describe('scanLatestModelForSession', () => {
+  let dir: string;
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  it('resolves the LATEST real message.model in a session transcript, bounded to the tail', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-model-scan-'));
+    const filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, `${assistantModelLine('claude-sonnet-5')}\n`);
+
+    const model = await scanLatestModelForSession(filePath);
+
+    expect(model).toBe('claude-sonnet-5');
+  });
+
+  // Discriminating: run with a small maxChunkBytes (forces several bounded backward reads) and a
+  // model that appears only NEAR THE START, with many later lines carrying no model at all — a
+  // naive "read only the last chunk" implementation would silently return undefined here.
+  it('finds a model positioned near the START of a large multi-chunk transcript', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-model-scan-early-'));
+    const filePath = join(dir, 'session.jsonl');
+    const noise = '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"x"}}]}}\n'.repeat(300);
+    await writeFile(filePath, `${assistantModelLine('claude-opus-5')}\n${noise}`);
+
+    const model = await scanLatestModelForSession(filePath, { maxChunkBytes: 64 });
+
+    expect(model).toBe('claude-opus-5');
+  });
+
+  it('resolves to the LATER model when the model changes mid-transcript', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-model-scan-later-'));
+    const filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, `${assistantModelLine('claude-opus-5')}\n${assistantModelLine('claude-sonnet-5')}\n`);
+
+    const model = await scanLatestModelForSession(filePath);
+
+    expect(model).toBe('claude-sonnet-5');
+  });
+
+  // The `<synthetic>` sentinel is never a real model (Claude Code emits it on some system-
+  // generated records, interleaved with real ones) — the LAST real value before it must win.
+  it('resolves to the real value BEFORE a trailing <synthetic> sentinel record, not the sentinel itself', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-model-scan-sentinel-'));
+    const filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, `${assistantModelLine('claude-opus-5')}\n${assistantModelLine('<synthetic>')}\n`);
+
+    const model = await scanLatestModelForSession(filePath);
+
+    expect(model).toBe('claude-opus-5');
+  });
+
+  it('returns undefined for a transcript that never records a real model', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-model-scan-none-'));
+    const filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, '{"type":"user","message":{"role":"user","content":"hi"}}\n');
+
+    const model = await scanLatestModelForSession(filePath);
+
+    expect(model).toBeUndefined();
+  });
+});
+
 describe('scanAndApplyAgentProfiles', () => {
   let dir: string;
 
@@ -140,7 +210,10 @@ describe('scanAndApplyAgentProfiles', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 
-  it('is a no-op for a SUBAGENT session — a profile lives in its PARENT transcript, never its own', async () => {
+  // The Agent-launch scan specifically stays a no-op for a subagent (a profile's agentType/
+  // requestedModel/task live in its PARENT transcript, never its own) — but this fixture also
+  // carries no message.model, so the (now session-agnostic) live-model scan finds nothing either.
+  it('is a no-op for a SUBAGENT session with no message.model — a launch profile lives in its PARENT transcript, never its own', async () => {
     dir = await mkdtemp(join(tmpdir(), 'claude-code-profile-apply-subagent-'));
     const filePath = join(dir, 'agent-one.jsonl');
     // Even though this file itself contains an Agent launch shape, it must never be scanned as a
@@ -151,6 +224,39 @@ describe('scanAndApplyAgentProfiles', () => {
     await scanAndApplyAgentProfiles(coordinator, parentRef({ filePath, isSubagent: true, sessionKey: 'claude-code:agent-one', parentSessionKey: 'claude-code:parent-1' }));
 
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  // The primary regression this work unit fixes: a SUBAGENT's resolved model lives ONLY in its
+  // OWN transcript (never its parent's) — the Agent-launch scan above can never see it, so the
+  // discovery-time scan must read the subagent's own file too.
+  it('applies the RESOLVED model for a SUBAGENT session, read from its OWN transcript', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-profile-apply-subagent-model-'));
+    const filePath = join(dir, 'agent-one.jsonl');
+    await writeFile(filePath, `${assistantModelLine('claude-sonnet-5')}\n`);
+    const { coordinator, publish } = makeCoordinator();
+
+    await scanAndApplyAgentProfiles(coordinator, parentRef({ filePath, isSubagent: true, sessionKey: 'claude-code:agent-one', parentSessionKey: 'claude-code:parent-1' }));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      sessionKey: 'claude-code:agent-one',
+      agentProfile: { role: 'subagent', model: 'claude-sonnet-5' },
+    });
+  });
+
+  it('applies the RESOLVED model for an ORCHESTRATOR (parent) session, alongside its launch scan', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-profile-apply-orchestrator-model-'));
+    const filePath = join(dir, 'parent-1.jsonl');
+    await writeFile(filePath, `${assistantModelLine('claude-opus-5')}\n`);
+    const { coordinator, publish } = makeCoordinator();
+
+    await scanAndApplyAgentProfiles(coordinator, parentRef({ filePath }));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      sessionKey: 'claude-code:parent-1',
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
   });
 });
 
@@ -192,6 +298,42 @@ describe('agent profile scan integration: profiles populate WITHOUT replay', () 
     expect(publish.mock.calls[0]![0]).toMatchObject({
       sessionKey: 'claude-code:agent-one',
       agentProfile: { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', task: 'Apply' },
+    });
+  });
+
+  // Discriminating test (guard quality): this runs with REPLAY OFF (the default, EOF-bootstrapped
+  // live tail). With replay on, the live tail's own bootstrap read already resolves the model —
+  // proving nothing about THIS fix. Here the live tail reads nothing at all, so a resolved model
+  // can only have come from the discovery-time scan.
+  it('recovers a session\'s OWN resolved model from history that the EOF-bootstrapped live tail alone misses', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-model-e2e-'));
+    const projectDir = join(root, 'projects', 'my-slug');
+    await mkdir(projectDir, { recursive: true });
+    const sessionFilePath = join(projectDir, 'parent-1.jsonl');
+    await writeFile(sessionFilePath, `${assistantModelLine('claude-sonnet-5')}\n`);
+
+    const { coordinator, publish } = makeCoordinator();
+
+    const source = new ClaudeCodeActivitySource(root, {
+      onParentRecord: (key, record) => coordinator.offerParentRecord(key, record),
+    });
+    const discoverIterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await discoverIterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.agentProfile?.model).toBeUndefined();
+    stream.stop();
+    await source.close();
+    expect(publish).not.toHaveBeenCalled();
+
+    await scanAndApplyAgentProfiles(coordinator, sessionRef as ClaudeCodeSessionRef);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      sessionKey: (sessionRef as ClaudeCodeSessionRef).sessionKey,
+      agentProfile: { role: 'orchestrator', model: 'claude-sonnet-5' },
     });
   });
 });
