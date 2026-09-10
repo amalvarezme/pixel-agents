@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat, truncate, unlink, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readTailIncrement, watchAndTailFile } from './tail';
+import { readTailIncrement, scanFileLines, scanLatestFromEnd, watchAndTailFile } from './tail';
 
 // Records the byte length of every `data` chunk that flows through the real `createReadStream`
 // call made by production code, without changing stream behavior. This gives direct, honest
@@ -271,4 +271,117 @@ describe('watchAndTailFile', () => {
     if (increment.kind === 'no-op') throw new Error('unexpected no-op');
     expect(increment.lines).toEqual(['{"a":1}', '{"a":2}']);
   }, 10000);
+});
+
+// Agent profile tracking (fix: profiles under DEFAULT settings): the discovery-time profile scan
+// must cover a whole large transcript for the rare qualifying line without paying JSON.parse cost
+// on every line — `scanFileLines` is the cheap substring-filtered primitive that makes that
+// affordable. Bounded chunk reading (small `maxChunkBytes`) proves the match is found even when it
+// straddles a chunk boundary, mirroring `readTailIncrement`'s own chunk-boundary guarantee.
+describe('scanFileLines', () => {
+  let dir: string;
+  let filePath: string;
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  it('keeps only lines matching the predicate, even when the match straddles a chunk boundary', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-lines-'));
+    filePath = join(dir, 'session.jsonl');
+    const noise = '{"type":"tool_use","name":"Read","input":{}}\n'.repeat(20);
+    const target = '{"type":"tool_use","name":"Agent","input":{}}\n';
+    await writeFile(filePath, `${noise}${target}${noise}`);
+
+    const kept = await scanFileLines(filePath, (line) => line.includes('"name":"Agent"'), 32);
+
+    expect(kept).toEqual([target.trimEnd()]);
+  });
+
+  it('returns an empty array when no line matches the predicate', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-lines-empty-'));
+    filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, '{"type":"tool_use","name":"Read","input":{}}\n');
+
+    const kept = await scanFileLines(filePath, (line) => line.includes('"name":"Agent"'), 32);
+
+    expect(kept).toEqual([]);
+  });
+});
+
+// Agent profile tracking, live-model recovery: unlike an `Agent` launch (which can sit anywhere
+// in a transcript, needing a forward whole-file scan), the RESOLVED LIVE model is by definition
+// the LAST real occurrence — so this reads backward from EOF, bounded to `maxChunkBytes` per
+// read, and stops at the first match instead of paying for a whole-file scan.
+describe('scanLatestFromEnd', () => {
+  let dir: string;
+  let filePath: string;
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  function extractMarked(line: string): string | undefined {
+    const match = /^MARK:(.+)$/.exec(line);
+    return match ? match[1] : undefined;
+  }
+
+  it('resolves the single match when it is the very last line', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-end-'));
+    filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, 'noise-1\nnoise-2\nMARK:last\n');
+
+    const resolved = await scanLatestFromEnd(filePath, extractMarked);
+
+    expect(resolved).toBe('last');
+  });
+
+  // The naive-implementation trap this guards against: reading only the LAST chunk would never
+  // see a match sitting near the start of a file with many later non-matching lines.
+  it('keeps reading backward across many bounded chunks to find a match near the START of the file', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-end-backward-'));
+    filePath = join(dir, 'session.jsonl');
+    const noise = Array.from({ length: 400 }, (_, i) => `noise-line-${i}-padding-xxxxxxxxxx`).join('\n');
+    await writeFile(filePath, `MARK:early\n${noise}\n`);
+
+    const resolved = await scanLatestFromEnd(filePath, extractMarked, 32);
+
+    expect(resolved).toBe('early');
+  });
+
+  it('returns the LATER match when the value changes mid-file, not the first one found', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-end-later-wins-'));
+    filePath = join(dir, 'session.jsonl');
+    // Both matches sit in the SAME bounded window (maxChunkBytes comfortably covers the whole
+    // file in one read), so this specifically exercises newest-to-oldest ordering WITHIN one
+    // chunk, not just across chunks.
+    await writeFile(filePath, 'MARK:old\nnoise\nMARK:new\nnoise\n');
+
+    const resolved = await scanLatestFromEnd(filePath, extractMarked, 1024);
+
+    expect(resolved).toBe('new');
+  });
+
+  it('returns undefined when nothing in the file ever matches', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-end-none-'));
+    filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, 'noise-1\nnoise-2\n');
+
+    const resolved = await scanLatestFromEnd(filePath, extractMarked, 8);
+
+    expect(resolved).toBeUndefined();
+  });
+
+  it('never reads past the first chunk when the match is already in it (bounded, not whole-file)', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-end-bounded-'));
+    filePath = join(dir, 'session.jsonl');
+    const noise = Array.from({ length: 400 }, (_, i) => `noise-line-${i}-padding-xxxxxxxxxx`).join('\n');
+    await writeFile(filePath, `${noise}\nMARK:tail\n`);
+    recordedChunkSizes.length = 0;
+
+    const resolved = await scanLatestFromEnd(filePath, extractMarked, 64);
+
+    expect(resolved).toBe('tail');
+    expect(recordedChunkSizes.length).toBe(1);
+  });
 });

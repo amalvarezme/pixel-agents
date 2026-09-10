@@ -6,6 +6,7 @@ import {
   type MemoryWriteEvent,
   type SelfOriginatedEventKind,
 } from './types';
+import type { AgentProfile } from '../agents/agent-profile';
 
 export interface CreateLogSourcedEventInput {
   kind: LogSourcedEventKind;
@@ -16,6 +17,7 @@ export interface CreateLogSourcedEventInput {
   correlationId?: string;
   toolLabel?: string;
   toolDetail?: string;
+  agentProfile?: AgentProfile;
 }
 
 /**

@@ -297,6 +297,265 @@ describe('applyEventToOfficeState (office-scene-renderer spec: Per-Agent Worker 
   });
 });
 
+// Agent profile tracking: what a worker IS (orchestrator vs subagent), what MODEL it runs, and
+// what TASK it was given. Carried on the shared envelope (`agentProfile`), never a harness special
+// case — attached at session_start (baseline role) and enriched later via a `parent` event
+// (subagent profile join) or a default-branch event (orchestrator's own message.model).
+describe('applyEventToOfficeState — agent profile tracking', () => {
+  it('stamps the baseline role from session_start', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch1',
+      at: 1000,
+      agentProfile: { role: 'orchestrator' },
+    });
+
+    expect(state.workers.get('claude-code:orch1')?.agentProfile).toEqual({ role: 'orchestrator' });
+  });
+
+  // The orchestrator is distinguishable from its subagents purely from role — no other field is
+  // required for this guard to hold.
+  it('a root worker with no agentProfile at all stays undefined, never defaulted to a role', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:plain1',
+      at: 1000,
+    });
+
+    expect(state.workers.get('claude-code:plain1')?.agentProfile).toBeUndefined();
+  });
+
+  it('enriches an existing worker with a subagent profile from a parent event, without disturbing its parentSessionKey', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 1000,
+      agentProfile: { role: 'subagent' },
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 1500,
+      correlationId: 'claude-code:parent1',
+    });
+
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 2000,
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' },
+    });
+
+    const worker = state.workers.get('claude-code:child1');
+    expect(worker?.parentSessionKey).toBe('claude-code:parent1');
+    expect(worker?.agentProfile).toEqual({ role: 'subagent', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' });
+  });
+
+  // Real ordering: the profile-only `parent` event (no correlationId at all) arrives BEFORE the
+  // child's own session_start — must buffer, never conjure a worker (same guard the correlation
+  // edge already has, now proven for a profile-only edge too).
+  it('a profile-only parent event (no correlationId) arriving before the child exists does NOT create a worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child2',
+      at: 1000,
+      agentProfile: { role: 'subagent', agentType: 'jd-judge-a', model: 'opus', task: 'Judge' },
+    });
+
+    expect(state.workers.has('claude-code:child2')).toBe(false);
+
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child2',
+      at: 1050,
+      agentProfile: { role: 'subagent' },
+    });
+
+    expect(state.workers.get('claude-code:child2')?.agentProfile).toEqual({
+      role: 'subagent',
+      agentType: 'jd-judge-a',
+      model: 'opus',
+      task: 'Judge',
+    });
+  });
+
+  it('adds the orchestrator model from a later tool_start event without losing the role already set', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch2',
+      at: 1000,
+      agentProfile: { role: 'orchestrator' },
+    });
+
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch2',
+      at: 1100,
+      label: 'orch2',
+      toolLabel: 'Read',
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
+
+    expect(state.workers.get('claude-code:orch2')?.agentProfile).toEqual({ role: 'orchestrator', model: 'claude-opus-5' });
+  });
+
+  // Adversarial near-miss: a subagent profile missing `model` must leave it absent, never
+  // defaulted to some placeholder string.
+  it('a subagent profile missing model leaves model absent rather than defaulting it', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child3',
+      at: 1000,
+      agentProfile: { role: 'subagent' },
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child3',
+      at: 1500,
+      agentProfile: { role: 'subagent', agentType: 'sdd-tasks', task: 'Break down change' },
+    });
+
+    const profile = state.workers.get('claude-code:child3')?.agentProfile;
+    expect(profile).toEqual({ role: 'subagent', agentType: 'sdd-tasks', task: 'Break down change' });
+    expect(profile?.model).toBeUndefined();
+  });
+
+  // Model is a LIVE, time-varying observation (a session can switch model mid-run via /model or
+  // a fast-mode toggle) — the fold must report the LATEST observed value, never the first.
+  it('a model switch (opus -> sonnet) reports the latest value, not the first one seen', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch3',
+      at: 1000,
+      agentProfile: { role: 'orchestrator' },
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch3',
+      at: 1100,
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch3',
+      at: 1200,
+      agentProfile: { role: 'orchestrator', model: 'claude-sonnet-5' },
+    });
+
+    expect(state.workers.get('claude-code:orch3')?.agentProfile?.model).toBe('claude-sonnet-5');
+  });
+
+  // Adversarial near-miss of the switch guard: a later event with NO agentProfile at all (e.g. a
+  // record whose message.model was the "<synthetic>" sentinel, filtered upstream in parse.ts)
+  // must leave the already-tracked model untouched, never clear or corrupt it.
+  it('a later event carrying no agentProfile at all leaves the previously tracked model untouched', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch4',
+      at: 1000,
+      agentProfile: { role: 'orchestrator' },
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch4',
+      at: 1100,
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orch4',
+      at: 1200,
+      label: 'plain-tool-event',
+    });
+
+    expect(state.workers.get('claude-code:orch4')?.agentProfile).toEqual({ role: 'orchestrator', model: 'claude-opus-5' });
+  });
+
+  // The requested launch alias and the resolved live model are DISTINCT fields that must never be
+  // conflated: a subagent launched with alias "sonnet" (via the parent's Agent tool_use, joined
+  // through a `parent` event) whose OWN transcript later reports the resolved "claude-sonnet-5"
+  // must end up with BOTH fields present and distinct.
+  it('keeps the requested launch alias and the resolved live model as distinct fields', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child4',
+      at: 1000,
+      agentProfile: { role: 'subagent' },
+    });
+    // The launch join (subagent-correlation-coordinator.ts's publishProfile): requestedModel only.
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child4',
+      at: 1500,
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', task: 'Apply slice 2' },
+    });
+    // The subagent's OWN transcript later reports the resolved model.
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child4',
+      at: 2000,
+      agentProfile: { role: 'subagent', model: 'claude-sonnet-5' },
+    });
+
+    expect(state.workers.get('claude-code:child4')?.agentProfile).toEqual({
+      role: 'subagent',
+      agentType: 'sdd-apply',
+      requestedModel: 'sonnet',
+      task: 'Apply slice 2',
+      model: 'claude-sonnet-5',
+    });
+  });
+});
+
 describe('applyEventToOfficeState — memory_write drives the carry queue and archive docking (design.md: "animation is a lagging view, ingestion never blocks")', () => {
   it('a memory_write for an existing worker starts a held carry and docks it', () => {
     let state = createOfficeState();

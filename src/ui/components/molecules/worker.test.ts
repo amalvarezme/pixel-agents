@@ -46,6 +46,22 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     },
   );
 
+  // Agent profile tracking: renders the profile caption when no live tool caption is active —
+  // "at minimum the agent type and model on/near the worker, and the task as the caption detail".
+  it('renders the agent profile caption when no tool caption is active', () => {
+    const view = buildWorkerView(workerViewModel({ agentProfile: { role: 'subagent', agentType: 'sdd-apply' } }));
+    expect(view.caption).toBe('sdd-apply');
+  });
+
+  // The live tool caption still wins over the profile — proves this molecule keeps buildCaption's
+  // own priority order rather than reimplementing it.
+  it('prefers the live tool caption over the agent profile when both are present', () => {
+    const view = buildWorkerView(
+      workerViewModel({ toolLabel: 'Read', toolDetail: 'design.md', agentProfile: { role: 'subagent', agentType: 'sdd-apply' } }),
+    );
+    expect(view.caption).toBe('Read: design.md');
+  });
+
   // Blocker B.2 (tasks.md 21.2): carries the archive-trip drawing data through unchanged, so
   // `ui/scene/pixi/` can draw a carried-document indicator.
   it('carries archiveTrip (carryCount, highlight) through when the worker has one', () => {

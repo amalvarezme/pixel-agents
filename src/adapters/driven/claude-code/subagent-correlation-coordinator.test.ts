@@ -124,3 +124,197 @@ describe('ClaudeCodeSubagentCorrelationCoordinator (agentId edge)', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 });
+
+// Agent profile tracking: a launch (Agent tool_use) tracked earlier in the SAME parent transcript,
+// resolved once the matching tool_result carries the child's agentId. Uses THREE concurrent
+// launches with distinct subagent_type/model/description — a single-launch test could pass even
+// if the coordinator always attached the first or last tracked claim.
+describe('ClaudeCodeSubagentCorrelationCoordinator (agent profile tracking)', () => {
+  function launchRecord(toolUseId: string, input: Record<string, unknown>): ClaudeCodeRecord {
+    return {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Agent', input }] },
+    };
+  }
+
+  function resultRecord(toolUseId: string, agentId: string): ClaudeCodeRecord {
+    return {
+      type: 'user',
+      toolUseResult: { agentId },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId }] },
+    };
+  }
+
+  it('attaches each of three concurrent launches to its OWN correct subagent, with distinct type/model/task', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerParentRecord('claude-code:parent-1', launchRecord('toolu_1', { subagent_type: 'sdd-apply', model: 'sonnet', description: 'Apply slice 2' }));
+    coordinator.offerParentRecord('claude-code:parent-1', launchRecord('toolu_2', { subagent_type: 'jd-judge-a', model: 'opus', description: 'Judge A' }));
+    coordinator.offerParentRecord('claude-code:parent-1', launchRecord('toolu_3', { subagent_type: 'jd-judge-b', model: 'haiku', description: 'Judge B' }));
+    publish.mockClear();
+
+    // Resolved out of launch order, proving the join is by id, not position.
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_2', 'agent-two'));
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_1', 'agent-one'));
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_3', 'agent-three'));
+
+    expect(publish).toHaveBeenCalledTimes(3);
+    const events = publish.mock.calls.map((call) => call[0]);
+    expect(events.find((e) => e.sessionKey === 'claude-code:agent-two')).toMatchObject({
+      kind: 'parent',
+      agentProfile: { role: 'subagent', agentType: 'jd-judge-a', requestedModel: 'opus', task: 'Judge A' },
+    });
+    expect(events.find((e) => e.sessionKey === 'claude-code:agent-one')).toMatchObject({
+      kind: 'parent',
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', task: 'Apply slice 2' },
+    });
+    expect(events.find((e) => e.sessionKey === 'claude-code:agent-three')).toMatchObject({
+      kind: 'parent',
+      agentProfile: { role: 'subagent', agentType: 'jd-judge-b', requestedModel: 'haiku', task: 'Judge B' },
+    });
+  });
+
+  it('carries the resolved correlationId alongside the profile when the parent edge is already known', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerSession(sessionRef());
+    coordinator.offerParentRecord('claude-code:parent-1', launchRecord('toolu_1', { subagent_type: 'sdd-apply', model: 'sonnet', description: 'Apply' }));
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_1', 'agent-one'));
+
+    const event = publish.mock.calls.map((call) => call[0]).find((e) => e.sessionKey === 'claude-code:agent-one' && e.agentProfile);
+    expect(event).toMatchObject({ correlationId: 'claude-code:parent-1', agentProfile: { role: 'subagent', agentType: 'sdd-apply' } });
+  });
+
+  // The real ordering risk: the directory-name edge resolves the plain `parent` correlation FIRST
+  // (before the subagent finishes and its tool_result/profile ever arrives) — `emitted` already
+  // blocks a second correlation-only publish for that child, but the profile must still get
+  // through as its own event once the launch resolves, or it would be silently lost forever.
+  it('still publishes the profile once resolved, even after the correlation edge for that child was already emitted', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerSession(sessionRef());
+    coordinator.offerSession(subagentRef({ sessionKey: 'claude-code:agent-one', filePath: '/tmp/parent-1/subagents/agent-agent-one.jsonl' }));
+    expect(publish).toHaveBeenCalledTimes(1); // the plain correlation edge, no profile yet
+    publish.mockClear();
+
+    coordinator.offerParentRecord('claude-code:parent-1', launchRecord('toolu_1', { subagent_type: 'sdd-apply', model: 'sonnet', description: 'Apply' }));
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_1', 'agent-one'));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      sessionKey: 'claude-code:agent-one',
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', task: 'Apply' },
+    });
+  });
+
+  it('never publishes a profile twice for the same already-resolved launch', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerParentRecord('claude-code:parent-1', launchRecord('toolu_1', { subagent_type: 'sdd-apply' }));
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_1', 'agent-one'));
+    publish.mockClear();
+
+    // A redundant re-offer of the same already-resolved record must not republish.
+    coordinator.offerParentRecord('claude-code:parent-1', resultRecord('toolu_1', 'agent-one'));
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+// Agent profile tracking, historical path (fix: "profiles under DEFAULT settings" — a discovery-
+// time scan of a parent's already-written history feeds resolved profiles in here directly,
+// bypassing the live tail entirely).
+describe('ClaudeCodeSubagentCorrelationCoordinator (scanned/historical profiles)', () => {
+  it('publishes a profile event for a resolved historical claim, same shape as the live path', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedProfiles([
+      { childSessionKey: 'claude-code:agent-one', claim: { toolUseId: 'toolu_1', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply' } },
+    ]);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      kind: 'parent',
+      sessionKey: 'claude-code:agent-one',
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', task: 'Apply' },
+    });
+  });
+
+  it('never publishes twice for a child already resolved by the live path', () => {
+    const { coordinator, publish } = makeCoordinator();
+    const launch: ClaudeCodeRecord = {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Agent', input: { subagent_type: 'sdd-apply' } }] },
+    };
+    const result: ClaudeCodeRecord = {
+      type: 'user',
+      toolUseResult: { agentId: 'agent-one' },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1' }] },
+    };
+    coordinator.offerParentRecord('claude-code:parent-1', launch);
+    coordinator.offerParentRecord('claude-code:parent-1', result);
+    publish.mockClear();
+
+    coordinator.offerScannedProfiles([{ childSessionKey: 'claude-code:agent-one', claim: { toolUseId: 'toolu_1', agentType: 'sdd-apply' } }]);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+// Agent profile tracking, live-model recovery (fix: "the resolved model is 1 of 21"): the
+// discovery-time scan's one-time seed for a session's OWN resolved model — orchestrator or
+// subagent alike, unlike the launch-only scan above.
+describe('ClaudeCodeSubagentCorrelationCoordinator (scanned/seeded model)', () => {
+  it('publishes a profile event carrying the seeded model for a SUBAGENT session', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedModel('claude-code:agent-one', 'subagent', 'claude-sonnet-5');
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      kind: 'parent',
+      sessionKey: 'claude-code:agent-one',
+      agentProfile: { role: 'subagent', model: 'claude-sonnet-5' },
+    });
+  });
+
+  it('publishes a profile event carrying the seeded model for an ORCHESTRATOR session', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedModel('claude-code:parent-1', 'orchestrator', 'claude-opus-5');
+
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      sessionKey: 'claude-code:parent-1',
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
+  });
+
+  it('never re-publishes a stale re-seed once a model is already resolved for that session', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedModel('claude-code:agent-one', 'subagent', 'claude-sonnet-5');
+    publish.mockClear();
+
+    coordinator.offerScannedModel('claude-code:agent-one', 'subagent', 'claude-opus-5');
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  // The discriminating "Live wins" guard: a genuine LIVE observation (this parent session's own
+  // message.model, arriving via the already-wired `offerParentRecord` record stream) must never
+  // be clobbered by a stale value the discovery-time scan seeds afterward.
+  it('never lets a scanned seed override a newer LIVE model observation for the same session', () => {
+    const { coordinator, publish } = makeCoordinator();
+    const liveRecord: ClaudeCodeRecord = {
+      type: 'assistant',
+      message: { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: 'hi' }] },
+    };
+
+    coordinator.offerParentRecord('claude-code:parent-1', liveRecord);
+    publish.mockClear();
+
+    coordinator.offerScannedModel('claude-code:parent-1', 'orchestrator', 'claude-opus-5');
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});

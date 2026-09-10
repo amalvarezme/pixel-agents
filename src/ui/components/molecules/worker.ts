@@ -32,7 +32,11 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     y: worker.y,
     lane: worker.lane,
     badge: buildHarnessBadge(worker.harness),
-    caption: buildCaption(worker.label, worker.toolLabel ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : undefined),
+    caption: buildCaption(
+      worker.label,
+      worker.toolLabel ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : undefined,
+      worker.agentProfile,
+    ),
     ...(worker.archiveTrip
       ? { archiveTrip: { carryCount: worker.archiveTrip.carryCount, highlight: worker.archiveTrip.highlight ?? false } }
       : {}),

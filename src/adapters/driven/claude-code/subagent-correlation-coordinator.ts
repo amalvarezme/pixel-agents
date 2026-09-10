@@ -15,12 +15,19 @@
  * child whose parent is already known being re-published on a later, redundant offer.
  */
 import { createAgentTree, type AgentTree } from '../../../domain/agents/agent-tree';
+import type { AgentRole } from '../../../domain/agents/agent-profile';
 import type { AgentEvent } from '../../../domain/events/types';
 import type { Clock } from '../../../ports/clock.port';
 import type { EventPublisher } from '../../../ports/event-publisher.port';
-import { correlateClaudeCodeSession, correlateFromParentRecord } from './correlate';
+import {
+  correlateClaudeCodeSession,
+  correlateFromParentRecord,
+  resolveAgentLaunchFromRecord,
+  trackAgentLaunches,
+} from './correlate';
 import type { ClaudeCodeSessionRef } from './discover';
-import type { ClaudeCodeRecord } from './parse';
+import { extractRecordModel } from './parse';
+import type { AgentLaunchClaim, ClaudeCodeRecord } from './parse';
 
 function defaultAllocateId(): () => number {
   let next = 1;
@@ -30,6 +37,20 @@ function defaultAllocateId(): () => number {
 export class ClaudeCodeSubagentCorrelationCoordinator {
   private readonly tree: AgentTree = createAgentTree();
   private readonly emitted = new Set<string>();
+  /** Agent profile tracking: `Agent` tool_use claims staged from this parent's transcript,
+   * awaiting their matching tool_result (`correlate.ts`'s `trackAgentLaunches`/
+   * `resolveAgentLaunchFromRecord`), keyed by tool_use id. */
+  private readonly pendingLaunches = new Map<string, AgentLaunchClaim>();
+  /** Guards profile publication independently of `emitted` (the correlation-edge guard): the
+   * real live-stream ordering resolves the directory-name edge, and thus `emitted`, LONG before a
+   * launch's tool_result ever arrives — a profile must still get its own publish afterward. */
+  private readonly emittedProfileFor = new Set<string>();
+  /** Agent profile tracking, live-model recovery: the RESOLVED model already known for a session,
+   * keyed by sessionKey — from either a one-time discovery-time seed (`offerScannedModel`) or a
+   * genuine live observation (`offerParentRecord`'s own `message.model`). Once a session has an
+   * entry here, a later scanned seed for that SAME session is never applied — "seed" means
+   * establish an initial value only; a live observation is what keeps it current afterward. */
+  private readonly resolvedModel = new Map<string, string>();
   private readonly allocateId: () => number;
 
   constructor(
@@ -46,10 +67,65 @@ export class ClaudeCodeSubagentCorrelationCoordinator {
     this.flushResolvedLinks();
   }
 
-  /** Applies the `toolUseResult.agentId` edge from one parsed parent-transcript record (edge 2). */
+  /**
+   * Applies the `toolUseResult.agentId` edge from one parsed parent-transcript record (edge 2),
+   * alongside (never instead of) agent profile tracking: this record may ALSO stage a new `Agent`
+   * launch claim, or resolve an earlier one into a subagent profile, from the SAME parent
+   * transcript.
+   */
   offerParentRecord(parentSessionKey: string, record: ClaudeCodeRecord): void {
     correlateFromParentRecord(this.tree, parentSessionKey, record, this.clock.now());
+    trackAgentLaunches(this.pendingLaunches, record);
+    const resolved = resolveAgentLaunchFromRecord(this.pendingLaunches, record);
     this.flushResolvedLinks();
+    if (resolved) this.publishProfile(resolved.childSessionKey, resolved.claim);
+
+    // Agent profile tracking, live-model recovery: this record is ALSO this PARENT session's own
+    // live model observation (parentSessionKey's own transcript) — always applied, and always
+    // wins over an earlier scanned seed, since it reflects a REAL, currently-happening turn.
+    const liveModel = extractRecordModel(record);
+    if (liveModel) this.applyModel(parentSessionKey, 'orchestrator', liveModel);
+  }
+
+  /**
+   * Agent profile tracking, live-model recovery (fix: "the resolved model is 1 of 21"): applies
+   * the discovery-time scan's ONE-TIME seed for a session's OWN resolved model — orchestrator or
+   * subagent alike, unlike `offerScannedProfiles` above (launch-only, parent transcripts only).
+   * "Seed" means establish an initial value only: a session already present in `resolvedModel`
+   * (whether from an earlier seed, or a genuine live observation via `offerParentRecord`) is left
+   * untouched — a stale scan result must never override a value already known.
+   */
+  offerScannedModel(sessionKey: string, role: AgentRole, model: string): void {
+    if (this.resolvedModel.has(sessionKey)) return;
+    this.applyModel(sessionKey, role, model);
+  }
+
+  private applyModel(sessionKey: string, role: AgentRole, model: string): void {
+    if (this.resolvedModel.get(sessionKey) === model) return;
+    this.resolvedModel.set(sessionKey, model);
+    const correlationId = this.tree.nodes.get(sessionKey)?.parentSessionKey ?? undefined;
+    this.publisher.publish({
+      id: this.allocateId(),
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey,
+      at: this.clock.now(),
+      ...(correlationId ? { correlationId } : {}),
+      agentProfile: { role, model },
+    });
+  }
+
+  /**
+   * Agent profile tracking, historical path (fix: "profiles under DEFAULT settings"): applies
+   * profiles recovered by a one-time discovery-time scan of a parent's already-written history
+   * (`agent-profile-scan.ts`) — the join for a launch whose `Agent` tool_use and resolving
+   * `tool_result` both sit before the EOF bootstrap offset, so the live `offerParentRecord` path
+   * never reads them. Reuses `publishProfile`, so it is idempotent with the live path via the same
+   * `emittedProfileFor` guard: whichever path resolves a given child first wins, the other is a
+   * no-op.
+   */
+  offerScannedProfiles(resolved: Array<{ childSessionKey: string; claim: AgentLaunchClaim }>): void {
+    for (const { childSessionKey, claim } of resolved) this.publishProfile(childSessionKey, claim);
   }
 
   private flushResolvedLinks(): void {
@@ -58,6 +134,35 @@ export class ClaudeCodeSubagentCorrelationCoordinator {
       this.emitted.add(node.sessionKey);
       this.publisher.publish(this.buildParentEvent(node.sessionKey, node.parentSessionKey));
     }
+  }
+
+  /**
+   * Publishes the resolved subagent profile as its own `parent` event, independently of whether
+   * the plain correlation edge for this child was already emitted (see `emittedProfileFor`'s
+   * doc). Carries `correlationId` too when the tree already knows this child's parent, so a
+   * client that only ever sees this one event still gets both pieces of state.
+   */
+  private publishProfile(childSessionKey: string, claim: AgentLaunchClaim): void {
+    if (this.emittedProfileFor.has(childSessionKey)) return;
+    this.emittedProfileFor.add(childSessionKey);
+    const correlationId = this.tree.nodes.get(childSessionKey)?.parentSessionKey ?? undefined;
+    this.publisher.publish({
+      id: this.allocateId(),
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: childSessionKey,
+      at: this.clock.now(),
+      ...(correlationId ? { correlationId } : {}),
+      agentProfile: {
+        role: 'subagent',
+        ...(claim.agentType ? { agentType: claim.agentType } : {}),
+        // The launch's REQUESTED model (an alias, or absent meaning "the default") — never the
+        // resolved live model, which the subagent's own transcript reports separately (`model`,
+        // set independently via `mapClaudeCodeRecordToEvents`'s own live message.model wiring).
+        ...(claim.model ? { requestedModel: claim.model } : {}),
+        ...(claim.task ? { task: claim.task } : {}),
+      },
+    });
   }
 
   private buildParentEvent(sessionKey: string, correlationId: string): AgentEvent {

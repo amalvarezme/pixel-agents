@@ -4,6 +4,8 @@
  * `EventKind` is DERIVED from `EVENT_KINDS` so the type and the runtime guard can never drift apart.
  */
 
+import type { AgentProfile } from '../agents/agent-profile';
+
 export const HARNESS_IDS = ['claude-code', 'codex', 'opencode', 'antigravity'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
@@ -64,6 +66,13 @@ export interface AgentEventBase {
   pid?: number;
   startedAt?: number;
   reason?: string;
+  /**
+   * Agent profile tracking: what this worker IS (role/agentType), what MODEL it runs, and what
+   * TASK it was given — optional and harness-agnostic, sourced per-harness by each adapter's own
+   * resolver, exactly like `toolLabel`/`toolDetail` above. A harness that reports none of it
+   * simply never sets this field.
+   */
+  agentProfile?: AgentProfile;
 }
 
 export interface MemoryWriteEvent extends AgentEventBase {

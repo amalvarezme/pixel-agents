@@ -14,6 +14,7 @@
  */
 import type { AgentEvent, HarnessId } from '../events/types';
 import { DEFAULT_ORPHAN_GRACE_MS } from '../agents/agent-tree';
+import type { AgentProfile } from '../agents/agent-profile';
 import {
   completeHeldCarryJob,
   createCarryQueueState,
@@ -43,6 +44,9 @@ export interface Worker {
   /** Normalized tool_start caption pair (design.md "Captions"), resolved upstream per-harness. */
   toolLabel?: string;
   toolDetail?: string;
+  /** Agent profile tracking: what this worker IS, what MODEL it runs, and what TASK it was given
+   * (`domain/agents/agent-profile.ts`). `undefined` for a harness that reports none of it. */
+  agentProfile?: AgentProfile;
 }
 
 /**
@@ -52,7 +56,10 @@ export interface Worker {
  * with no `session_start` ever showing up (mirrors `agent-tree.ts`'s `pending`/`promoteOrphans`).
  */
 interface PendingParentEdge {
-  correlationId: string;
+  /** Optional now: a profile-only `parent` event (agent profile tracking) carries no
+   * correlationId at all, yet still must not conjure a worker for an undiscovered session. */
+  correlationId?: string;
+  agentProfile?: AgentProfile;
   claimedAt: number;
 }
 
@@ -136,6 +143,11 @@ function upsertWorker(
     parentSessionKey: patch.parentSessionKey !== undefined ? patch.parentSessionKey : (existing?.parentSessionKey ?? null),
     toolLabel: patch.toolLabel ?? existing?.toolLabel,
     toolDetail: patch.toolDetail ?? existing?.toolDetail,
+    // Merged, never replaced wholesale: a later partial profile (e.g. just the orchestrator's
+    // newly-discovered model) must enrich the existing one, not erase agentType/model/task
+    // already known from an earlier profile event (spec: "a missing model stays absent rather
+    // than defaulting" — merging is what lets a field arrive on ITS OWN event, later, safely).
+    agentProfile: patch.agentProfile ? { ...existing?.agentProfile, ...patch.agentProfile } : existing?.agentProfile,
   });
   return { ...state, workers };
 }
@@ -170,11 +182,20 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
   switch (event.kind) {
     case 'session_start': {
       const pendingEdge = pruned.pendingParentEdges.get(event.sessionKey);
+      // Two independently-optional pending fields merge onto this event's own agentProfile (if
+      // any) — either may be the only one present. Cast is safe: whichever operand(s) are
+      // actually defined always carry `role` (AgentProfile requires it), so the merge always
+      // does too — TS just cannot see that across an optional-spread.
+      const mergedProfile =
+        pendingEdge?.agentProfile || event.agentProfile
+          ? ({ ...pendingEdge?.agentProfile, ...event.agentProfile } as AgentProfile)
+          : undefined;
       const worker = upsertWorker(pruned, event.sessionKey, {
         harness: event.harness,
         label: event.label,
         activity: 'working',
-        ...(pendingEdge ? { parentSessionKey: pendingEdge.correlationId } : {}),
+        ...(pendingEdge?.correlationId !== undefined ? { parentSessionKey: pendingEdge.correlationId } : {}),
+        ...(mergedProfile ? { agentProfile: mergedProfile } : {}),
       });
       if (!pendingEdge) return worker;
       const pendingParentEdges = new Map(worker.pendingParentEdges);
@@ -193,14 +214,22 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         return upsertWorker(pruned, event.sessionKey, {
           harness: event.harness,
           label: event.label,
-          parentSessionKey: event.correlationId ?? null,
+          ...(event.correlationId !== undefined ? { parentSessionKey: event.correlationId } : {}),
+          ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
         });
       }
       // The child was never discovered (yet, or ever) — record the edge, but do NOT create a
-      // worker for it. Nothing to hold without a correlationId to apply later.
-      if (!event.correlationId) return pruned;
+      // worker for it. Nothing to hold without a correlationId OR an agentProfile to apply later
+      // (agent profile tracking: a profile-only edge is just as much "not a discovery" as a bare
+      // correlationId always was).
+      if (!event.correlationId && !event.agentProfile) return pruned;
       const pendingParentEdges = new Map(pruned.pendingParentEdges);
-      pendingParentEdges.set(event.sessionKey, { correlationId: event.correlationId, claimedAt: event.at });
+      const existingPendingEdge = pendingParentEdges.get(event.sessionKey);
+      pendingParentEdges.set(event.sessionKey, {
+        correlationId: event.correlationId ?? existingPendingEdge?.correlationId,
+        agentProfile: event.agentProfile ?? existingPendingEdge?.agentProfile,
+        claimedAt: event.at,
+      });
       return { ...pruned, pendingParentEdges };
     }
 
@@ -208,13 +237,14 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
       return applyMemoryWriteToOfficeState(pruned, event.sessionKey, event.at);
 
     default:
-      if (!event.label && !event.toolLabel) return pruned;
+      if (!event.label && !event.toolLabel && !event.agentProfile) return pruned;
       if (!pruned.workers.has(event.sessionKey)) return pruned;
       return upsertWorker(pruned, event.sessionKey, {
         harness: event.harness,
         label: event.label,
         toolLabel: event.toolLabel,
         toolDetail: event.toolDetail,
+        ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
       });
   }
 }

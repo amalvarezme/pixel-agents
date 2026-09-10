@@ -7,6 +7,7 @@
  * with the pure layout math (`office-layout.ts`) into one renderable view model.
  */
 import type { HarnessId } from '../../domain/events/types';
+import type { AgentProfile } from '../../domain/agents/agent-profile';
 import type { OfficeState } from '../../domain/office/office';
 import { computeArchivePath, type ScenePoint } from '../scene/layout/archive-path';
 import { computeOfficeLayout, type DeskLane, type LayoutWorkerInput } from '../scene/layout/office-layout';
@@ -36,6 +37,9 @@ export interface WorkerViewModel {
   /** Normalized tool_start caption pair (design.md "Captions"), resolved upstream per-harness. */
   toolLabel?: string;
   toolDetail?: string;
+  /** Agent profile tracking: what this worker IS, what MODEL it runs, and what TASK it was
+   * given — carried straight through from `Worker.agentProfile`. */
+  agentProfile?: AgentProfile;
   archiveTrip?: ArchiveTripView;
 }
 
@@ -71,6 +75,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       y: desk.y,
       lane: desk.lane,
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
+      ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
       ...(held ? { archiveTrip: { path: computeArchivePath({ x: desk.x, y: desk.y }), carryCount: held.count } } : {}),
     });
   }
