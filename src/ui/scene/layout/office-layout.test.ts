@@ -52,6 +52,33 @@ describe('office layout math (office-scene-renderer spec: Single-Agent Layout, M
     expect(layout.overflowCount).toBe(2);
   });
 
+  // Defect fix: the packed row and the archive cabinet share the SAME root-lane y (540) —
+  // ARCHIVE_DESTINATION = { x: 1720, y: 540 }, `office-scene-renderer.ts`. A full 8-desk row
+  // centered on the floor reached far enough right to overlap the cabinet and its counter,
+  // making the archive destination the carry animation walks to invisible as its own thing.
+  it('keeps the packed row clear of the archive destination even at the maximum packed count', () => {
+    const workers = Array.from({ length: MAX_PACKED_WORKERS }, (_, i) => worker(`claude-code:s${i}`));
+
+    const layout = computeOfficeLayout(workers);
+
+    const rightmostDeskX = Math.max(...layout.desks.map((d) => d.x));
+    // 1720 is ARCHIVE_DESTINATION.x; 150 covers half the desk width plus half the cabinet width
+    // plus a visible margin, so the two never touch even accounting for their drawn size.
+    expect(rightmostDeskX).toBeLessThan(1720 - 150);
+  });
+
+  // Adversarial twin: proves the row shifts as a WHOLE (every desk clears the boundary), not just
+  // the specific 8-worker case above landing under the threshold by coincidence.
+  it('never places any packed-row desk past the archive clearance boundary, at any count', () => {
+    const workers = Array.from({ length: 4 }, (_, i) => worker(`claude-code:s${i}`));
+
+    const layout = computeOfficeLayout(workers);
+
+    for (const desk of layout.desks) {
+      expect(desk.x).toBeLessThan(1720 - 150);
+    }
+  });
+
   it('places a child worker in a visually distinct lane from its parent', () => {
     const layout = computeOfficeLayout([worker('claude-code:parent1'), worker('claude-code:child1', 'claude-code:parent1')]);
 

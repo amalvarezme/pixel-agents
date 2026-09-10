@@ -27,6 +27,8 @@ class RecordingStage implements StageLike {
 describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOfficeRenderer', () => {
   // `renderOfficeScene` always appends one archive-counter child (blocker B.2, tasks.md 21.2), so
   // an "empty" frame still has exactly that one child, not zero.
+  // "an empty frame" now has 2 children: the office background (floor/wall/archive cabinet) plus
+  // the archive counter — renderOfficeScene always draws both regardless of workers.
   it('adds one Container to an empty stage for an empty view model', () => {
     const stage = new RecordingStage();
     const viewModel: OfficeViewModel = { workers: [], overflowCount: 0 };
@@ -36,10 +38,10 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
     expect(stage.removedCalls).toBe(1);
     expect(stage.addedChildren).toHaveLength(1);
     expect(stage.addedChildren[0]).toBeInstanceOf(Container);
-    expect(stage.addedChildren[0]!.children).toHaveLength(1);
+    expect(stage.addedChildren[0]!.children).toHaveLength(2);
   });
 
-  it('renders one desk group per worker in the view model, plus the archive counter', () => {
+  it('renders one desk group per worker in the view model, plus the background and archive counter', () => {
     const stage = new RecordingStage();
     const viewModel: OfficeViewModel = {
       workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'my-session', x: 760, y: 540, lane: 'root' }],
@@ -48,7 +50,7 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
 
     updateStage(stage, viewModel);
 
-    expect(stage.addedChildren[0]!.children).toHaveLength(2);
+    expect(stage.addedChildren[0]!.children).toHaveLength(3);
   });
 
   it('clears the PREVIOUS frame before adding the new one, on every call', () => {
@@ -64,7 +66,24 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
 
     expect(stage.removedCalls).toBe(2);
     expect(stage.addedChildren).toHaveLength(2); // one per call — the stage itself owns removal
-    expect(stage.addedChildren[1]!.children).toHaveLength(1); // the SECOND frame: just the counter
+    expect(stage.addedChildren[1]!.children).toHaveLength(2); // the SECOND frame: background + counter
+  });
+
+  // Wiring check: `updateStage` must accept and forward `viewModel.now` (character animation
+  // frames key off it, `ui/scene/character/animation-clock.ts`) without it breaking the rest of
+  // the frame. The actual frame-selection DECISION is unit-tested directly, on a fake clock, in
+  // `animation-clock.test.ts` — this only proves the value reaches that far without crashing.
+  it("accepts the view model's `now` and still renders the full frame", () => {
+    const stage = new RecordingStage();
+    const viewModel: OfficeViewModel = {
+      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'one', x: 100, y: 100, lane: 'root', activity: 'working' }],
+      overflowCount: 0,
+      now: 220,
+    };
+
+    updateStage(stage, viewModel);
+
+    expect(stage.addedChildren[0]!.children).toHaveLength(3);
   });
 });
 

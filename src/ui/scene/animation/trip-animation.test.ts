@@ -208,4 +208,14 @@ describe('applyTripOverlay — overlays animated position/highlight onto an Offi
 
     expect(overlaid.archiveCount).toBe(1);
   });
+
+  // Character animation frames (ui/scene/character/animation-clock.ts) need the same clock the
+  // walk-position interpolation above already uses — carried through as `now` so the pixi
+  // renderer never has to invent its own clock.
+  it('carries the animation clock through as `now`, for frame-based character animation', () => {
+    const viewModel: OfficeViewModel = { workers: [], overflowCount: 0 };
+
+    expect(applyTripOverlay(viewModel, createTripAnimatorState(), 0).now).toBe(0);
+    expect(applyTripOverlay(viewModel, createTripAnimatorState(), 4200).now).toBe(4200);
+  });
 });

@@ -21,7 +21,8 @@ describe('buildOfficeFloorView (organism) — the full renderable scene descript
     const rootWorker = floor.workers.find((w) => w.sessionKey === 'claude-code:s1');
     const rootDesk = floor.desks.find((d) => d.sessionKey === 'claude-code:s1');
     expect(rootWorker?.caption).toBe('root-session');
-    expect(rootDesk?.width).toBe(rootDesk?.height);
+    // Desk furniture is wide and short (molecules/desk.ts), not the old square worker-body block.
+    expect(rootDesk?.width).toBeGreaterThan(rootDesk?.height ?? 0);
     expect(rootWorker?.x).toBe(rootDesk?.x);
   });
 

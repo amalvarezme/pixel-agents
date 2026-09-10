@@ -5,6 +5,8 @@
  */
 import type { DeskLane } from '../../scene/layout/office-layout';
 import type { WorkerViewModel } from '../../state/office-view-model';
+import type { WorkerActivity } from '../../../domain/office/office';
+import type { AgentProfile } from '../../../domain/agents/agent-profile';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 
@@ -22,6 +24,12 @@ export interface WorkerView {
   lane: DeskLane;
   badge: HarnessBadge;
   caption: string;
+  /** Carried straight through from `WorkerViewModel.activity` — the pixi renderer uses it to pick
+   * the drawn idle/working animation state (`ui/scene/character/animation-state.ts`). */
+  activity?: WorkerActivity;
+  /** Carried straight through from `WorkerViewModel.agentProfile` — the pixi renderer uses
+   * `role`/`model` to pick the orchestrator/subagent silhouette and the model accent colour. */
+  agentProfile?: AgentProfile;
   archiveTrip?: WorkerArchiveTripView;
 }
 
@@ -37,6 +45,8 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
       worker.toolLabel ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : undefined,
       worker.agentProfile,
     ),
+    ...(worker.activity !== undefined ? { activity: worker.activity } : {}),
+    ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
     ...(worker.archiveTrip
       ? { archiveTrip: { carryCount: worker.archiveTrip.carryCount, highlight: worker.archiveTrip.highlight ?? false } }
       : {}),
