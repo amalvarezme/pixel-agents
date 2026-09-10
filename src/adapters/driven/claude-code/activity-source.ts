@@ -52,6 +52,16 @@ export interface ClaudeCodeActivitySourceOptions {
    * matching the try/catch precedent already applied to `onSessionDiscovered`.
    */
   onParentRecord?: (parentSessionKey: string, record: ClaudeCodeRecord) => void;
+  /**
+   * Opt-in (design.md "Session discovery and aging out" — Bootstrap: "an opt-in --replay-since
+   * exists for demos and fixture capture"): when true, a session with NO prior checkpoint
+   * bootstraps by reading its entire transcript from offset 0, exactly like before this option
+   * existed. Defaults to false — a session with no prior checkpoint bootstraps at EOF instead, so
+   * process start never floods the scene by replaying every historical line of every discovered
+   * transcript. An EXISTING checkpoint always resumes from where it left off regardless of this
+   * flag — it only ever affects the "no checkpoint yet" bootstrap.
+   */
+  replayFromStart?: boolean;
 }
 
 function defaultAllocateId(): () => number {
@@ -64,6 +74,7 @@ export class ClaudeCodeActivitySource implements ActivitySource {
   private readonly allocateId: () => number;
   private readonly now: () => number;
   private readonly activeWindowMs?: number;
+  private readonly replayFromStart: boolean;
   private discoveryWatcher: FSWatcher | null = null;
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
@@ -77,6 +88,7 @@ export class ClaudeCodeActivitySource implements ActivitySource {
     this.allocateId = options.allocateId ?? defaultAllocateId();
     this.now = options.now ?? Date.now;
     this.activeWindowMs = options.activeWindowMs;
+    this.replayFromStart = options.replayFromStart ?? false;
     this.onParentRecord = options.onParentRecord;
   }
 
@@ -143,7 +155,7 @@ export class ClaudeCodeActivitySource implements ActivitySource {
     // AFTER this resolves does the live watcher start, from the bootstrap read's resulting
     // checkpoint — never from `initialCheckpoint` again — so the two never race and double-read
     // the same bytes.
-    void readTailIncrement(filePath, initialCheckpoint)
+    void readTailIncrement(filePath, initialCheckpoint, { bootstrapFromEof: !this.replayFromStart })
       .then((result) => {
         if (stopped) return initialCheckpoint;
         const checkpointAfterBootstrap = result.kind === 'no-op' ? initialCheckpoint : result.checkpoint;

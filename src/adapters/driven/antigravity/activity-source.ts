@@ -37,6 +37,14 @@ export interface AntigravityActivitySourceOptions {
   now?: () => number;
   /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
   activeWindowMs?: number;
+  /**
+   * Opt-in (design.md "Session discovery and aging out" — Bootstrap: "an opt-in --replay-since
+   * exists for demos and fixture capture"): when true, a session with NO prior checkpoint
+   * bootstraps by reading its entire transcript from offset 0. Defaults to false — bootstraps at
+   * EOF instead, so process start never floods the scene. An EXISTING checkpoint always resumes
+   * from where it left off regardless of this flag.
+   */
+  replayFromStart?: boolean;
 }
 
 function defaultAllocateId(): () => number {
@@ -49,6 +57,7 @@ export class AntigravityActivitySource implements ActivitySource {
   private readonly allocateId: () => number;
   private readonly now: () => number;
   private readonly activeWindowMs?: number;
+  private readonly replayFromStart: boolean;
   private discoveryWatcher: FSWatcher | null = null;
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
@@ -60,6 +69,7 @@ export class AntigravityActivitySource implements ActivitySource {
     this.allocateId = options.allocateId ?? defaultAllocateId();
     this.now = options.now ?? Date.now;
     this.activeWindowMs = options.activeWindowMs;
+    this.replayFromStart = options.replayFromStart ?? false;
   }
 
   async probe(): Promise<SourceHealth> {
@@ -109,7 +119,7 @@ export class AntigravityActivitySource implements ActivitySource {
       checkpoint: bootstrapCheckpoint,
     });
 
-    void readTailIncrement(filePath, initialCheckpoint)
+    void readTailIncrement(filePath, initialCheckpoint, { bootstrapFromEof: !this.replayFromStart })
       .then((result) => {
         if (stopped) return initialCheckpoint;
         const checkpointAfterBootstrap = result.kind === 'no-op' ? initialCheckpoint : result.checkpoint;

@@ -33,6 +33,37 @@ describe('readTailIncrement', () => {
     if (dir) await rm(dir, { recursive: true, force: true });
   });
 
+  // design.md "Session discovery and aging out" — Bootstrap: "start their checkpoint at EOF
+  // (`offset = size`), not at zero. Replaying 173k Claude lines ... would flood the scene."
+  it('bootstraps at EOF when bootstrapFromEof is true and there is no prior checkpoint: existing content is never read', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-eof-'));
+    filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, '{"a":1}\n{"a":2}\n');
+    const fileSize = Buffer.byteLength('{"a":1}\n{"a":2}\n');
+
+    const result = await readTailIncrement(filePath, null, { bootstrapFromEof: true });
+
+    if (result.kind === 'no-op') throw new Error('expected growth');
+    expect(result.lines).toEqual([]);
+    expect(result.checkpoint.offset).toBe(fileSize);
+    expect(result.checkpoint.size).toBe(fileSize);
+  });
+
+  it('a subsequent read from the EOF-bootstrapped checkpoint returns only content appended AFTER bootstrap', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-eof-resume-'));
+    filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, '{"a":1}\n');
+    const bootstrap = await readTailIncrement(filePath, null, { bootstrapFromEof: true });
+    if (bootstrap.kind === 'no-op') throw new Error('expected growth');
+
+    await writeFile(filePath, '{"a":2}\n', { flag: 'a' });
+    const result = await readTailIncrement(filePath, bootstrap.checkpoint);
+
+    expect(result.kind).toBe('growth');
+    if (result.kind === 'no-op') throw new Error('expected growth');
+    expect(result.lines).toEqual(['{"a":2}']);
+  });
+
   it('reads growth: an initial read (null checkpoint) returns all complete lines', async () => {
     dir = await mkdtemp(join(tmpdir(), 'claude-code-tail-'));
     filePath = join(dir, 'session.jsonl');

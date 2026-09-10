@@ -37,6 +37,15 @@ export interface ReadTailIncrementOptions {
    * oversized fixture.
    */
   maxChunkBytes?: number;
+  /**
+   * When true AND there is no prior checkpoint (`previous === null`), bootstrap at EOF
+   * (`offset = size`) instead of reading the whole file from offset 0 (design.md "Session
+   * discovery and aging out" — Bootstrap: "start their checkpoint at EOF ... not at zero.
+   * Replaying 173k Claude lines ... would flood the scene"). Defaults to false, so every existing
+   * caller of `readTailIncrement(path, null)` keeps reading the whole file unless it opts in;
+   * `ActivitySource.open()` flips it per its own `replayFromStart` option (default: EOF).
+   */
+  bootstrapFromEof?: boolean;
 }
 
 // 1 MiB default: comfortably below V8's maximum string length while still large enough that
@@ -122,6 +131,13 @@ export async function readTailIncrement(
   const inode = stats.ino;
 
   if (previous === null) {
+    if (options.bootstrapFromEof) {
+      return {
+        kind: 'growth',
+        lines: [],
+        checkpoint: { kind: 'byte-offset', offset: stats.size, size: stats.size, inode },
+      };
+    }
     return await readGrowth(filePath, 0, inode, 'growth', maxChunkBytes);
   }
 

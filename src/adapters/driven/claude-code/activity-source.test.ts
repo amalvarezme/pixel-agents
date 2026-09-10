@@ -45,7 +45,11 @@ describe('ClaudeCodeActivitySource', () => {
   it('open() emits a synthetic session_start event first, so the session renders as a worker before any content is parsed', async () => {
     const toolUseLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
     const { root: harnessRoot } = await makeSessionFile(toolUseLine);
-    const source = new ClaudeCodeActivitySource(harnessRoot);
+    // Opt-in (design.md: "an opt-in --replay-since exists for demos and fixture capture"): this
+    // test's purpose is proving event ORDERING (session_start before any content-derived event),
+    // which requires the pre-existing line to actually be read — the default (no replay) would
+    // never emit it at all, which is covered separately below.
+    const source = new ClaudeCodeActivitySource(harnessRoot, { replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
@@ -56,6 +60,57 @@ describe('ClaudeCodeActivitySource', () => {
     expect(first.value?.event.kind).toBe('session_start');
     expect(first.value?.event.sessionKey).toBe('claude-code:session-1');
 
+    const second = await streamIterator.next();
+    expect(second.value?.event.kind).toBe('tool_start');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "start their checkpoint at EOF
+  // ... not at zero. Replaying 173k Claude lines ... would flood the scene." Default behavior
+  // (no `replayFromStart`): a session with no prior checkpoint must NOT replay content already on
+  // disk — only the synthetic session_start, then whatever is appended AFTER open().
+  it('open() with no prior checkpoint and default options never replays pre-existing content, only newly appended lines', async () => {
+    const preExistingLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
+    const { root: harnessRoot, filePath } = await makeSessionFile(preExistingLine);
+    const source = new ClaudeCodeActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+
+    const newLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: 'hello' } });
+    const keepAppending = setInterval(() => { void writeFile(filePath, `${newLine}\n`, { flag: 'a' }); }, 150);
+    await writeFile(filePath, `${newLine}\n`, { flag: 'a' });
+
+    const second = await streamIterator.next();
+    clearInterval(keepAppending);
+    // Only the NEWLY appended `message` event ever arrives — never the pre-existing `tool_start`
+    // from the line that was already on disk before `open()` was called.
+    expect(second.value?.event.kind).toBe('message');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // The opt-in itself (design.md: "an opt-in --replay-since exists for demos and fixture
+  // capture"): with `replayFromStart: true`, the pre-existing line on disk IS replayed.
+  it('open() with replayFromStart: true DOES replay content already on disk', async () => {
+    const preExistingLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
+    const { root: harnessRoot } = await makeSessionFile(preExistingLine);
+    const source = new ClaudeCodeActivitySource(harnessRoot, { replayFromStart: true });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    await streamIterator.next(); // session_start
     const second = await streamIterator.next();
     expect(second.value?.event.kind).toBe('tool_start');
 
@@ -97,7 +152,9 @@ describe('ClaudeCodeActivitySource', () => {
     const launchLine = JSON.stringify({ type: 'assistant', toolUseResult: { agentId: 'abc123' } });
     const { root: harnessRoot } = await makeSessionFile(launchLine);
     const onParentRecord = vi.fn();
-    const source = new ClaudeCodeActivitySource(harnessRoot, { onParentRecord });
+    // replayFromStart: true — this test's own pre-existing line IS the record onParentRecord must
+    // see; the default (no replay) would never read it at all.
+    const source = new ClaudeCodeActivitySource(harnessRoot, { onParentRecord, replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
@@ -121,7 +178,10 @@ describe('ClaudeCodeActivitySource', () => {
     const line = JSON.stringify({ type: 'assistant', toolUseResult: { agentId: 'nested-should-be-ignored' } });
     await writeFile(filePath, `${line}\n`);
     const onParentRecord = vi.fn();
-    const source = new ClaudeCodeActivitySource(root, { onParentRecord });
+    // replayFromStart: true — the subagent's pre-existing line must actually be PARSED for this
+    // test to prove anything; otherwise onParentRecord trivially "never called" because nothing
+    // was ever read at all.
+    const source = new ClaudeCodeActivitySource(root, { onParentRecord, replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
