@@ -232,6 +232,29 @@ describe('AntigravityActivitySource', () => {
     await source.close();
   });
 
+  // Session aging (design.md "Session discovery and aging out") ages from the synthetic
+  // `session_start`'s `at`. It must carry the session's REAL last-activity time (the transcript
+  // file's mtime), never the moment `open()` happens to run.
+  it('open() stamps the synthetic session_start with the session\'s real last-activity time, not the moment open() was called', async () => {
+    const { root: harnessRoot, filePath } = await makeCliTranscript('{}');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+    const source = new AntigravityActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.at).toBe(mtimeMs);
+
+    stream.stop();
+    await source.close();
+  });
+
   it('discover + open + close never writes anything under the harness root (Global No-Write Invariant, composition level)', async () => {
     const { root: harnessRoot, filePath } = await makeCliTranscript('{"step_index":1,"source":"USER","type":"USER_QUERY"}');
     const source = new AntigravityActivitySource(harnessRoot);

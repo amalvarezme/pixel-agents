@@ -37,19 +37,26 @@ export class SessionLifecycleCoordinator {
     this.allocateId = allocateId ?? defaultAllocateId();
   }
 
-  /** Feeds one live event into lifecycle tracking. Never publishes anything itself. */
+  /**
+   * Feeds one live event into lifecycle tracking. Never publishes anything itself.
+   *
+   * Ages from the event's OWN `event.at`, never from `this.clock.now()` at the moment this method
+   * runs: a transcript last written hours ago must age from that real timestamp, not from whenever
+   * the server happened to ingest it (a JSONL bootstrap read at process start, or a delayed poll,
+   * can observe an old event long after it actually happened).
+   */
   observe(event: AgentEvent): void {
     if (event.kind === 'session_end') {
       this.sessions.delete(event.sessionKey);
       return;
     }
     if (event.kind === 'session_start') {
-      this.sessions.set(event.sessionKey, { harness: event.harness, state: startSession(event.sessionKey, this.clock.now()) });
+      this.sessions.set(event.sessionKey, { harness: event.harness, state: startSession(event.sessionKey, event.at) });
       return;
     }
     const tracked = this.sessions.get(event.sessionKey);
     if (!tracked) return; // no session_start seen yet for this key — nothing to age
-    tracked.state = recordActivity(tracked.state, this.clock.now());
+    tracked.state = recordActivity(tracked.state, event.at);
   }
 
   /** Ages every tracked session against the injected clock, publishing a synthetic session_end on eviction. */

@@ -103,6 +103,25 @@ describe('discoverCodexSessions', () => {
     expect(excluded).toEqual([]);
   });
 
+  // Session aging (design.md "Session discovery and aging out") ages from the real last-write
+  // time, never from when the server happened to discover it — `lastActivityAt` carries that
+  // signal, distinct from `discoveredAt` ("when this scan ran").
+  it('carries the file\'s real mtime as lastActivityAt, distinct from discoveredAt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'codex-discover-last-activity-'));
+    const dayDir = join(root, 'sessions', '2026', '08', '23');
+    await mkdir(dayDir, { recursive: true });
+    const filePath = join(dayDir, ROLLOUT_FILENAME);
+    await writeFile(filePath, '{}\n');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+
+    const sessions = await discoverCodexSessions(root);
+
+    expect(sessions[0]?.lastActivityAt).toBe(mtimeMs);
+    expect(sessions[0]?.lastActivityAt).not.toBe(sessions[0]?.discoveredAt);
+  });
+
   it('performs zero writes under the discovered root', async () => {
     root = await mkdtemp(join(tmpdir(), 'codex-discover-write-'));
     const dayDir = join(root, 'sessions', '2026', '08', '23');

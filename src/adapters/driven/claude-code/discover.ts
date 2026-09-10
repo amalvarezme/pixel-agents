@@ -156,7 +156,7 @@ export async function discoverClaudeCodeSessions(
     const fileStat = await stat(filePath);
     if (!isWithinActiveWindow(fileStat.mtimeMs, discoveredAt, activeWindowMs)) continue;
     const cwd = await resolveClaudeCodeSessionCwd(filePath);
-    refs.push({ ...classified, cwd, discoveredAt });
+    refs.push({ ...classified, cwd, discoveredAt, lastActivityAt: fileStat.mtimeMs });
   }
   return refs;
 }
@@ -178,7 +178,9 @@ export function watchClaudeCodeSessions(
     const classified = classifyClaudeCodeSessionPath(filePath);
     if (!classified) return;
     void resolveClaudeCodeSessionCwd(filePath).then((cwd) => {
-      onDiscovered({ ...classified, cwd, discoveredAt: Date.now() });
+      // A freshly-added file: its mtime IS effectively now, so `Date.now()` is a faithful stand-in
+      // rather than a real stat() round-trip.
+      onDiscovered({ ...classified, cwd, discoveredAt: Date.now(), lastActivityAt: Date.now() });
     });
   });
   return watcher;

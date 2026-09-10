@@ -175,6 +175,25 @@ describe('discoverAntigravitySessions', () => {
     expect(excluded).toEqual([]);
   });
 
+  // Session aging (design.md "Session discovery and aging out") ages from the real last-write
+  // time, never from when the server happened to discover it — `lastActivityAt` carries that
+  // signal, distinct from `discoveredAt` ("when this scan ran").
+  it('carries the file\'s real mtime as lastActivityAt, distinct from discoveredAt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-discover-last-activity-'));
+    const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-last-activity', '.system_generated', 'logs');
+    await mkdir(logsDir, { recursive: true });
+    const filePath = join(logsDir, 'transcript.jsonl');
+    await writeFile(filePath, '{}\n');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+
+    const sessions = await discoverAntigravitySessions(root);
+
+    expect(sessions[0]?.lastActivityAt).toBe(mtimeMs);
+    expect(sessions[0]?.lastActivityAt).not.toBe(sessions[0]?.discoveredAt);
+  });
+
   it('performs zero writes under the discovered root', async () => {
     root = await mkdtemp(join(tmpdir(), 'antigravity-discover-write-'));
     const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-1', '.system_generated', 'logs');

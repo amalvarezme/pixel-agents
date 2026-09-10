@@ -148,6 +148,7 @@ export async function discoverAntigravitySessions(
       // correlation") — never guessed, so the correlator falls back to harness+window only.
       cwd: null,
       discoveredAt,
+      lastActivityAt: fileStat.mtimeMs,
     });
   }
   return refs;
@@ -179,6 +180,9 @@ export function watchAntigravitySessions(
       candidateFiles: [filePath],
       cwd: null,
       discoveredAt: Date.now(),
+      // A freshly-added file: its mtime IS effectively now, so `Date.now()` is a faithful
+      // stand-in rather than a real stat() round-trip.
+      lastActivityAt: Date.now(),
     });
   });
   return watcher;

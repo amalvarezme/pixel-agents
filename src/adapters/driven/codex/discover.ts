@@ -130,7 +130,7 @@ export async function discoverCodexSessions(
     const fileStat = await stat(filePath);
     if (!isWithinActiveWindow(fileStat.mtimeMs, discoveredAt, activeWindowMs)) continue;
     const cwd = await resolveCodexSessionCwd(filePath);
-    refs.push({ ...classified, cwd, discoveredAt });
+    refs.push({ ...classified, cwd, discoveredAt, lastActivityAt: fileStat.mtimeMs });
   }
   return refs;
 }
@@ -159,7 +159,9 @@ export function watchCodexSessions(
     const classified = classifyCodexSessionPath(filePath);
     if (!classified) return;
     void resolveCodexSessionCwd(filePath).then((cwd) => {
-      onDiscovered({ ...classified, cwd, discoveredAt: Date.now() });
+      // A freshly-added file: its mtime IS effectively now, so `Date.now()` is a faithful stand-in
+      // rather than a real stat() round-trip.
+      onDiscovered({ ...classified, cwd, discoveredAt: Date.now(), lastActivityAt: Date.now() });
     });
   });
   return watcher;

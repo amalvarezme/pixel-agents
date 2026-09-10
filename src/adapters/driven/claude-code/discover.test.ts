@@ -149,6 +149,26 @@ describe('discoverClaudeCodeSessions', () => {
     expect(excluded).toEqual([]);
   });
 
+  // Session aging (design.md "Session discovery and aging out") ages from the session's REAL last
+  // write, never from when the server happened to discover it. `lastActivityAt` carries that real
+  // signal downstream to the synthetic `session_start` an ActivitySource emits — it must be the
+  // file's own mtime, not `discoveredAt` (which is merely "when this scan ran").
+  it('carries the file\'s real mtime as lastActivityAt, distinct from discoveredAt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-discover-last-activity-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    const filePath = join(slugDir, 'session-abc.jsonl');
+    await writeFile(filePath, '{}\n');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+
+    const sessions = await discoverClaudeCodeSessions(root);
+
+    expect(sessions[0]?.lastActivityAt).toBe(mtimeMs);
+    expect(sessions[0]?.lastActivityAt).not.toBe(sessions[0]?.discoveredAt);
+  });
+
   it('performs zero writes under the discovered root', async () => {
     root = await mkdtemp(join(tmpdir(), 'claude-code-discover-write-'));
     const slugDir = join(root, 'projects', 'my-slug');

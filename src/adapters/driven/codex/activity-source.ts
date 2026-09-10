@@ -115,7 +115,10 @@ export class CodexActivitySource implements ActivitySource {
         kind: 'session_start',
         harness: 'codex',
         sessionKey,
-        at: Date.now(),
+        // The session's REAL last-activity time (design.md "Session discovery and aging out"),
+        // never the moment open() happens to run — falls back to now() only for a fake/scripted
+        // SessionRef that never set it.
+        at: session.lastActivityAt ?? this.now(),
       }),
       checkpoint: bootstrapCheckpoint,
     });
