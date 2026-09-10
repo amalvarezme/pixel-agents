@@ -33,6 +33,10 @@ import { mapAntigravityRecordToEvents, parseAntigravityLine } from './parse';
 export interface AntigravityActivitySourceOptions {
   /** Injectable monotonic id allocator. Defaults to an in-process counter starting at 1. */
   allocateId?: () => number;
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
 }
 
 function defaultAllocateId(): () => number {
@@ -43,6 +47,8 @@ function defaultAllocateId(): () => number {
 export class AntigravityActivitySource implements ActivitySource {
   readonly harness: HarnessId = 'antigravity';
   private readonly allocateId: () => number;
+  private readonly now: () => number;
+  private readonly activeWindowMs?: number;
   private discoveryWatcher: FSWatcher | null = null;
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
@@ -52,6 +58,8 @@ export class AntigravityActivitySource implements ActivitySource {
     options: AntigravityActivitySourceOptions = {},
   ) {
     this.allocateId = options.allocateId ?? defaultAllocateId();
+    this.now = options.now ?? Date.now;
+    this.activeWindowMs = options.activeWindowMs;
   }
 
   async probe(): Promise<SourceHealth> {
@@ -59,7 +67,7 @@ export class AntigravityActivitySource implements ActivitySource {
   }
 
   async *discover(): AsyncIterable<SessionRef> {
-    for (const ref of await discoverAntigravitySessions(this.root)) {
+    for (const ref of await discoverAntigravitySessions(this.root, { now: this.now, activeWindowMs: this.activeWindowMs })) {
       yield ref;
     }
     if (this.closed) return;

@@ -15,10 +15,18 @@
  * This module never opens a file for writing. `discoverAntigravitySessions` only reads directory
  * entries; it never creates, modifies, or deletes anything under `root`.
  */
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { SessionRef } from '../../../ports/activity-source.port';
+import { DEFAULT_ACTIVE_WINDOW_MS, isWithinActiveWindow } from '../../../shared/active-window';
+
+export interface DiscoverActiveWindowOptions {
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
+}
 
 export type AntigravitySurface = 'cli' | 'ide';
 
@@ -99,7 +107,12 @@ interface ConversationFiles {
  * conversation without a `transcript.jsonl` yields no ref — there is nothing to tail — even if a
  * lone `transcript_full.jsonl` exists. Read-only.
  */
-export async function discoverAntigravitySessions(root: string): Promise<AntigravitySessionRef[]> {
+export async function discoverAntigravitySessions(
+  root: string,
+  options: DiscoverActiveWindowOptions = {},
+): Promise<AntigravitySessionRef[]> {
+  const now = options.now ?? Date.now;
+  const activeWindowMs = options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS;
   const files = [
     ...(await listFilesRecursively(join(root, 'antigravity-cli'))),
     ...(await listFilesRecursively(join(root, 'antigravity-ide'))),
@@ -116,10 +129,12 @@ export async function discoverAntigravitySessions(root: string): Promise<Antigra
     byConversation.set(key, entry);
   }
 
-  const now = Date.now();
+  const discoveredAt = now();
   const refs: AntigravitySessionRef[] = [];
   for (const [key, entry] of byConversation) {
     if (!entry.transcript) continue;
+    const fileStat = await stat(entry.transcript);
+    if (!isWithinActiveWindow(fileStat.mtimeMs, discoveredAt, activeWindowMs)) continue;
     const conversationId = key.slice(entry.surface.length + 1);
     const candidateFiles = [entry.transcript, ...(entry.transcriptFull ? [entry.transcriptFull] : [])];
     refs.push({
@@ -132,7 +147,7 @@ export async function discoverAntigravitySessions(root: string): Promise<Antigra
       // Antigravity's transcript carries no cwd field at all (design.md "Launch <-> log
       // correlation") — never guessed, so the correlator falls back to harness+window only.
       cwd: null,
-      discoveredAt: now,
+      discoveredAt,
     });
   }
   return refs;

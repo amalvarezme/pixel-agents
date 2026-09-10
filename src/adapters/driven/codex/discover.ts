@@ -10,10 +10,18 @@
  * entries; it never creates, modifies, or deletes anything under `root`.
  */
 import { createReadStream } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { SessionRef } from '../../../ports/activity-source.port';
+import { DEFAULT_ACTIVE_WINDOW_MS, isWithinActiveWindow } from '../../../shared/active-window';
+
+export interface DiscoverActiveWindowOptions {
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
+}
 
 export interface CodexSessionRef extends SessionRef {
   harness: 'codex';
@@ -98,7 +106,12 @@ async function listFilesRecursively(dir: string): Promise<string[]> {
  * One-shot scan of `<root>/sessions/**` for Codex rollout files, regardless of date-partition
  * depth (spec: "Session file located by date partition"). Read-only.
  */
-export async function discoverCodexSessions(root: string): Promise<CodexSessionRef[]> {
+export async function discoverCodexSessions(
+  root: string,
+  options: DiscoverActiveWindowOptions = {},
+): Promise<CodexSessionRef[]> {
+  const now = options.now ?? Date.now;
+  const activeWindowMs = options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS;
   const sessionsRoot = join(root, 'sessions');
   let files: string[];
   try {
@@ -108,14 +121,16 @@ export async function discoverCodexSessions(root: string): Promise<CodexSessionR
     throw error;
   }
 
-  const now = Date.now();
+  const discoveredAt = now();
   const refs: CodexSessionRef[] = [];
   for (const filePath of files) {
     if (!filePath.endsWith('.jsonl')) continue;
     const classified = classifyCodexSessionPath(filePath);
     if (!classified) continue;
+    const fileStat = await stat(filePath);
+    if (!isWithinActiveWindow(fileStat.mtimeMs, discoveredAt, activeWindowMs)) continue;
     const cwd = await resolveCodexSessionCwd(filePath);
-    refs.push({ ...classified, cwd, discoveredAt: now });
+    refs.push({ ...classified, cwd, discoveredAt });
   }
   return refs;
 }

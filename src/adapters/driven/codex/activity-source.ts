@@ -34,6 +34,10 @@ import { mapCodexRecordToEvents, parseCodexLine } from './parse';
 export interface CodexActivitySourceOptions {
   /** Injectable monotonic id allocator. Defaults to an in-process counter starting at 1. */
   allocateId?: () => number;
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
 }
 
 function defaultAllocateId(): () => number {
@@ -44,6 +48,8 @@ function defaultAllocateId(): () => number {
 export class CodexActivitySource implements ActivitySource {
   readonly harness: HarnessId = 'codex';
   private readonly allocateId: () => number;
+  private readonly now: () => number;
+  private readonly activeWindowMs?: number;
   private discoveryWatcher: FSWatcher | null = null;
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
@@ -53,6 +59,8 @@ export class CodexActivitySource implements ActivitySource {
     options: CodexActivitySourceOptions = {},
   ) {
     this.allocateId = options.allocateId ?? defaultAllocateId();
+    this.now = options.now ?? Date.now;
+    this.activeWindowMs = options.activeWindowMs;
   }
 
   async probe(): Promise<SourceHealth> {
@@ -60,7 +68,7 @@ export class CodexActivitySource implements ActivitySource {
   }
 
   async *discover(): AsyncIterable<SessionRef> {
-    for (const ref of await discoverCodexSessions(this.root)) {
+    for (const ref of await discoverCodexSessions(this.root, { now: this.now, activeWindowMs: this.activeWindowMs })) {
       yield ref;
     }
     if (this.closed) return;

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -97,6 +97,36 @@ describe('CodexActivitySource', () => {
     expect(next.value?.event.kind).toBe('tool_start');
 
     stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)". Wiring test for the ActivitySource level, mirroring Claude
+  // Code's: a window SMALLER than the 24h default (1s, against a rollout touched 2s ago) proves
+  // the constructor option is actually threaded through, not just coinciding with the default.
+  it('discover() excludes a rollout file last touched outside the configured active window', async () => {
+    const { root: harnessRoot } = await makeRolloutFile('{}');
+    const dayDir = currentDayDirectory(harnessRoot);
+    const staleFilePath = join(dayDir, 'rollout-2026-08-23T12-59-40-02b13ad8-4b45-8554-b8ab-4dfe099b1031.jsonl');
+    await writeFile(staleFilePath, '{}\n');
+    const twoSecondsAgo = new Date(Date.now() - 2000);
+    await utimes(staleFilePath, twoSecondsAgo, twoSecondsAgo);
+    const source = new CodexActivitySource(harnessRoot, { activeWindowMs: 1000 });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const withTimeout = (ms: number): Promise<{ timedOut: true } | { timedOut: false; sessionKey?: string }> =>
+      Promise.race([
+        iterator.next().then((r) => ({ timedOut: false as const, sessionKey: r.value?.sessionKey })),
+        new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), 300)),
+      ]);
+
+    const first = await withTimeout(2000);
+    expect(first.timedOut).toBe(false);
+    expect((first as { sessionKey?: string }).sessionKey).toBe('codex:01a02fc7-3a34-7443-a79a-3ced988a0f20');
+
+    const second = await withTimeout(300);
+    expect(second.timedOut).toBe(true);
+
     await source.close();
   });
 

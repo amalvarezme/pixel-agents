@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -134,6 +134,43 @@ describe('ClaudeCodeActivitySource', () => {
     expect(onParentRecord).not.toHaveBeenCalled();
 
     stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)". Wiring test for the ActivitySource level: `discover()` must
+  // forward a caller-supplied `activeWindowMs` down to `discoverClaudeCodeSessions` (already
+  // proven correct in isolation by `discover.test.ts`). Deliberately uses a window SMALLER than
+  // the 24h default (1s, against a sibling touched 2s ago): if the constructor option were never
+  // threaded through and `discover()` fell back to the 24h default instead, the stale sibling
+  // would still be well within THAT window and would incorrectly surface as a second yielded
+  // value — this is what makes the test prove real wiring, not just coincide with the default.
+  it('discover() excludes a session file last touched outside the configured active window', async () => {
+    const { root: harnessRoot } = await makeSessionFile('{}');
+    const staleDir = join(harnessRoot, 'projects', 'other-slug');
+    await mkdir(staleDir, { recursive: true });
+    const staleFilePath = join(staleDir, 'session-old.jsonl');
+    await writeFile(staleFilePath, '{}\n');
+    const twoSecondsAgo = new Date(Date.now() - 2000);
+    await utimes(staleFilePath, twoSecondsAgo, twoSecondsAgo);
+    const source = new ClaudeCodeActivitySource(harnessRoot, { activeWindowMs: 1000 });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const withTimeout = (ms: number): Promise<{ timedOut: true } | { timedOut: false; sessionKey?: string }> =>
+      Promise.race([
+        iterator.next().then((r) => ({ timedOut: false as const, sessionKey: r.value?.sessionKey })),
+        new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), 300)),
+      ]);
+
+    const first = await withTimeout(2000);
+    expect(first.timedOut).toBe(false);
+    expect((first as { sessionKey?: string }).sessionKey).toBe('claude-code:session-1');
+
+    // The stale sibling must never surface, now or later — the watcher stage that follows the
+    // one-shot scan never fires for it either, so a second call hangs forever (times out).
+    const second = await withTimeout(300);
+    expect(second.timedOut).toBe(true);
+
     await source.close();
   });
 

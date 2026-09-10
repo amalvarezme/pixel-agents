@@ -11,10 +11,18 @@
  * entries; it never creates, modifies, or deletes anything under `root`.
  */
 import { createReadStream } from 'node:fs';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import type { SessionRef } from '../../../ports/activity-source.port';
+import { DEFAULT_ACTIVE_WINDOW_MS, isWithinActiveWindow } from '../../../shared/active-window';
+
+export interface DiscoverActiveWindowOptions {
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
+}
 
 export interface ClaudeCodeSessionRef extends SessionRef {
   harness: 'claude-code';
@@ -124,7 +132,12 @@ async function listFilesRecursively(dir: string): Promise<string[]> {
  * The caller is responsible for turning discovered files into a live tail (see `tail.ts`) and for
  * live discovery of files added after this scan (see `watchClaudeCodeSessions`).
  */
-export async function discoverClaudeCodeSessions(root: string): Promise<ClaudeCodeSessionRef[]> {
+export async function discoverClaudeCodeSessions(
+  root: string,
+  options: DiscoverActiveWindowOptions = {},
+): Promise<ClaudeCodeSessionRef[]> {
+  const now = options.now ?? Date.now;
+  const activeWindowMs = options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS;
   const projectsRoot = join(root, 'projects');
   let files: string[];
   try {
@@ -134,14 +147,16 @@ export async function discoverClaudeCodeSessions(root: string): Promise<ClaudeCo
     throw error;
   }
 
-  const now = Date.now();
+  const discoveredAt = now();
   const refs: ClaudeCodeSessionRef[] = [];
   for (const filePath of files) {
     if (!filePath.endsWith('.jsonl')) continue;
     const classified = classifyClaudeCodeSessionPath(filePath);
     if (!classified) continue;
+    const fileStat = await stat(filePath);
+    if (!isWithinActiveWindow(fileStat.mtimeMs, discoveredAt, activeWindowMs)) continue;
     const cwd = await resolveClaudeCodeSessionCwd(filePath);
-    refs.push({ ...classified, cwd, discoveredAt: now });
+    refs.push({ ...classified, cwd, discoveredAt });
   }
   return refs;
 }

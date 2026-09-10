@@ -78,7 +78,11 @@ function createIdAllocator(): () => number {
  * ids silently drop another harness's unseen events on reconnect. Pinned by
  * `event-id-allocator.test.ts`.
  */
-function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator, allocateId: () => number): ActivitySource[] {
+function buildSources(
+  subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator,
+  allocateId: () => number,
+  clock: { now: () => number },
+): ActivitySource[] {
   const sources: ActivitySource[] = [];
   if (isHarnessEnabled('CLAUDE_CODE_ENABLED')) {
     // Shared with `subagentCorrelator` (same instance, built in `main()`) so a `parent` event and
@@ -86,14 +90,19 @@ function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinat
     sources.push(
       new ClaudeCodeActivitySource(CLAUDE_HOME, {
         allocateId,
+        now: clock.now,
         // Edge 2 (spec: "MUST correlate ... using toolUseResult.agentId"): fed straight from the
         // parsed PARENT-transcript record, alongside (never instead of) edge 1 below.
         onParentRecord: (parentSessionKey, record) => subagentCorrelator.offerParentRecord(parentSessionKey, record),
       }),
     );
   }
-  if (isHarnessEnabled('CODEX_ENABLED')) sources.push(new CodexActivitySource(CODEX_HOME, { allocateId }));
-  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId }));
+  if (isHarnessEnabled('CODEX_ENABLED')) {
+    sources.push(new CodexActivitySource(CODEX_HOME, { allocateId, now: clock.now }));
+  }
+  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) {
+    sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId, now: clock.now }));
+  }
   if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH, { allocateId }));
   return sources;
 }
@@ -120,7 +129,7 @@ async function main(): Promise<void> {
   // their own way (e.g. OpenCode's `session.parent_id`, mapped directly in its own `parse.ts`).
   const claudeCodeAllocateId = createIdAllocator();
   const subagentCorrelator = new ClaudeCodeSubagentCorrelationCoordinator(trackedPublisher, clock, claudeCodeAllocateId);
-  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId);
+  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId, clock);
   // Subsystem Separation from Ingestion (spec: agent-launcher): the launcher shares the bus
   // (`hub` as `EventPublisher`) but no code path with any of the four adapters above. The
   // correlator itself lives entirely inside the launcher subsystem too — this composition root is

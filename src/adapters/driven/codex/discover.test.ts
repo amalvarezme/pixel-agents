@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, stat, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, stat, readFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
@@ -6,6 +6,8 @@ import { classifyCodexSessionPath, discoverCodexSessions, watchCodexSessions } f
 
 const ROLLOUT_FILENAME = 'rollout-2026-08-23T12-59-40-01a02fc7-3a34-7443-a79a-3ced988a0f20.jsonl';
 const ROLLOUT_SESSION_ID = '01a02fc7-3a34-7443-a79a-3ced988a0f20';
+const ROLLOUT_FILENAME_2 = 'rollout-2026-08-23T12-59-40-02b13ad8-4b45-8554-b8ab-4dfe099b1031.jsonl';
+const ROLLOUT_SESSION_ID_2 = '02b13ad8-4b45-8554-b8ab-4dfe099b1031';
 
 describe('classifyCodexSessionPath', () => {
   it('classifies a date-partitioned rollout file (Codex Session Discovery)', () => {
@@ -66,6 +68,39 @@ describe('discoverCodexSessions', () => {
     const sessions = await discoverCodexSessions(root);
 
     expect(sessions[0]?.cwd).toBeNull();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)".
+  it('excludes a rollout file last touched outside the active window', async () => {
+    root = await mkdtemp(join(tmpdir(), 'codex-discover-window-'));
+    const dayDir = join(root, 'sessions', '2026', '08', '23');
+    await mkdir(dayDir, { recursive: true });
+    const staleFile = join(dayDir, ROLLOUT_FILENAME);
+    const freshFile = join(dayDir, ROLLOUT_FILENAME_2);
+    await writeFile(staleFile, '{}\n');
+    await writeFile(freshFile, '{}\n');
+    const oneDayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await utimes(staleFile, oneDayAgo, oneDayAgo);
+
+    const sessions = await discoverCodexSessions(root, { activeWindowMs: 24 * 60 * 60 * 1000 });
+
+    expect(sessions.map((s) => s.sessionKey)).toEqual([`codex:${ROLLOUT_SESSION_ID_2}`]);
+  });
+
+  it('honors an injected clock: the same file is included just inside the window and excluded just outside it', async () => {
+    root = await mkdtemp(join(tmpdir(), 'codex-discover-window-clock-'));
+    const dayDir = join(root, 'sessions', '2026', '08', '23');
+    await mkdir(dayDir, { recursive: true });
+    const filePath = join(dayDir, ROLLOUT_FILENAME);
+    await writeFile(filePath, '{}\n');
+    const { mtimeMs } = await stat(filePath);
+
+    const included = await discoverCodexSessions(root, { now: () => mtimeMs + 1000, activeWindowMs: 2000 });
+    const excluded = await discoverCodexSessions(root, { now: () => mtimeMs + 30_000, activeWindowMs: 2000 });
+
+    expect(included.map((s) => s.sessionKey)).toEqual([`codex:${ROLLOUT_SESSION_ID}`]);
+    expect(excluded).toEqual([]);
   });
 
   it('performs zero writes under the discovered root', async () => {

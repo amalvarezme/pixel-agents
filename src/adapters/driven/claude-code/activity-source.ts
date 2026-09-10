@@ -38,6 +38,10 @@ import { mapClaudeCodeRecordToEvents, parseClaudeCodeLine, type ClaudeCodeRecord
 export interface ClaudeCodeActivitySourceOptions {
   /** Injectable monotonic id allocator. Defaults to an in-process counter starting at 1. */
   allocateId?: () => number;
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
   /**
    * Reports every parsed record from a PARENT (non-subagent) session's own transcript, so the
    * composition root can feed the `toolUseResult.agentId` correlation edge (`correlate.ts`'s
@@ -58,6 +62,8 @@ function defaultAllocateId(): () => number {
 export class ClaudeCodeActivitySource implements ActivitySource {
   readonly harness: HarnessId = 'claude-code';
   private readonly allocateId: () => number;
+  private readonly now: () => number;
+  private readonly activeWindowMs?: number;
   private discoveryWatcher: FSWatcher | null = null;
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
@@ -69,6 +75,8 @@ export class ClaudeCodeActivitySource implements ActivitySource {
     options: ClaudeCodeActivitySourceOptions = {},
   ) {
     this.allocateId = options.allocateId ?? defaultAllocateId();
+    this.now = options.now ?? Date.now;
+    this.activeWindowMs = options.activeWindowMs;
     this.onParentRecord = options.onParentRecord;
   }
 
@@ -77,7 +85,7 @@ export class ClaudeCodeActivitySource implements ActivitySource {
   }
 
   async *discover(): AsyncIterable<SessionRef> {
-    for (const ref of await discoverClaudeCodeSessions(this.root)) {
+    for (const ref of await discoverClaudeCodeSessions(this.root, { now: this.now, activeWindowMs: this.activeWindowMs })) {
       yield ref;
     }
     if (this.closed) return;

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -110,6 +110,37 @@ describe('AntigravityActivitySource', () => {
     expect(next.value?.event.kind).toBe('tool_start');
 
     stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)". Wiring test for the ActivitySource level, mirroring Claude
+  // Code's and Codex's: a window SMALLER than the 24h default (1s, against a transcript touched
+  // 2s ago) proves the constructor option is actually threaded through.
+  it('discover() excludes a transcript last touched outside the configured active window', async () => {
+    const { root: harnessRoot } = await makeCliTranscript('{}');
+    const staleLogsDir = join(harnessRoot, 'antigravity-cli', 'brain', 'uuid-stale', '.system_generated', 'logs');
+    await mkdir(staleLogsDir, { recursive: true });
+    const staleFilePath = join(staleLogsDir, 'transcript.jsonl');
+    await writeFile(staleFilePath, '{}\n');
+    const twoSecondsAgo = new Date(Date.now() - 2000);
+    await utimes(staleFilePath, twoSecondsAgo, twoSecondsAgo);
+    const source = new AntigravityActivitySource(harnessRoot, { activeWindowMs: 1000 });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const withTimeout = (ms: number): Promise<{ timedOut: true } | { timedOut: false; sessionKey?: string }> =>
+      Promise.race([
+        iterator.next().then((r) => ({ timedOut: false as const, sessionKey: r.value?.sessionKey })),
+        new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), 300)),
+      ]);
+
+    const first = await withTimeout(2000);
+    expect(first.timedOut).toBe(false);
+    expect((first as { sessionKey?: string }).sessionKey).toBe('antigravity:cli:uuid-1');
+
+    const second = await withTimeout(300);
+    expect(second.timedOut).toBe(true);
+
     await source.close();
   });
 
