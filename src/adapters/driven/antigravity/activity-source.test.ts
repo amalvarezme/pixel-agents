@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -57,7 +57,9 @@ describe('AntigravityActivitySource', () => {
       ],
     });
     const { root: harnessRoot } = await makeCliTranscript(record);
-    const source = new AntigravityActivitySource(harnessRoot);
+    // Opt-in (design.md: "an opt-in --replay-since exists for demos and fixture capture"): this
+    // test's purpose is proving PARSED-event ordering, which needs the pre-existing record read.
+    const source = new AntigravityActivitySource(harnessRoot, { replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
@@ -70,6 +72,92 @@ describe('AntigravityActivitySource', () => {
     const second = await streamIterator.next();
     expect(second.value?.event.kind).toBe('tool_start');
 
+    const third = await streamIterator.next();
+    expect(third.value?.event.kind).toBe('memory_write');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "start their checkpoint at EOF
+  // ... not at zero." Default behavior: no replay of pre-existing content.
+  it('open() with no prior checkpoint and default options never replays pre-existing content, only newly appended lines', async () => {
+    const mcpRecord = JSON.stringify({
+      step_index: 1,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      status: 'DONE',
+      created_at: '2026-08-24T10:00:00Z',
+      tool_calls: [
+        { name: 'call_mcp_tool', args: { Arguments: '{"title":"x"}', ServerName: '"engram"', ToolName: '"mem_save"' } },
+      ],
+    });
+    const { root: harnessRoot, filePath } = await makeCliTranscript(mcpRecord);
+    const source = new AntigravityActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+
+    const listDirRecord = JSON.stringify({
+      step_index: 2,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      status: 'DONE',
+      created_at: '2026-08-24T10:01:00Z',
+      tool_calls: [{ name: 'list_dir', args: { toolAction: '"Listing"' } }],
+    });
+    const retryTimer = setInterval(() => { void writeFile(filePath, `${listDirRecord}\n`, { flag: 'a' }); }, 150);
+    await writeFile(filePath, `${listDirRecord}\n`, { flag: 'a' });
+
+    // Poll for the FULL ~2s window regardless of what arrives first — a replayed call_mcp_tool
+    // record produces `tool_start` THEN `memory_write` in that order, so stopping at the first
+    // `tool_start` would silently skip past the very event this test exists to rule out.
+    const seenKinds: string[] = [];
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const outcome = await Promise.race([
+        streamIterator.next().then((r) => ({ timedOut: false as const, kind: r.value?.event.kind })),
+        new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), 200)),
+      ]);
+      if (!outcome.timedOut && outcome.kind) seenKinds.push(outcome.kind);
+    }
+    clearInterval(retryTimer);
+
+    expect(seenKinds).toContain('tool_start');
+    expect(seenKinds).not.toContain('memory_write');
+
+    stream.stop();
+    await source.close();
+  }, 10000);
+
+  // The opt-in itself: with `replayFromStart: true`, pre-existing content IS replayed.
+  it('open() with replayFromStart: true DOES replay content already on disk', async () => {
+    const mcpRecord = JSON.stringify({
+      step_index: 1,
+      source: 'MODEL',
+      type: 'PLANNER_RESPONSE',
+      status: 'DONE',
+      created_at: '2026-08-24T10:00:00Z',
+      tool_calls: [
+        { name: 'call_mcp_tool', args: { Arguments: '{"title":"x"}', ServerName: '"engram"', ToolName: '"mem_save"' } },
+      ],
+    });
+    const { root: harnessRoot } = await makeCliTranscript(mcpRecord);
+    const source = new AntigravityActivitySource(harnessRoot, { replayFromStart: true });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    await streamIterator.next(); // session_start
+    const second = await streamIterator.next();
+    expect(second.value?.event.kind).toBe('tool_start');
     const third = await streamIterator.next();
     expect(third.value?.event.kind).toBe('memory_write');
 
@@ -108,6 +196,60 @@ describe('AntigravityActivitySource', () => {
     const next = await streamIterator.next();
     clearInterval(keepAppending);
     expect(next.value?.event.kind).toBe('tool_start');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)". Wiring test for the ActivitySource level, mirroring Claude
+  // Code's and Codex's: a window SMALLER than the 24h default (1s, against a transcript touched
+  // 2s ago) proves the constructor option is actually threaded through.
+  it('discover() excludes a transcript last touched outside the configured active window', async () => {
+    const { root: harnessRoot } = await makeCliTranscript('{}');
+    const staleLogsDir = join(harnessRoot, 'antigravity-cli', 'brain', 'uuid-stale', '.system_generated', 'logs');
+    await mkdir(staleLogsDir, { recursive: true });
+    const staleFilePath = join(staleLogsDir, 'transcript.jsonl');
+    await writeFile(staleFilePath, '{}\n');
+    const twoSecondsAgo = new Date(Date.now() - 2000);
+    await utimes(staleFilePath, twoSecondsAgo, twoSecondsAgo);
+    const source = new AntigravityActivitySource(harnessRoot, { activeWindowMs: 1000 });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const withTimeout = (ms: number): Promise<{ timedOut: true } | { timedOut: false; sessionKey?: string }> =>
+      Promise.race([
+        iterator.next().then((r) => ({ timedOut: false as const, sessionKey: r.value?.sessionKey })),
+        new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), 300)),
+      ]);
+
+    const first = await withTimeout(2000);
+    expect(first.timedOut).toBe(false);
+    expect((first as { sessionKey?: string }).sessionKey).toBe('antigravity:cli:uuid-1');
+
+    const second = await withTimeout(300);
+    expect(second.timedOut).toBe(true);
+
+    await source.close();
+  });
+
+  // Session aging (design.md "Session discovery and aging out") ages from the synthetic
+  // `session_start`'s `at`. It must carry the session's REAL last-activity time (the transcript
+  // file's mtime), never the moment `open()` happens to run.
+  it('open() stamps the synthetic session_start with the session\'s real last-activity time, not the moment open() was called', async () => {
+    const { root: harnessRoot, filePath } = await makeCliTranscript('{}');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+    const source = new AntigravityActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.at).toBe(mtimeMs);
 
     stream.stop();
     await source.close();

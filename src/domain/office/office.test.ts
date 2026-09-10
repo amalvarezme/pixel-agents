@@ -7,6 +7,7 @@ import {
   serializeOfficeState,
 } from './office';
 import type { AgentEvent } from '../events/types';
+import { DEFAULT_ORPHAN_GRACE_MS } from '../agents/agent-tree';
 
 function sessionStart(id: number, sessionKey: string): AgentEvent {
   return { id, kind: 'session_start', harness: 'claude-code', sessionKey, at: id };
@@ -99,7 +100,7 @@ describe('applyEventToOfficeState (office-scene-renderer spec: Per-Agent Worker 
     expect(state.workers.get('claude-code:parent1')?.parentSessionKey).toBeNull();
   });
 
-  it('a parent event arriving before the child worker exists still creates the worker (no event ever dropped)', () => {
+  it('a parent event arriving before the child worker exists does NOT create a worker (an edge is not a discovery)', () => {
     let state = createOfficeState();
     state = applyEventToOfficeState(state, {
       id: 1,
@@ -111,10 +112,129 @@ describe('applyEventToOfficeState (office-scene-renderer spec: Per-Agent Worker 
       label: 'child-label',
     });
 
+    expect(state.workers.has('claude-code:child1')).toBe(false);
+  });
+
+  // This is the real ordering from live streams: `parent` arrives BEFORE the child's own
+  // `session_start` (subagent-correlation-coordinator publishes the edge from the parent's
+  // transcript before the child transcript is even opened). A test that sends session_start
+  // FIRST would pass even with the old conjuring bug, because the worker already exists by the
+  // time `parent` is applied — it would not discriminate at all.
+  it('a parent edge held pending is applied once the child session_start actually arrives', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 1000,
+      correlationId: 'claude-code:parent1',
+    });
+    expect(state.workers.has('claude-code:child1')).toBe(false);
+
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 1050,
+      label: 'child-label',
+    });
+
     expect(state.workers.get('claude-code:child1')).toMatchObject({
       sessionKey: 'claude-code:child1',
       parentSessionKey: 'claude-code:parent1',
       label: 'child-label',
+    });
+  });
+
+  // Adversarial near-miss of the guard above: without a PRIOR `parent` edge, a plain
+  // `session_start` must still produce a root worker (parentSessionKey: null) — proving the
+  // pending-edge application is conditional on an actual held claim, not applied unconditionally.
+  it('adversarial near-miss: a session_start with no prior parent edge stays a root worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:solo1',
+      at: 1000,
+      label: 'solo-label',
+    });
+
+    expect(state.workers.get('claude-code:solo1')).toMatchObject({
+      sessionKey: 'claude-code:solo1',
+      parentSessionKey: null,
+      label: 'solo-label',
+    });
+  });
+
+  // Mirrors agent-tree.ts's `promoteOrphans`: a claim whose child never shows up must not linger
+  // forever. Reuses the same grace-period concept (`DEFAULT_ORPHAN_GRACE_MS`) rather than a
+  // second, unrelated timeout.
+  it('an unmatched parent edge expires after the orphan grace period — the child never appears', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orphan1',
+      at: 1000,
+      correlationId: 'claude-code:parent1',
+    });
+
+    // A later, unrelated event ticks the fold's notion of "now" well past the grace window.
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:other',
+      at: 1000 + DEFAULT_ORPHAN_GRACE_MS + 1,
+    });
+
+    // The orphan's own session_start finally shows up — but too late, the claim already expired,
+    // so it must land as a plain root worker, not retroactively parented.
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:orphan1',
+      at: 1000 + DEFAULT_ORPHAN_GRACE_MS + 2,
+      label: 'orphan-label',
+    });
+
+    expect(state.workers.get('claude-code:orphan1')).toMatchObject({
+      sessionKey: 'claude-code:orphan1',
+      parentSessionKey: null,
+    });
+  });
+
+  // Adversarial near-miss of the expiry guard: the exact same claim, but the child's
+  // session_start arrives WELL WITHIN the grace period — it must still resolve to parented.
+  // Differs from the expiry test in exactly the elapsed-time property under test.
+  it('adversarial near-miss: a parent edge still resolves when the child arrives within the grace period', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child2',
+      at: 1000,
+      correlationId: 'claude-code:parent1',
+    });
+
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child2',
+      at: 1000 + DEFAULT_ORPHAN_GRACE_MS - 1,
+      label: 'child2-label',
+    });
+
+    expect(state.workers.get('claude-code:child2')).toMatchObject({
+      sessionKey: 'claude-code:child2',
+      parentSessionKey: 'claude-code:parent1',
     });
   });
 

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
@@ -139,6 +139,59 @@ describe('discoverAntigravitySessions', () => {
     const sessions = await discoverAntigravitySessions(root);
 
     expect(sessions[0]?.cwd).toBeNull();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)".
+  it('excludes a conversation whose transcript.jsonl was last touched outside the active window', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-discover-window-'));
+    const staleLogsDir = join(root, 'antigravity-cli', 'brain', 'uuid-stale', '.system_generated', 'logs');
+    const freshLogsDir = join(root, 'antigravity-cli', 'brain', 'uuid-fresh', '.system_generated', 'logs');
+    await mkdir(staleLogsDir, { recursive: true });
+    await mkdir(freshLogsDir, { recursive: true });
+    const staleFile = join(staleLogsDir, 'transcript.jsonl');
+    await writeFile(staleFile, '{}\n');
+    await writeFile(join(freshLogsDir, 'transcript.jsonl'), '{}\n');
+    const oneDayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await utimes(staleFile, oneDayAgo, oneDayAgo);
+
+    const sessions = await discoverAntigravitySessions(root, { activeWindowMs: 24 * 60 * 60 * 1000 });
+
+    expect(sessions.map((s) => s.sessionKey)).toEqual(['antigravity:cli:uuid-fresh']);
+  });
+
+  it('honors an injected clock: the same file is included just inside the window and excluded just outside it', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-discover-window-clock-'));
+    const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-clock', '.system_generated', 'logs');
+    await mkdir(logsDir, { recursive: true });
+    const filePath = join(logsDir, 'transcript.jsonl');
+    await writeFile(filePath, '{}\n');
+    const { mtimeMs } = await stat(filePath);
+
+    const included = await discoverAntigravitySessions(root, { now: () => mtimeMs + 1000, activeWindowMs: 2000 });
+    const excluded = await discoverAntigravitySessions(root, { now: () => mtimeMs + 30_000, activeWindowMs: 2000 });
+
+    expect(included.map((s) => s.sessionKey)).toEqual(['antigravity:cli:uuid-clock']);
+    expect(excluded).toEqual([]);
+  });
+
+  // Session aging (design.md "Session discovery and aging out") ages from the real last-write
+  // time, never from when the server happened to discover it — `lastActivityAt` carries that
+  // signal, distinct from `discoveredAt` ("when this scan ran").
+  it('carries the file\'s real mtime as lastActivityAt, distinct from discoveredAt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'antigravity-discover-last-activity-'));
+    const logsDir = join(root, 'antigravity-cli', 'brain', 'uuid-last-activity', '.system_generated', 'logs');
+    await mkdir(logsDir, { recursive: true });
+    const filePath = join(logsDir, 'transcript.jsonl');
+    await writeFile(filePath, '{}\n');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+
+    const sessions = await discoverAntigravitySessions(root);
+
+    expect(sessions[0]?.lastActivityAt).toBe(mtimeMs);
+    expect(sessions[0]?.lastActivityAt).not.toBe(sessions[0]?.discoveredAt);
   });
 
   it('performs zero writes under the discovered root', async () => {

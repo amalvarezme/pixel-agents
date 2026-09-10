@@ -13,6 +13,7 @@
  * client projection (tasks.md 10.4) — one canonical fold over the normalized event stream.
  */
 import type { AgentEvent, HarnessId } from '../events/types';
+import { DEFAULT_ORPHAN_GRACE_MS } from '../agents/agent-tree';
 import {
   completeHeldCarryJob,
   createCarryQueueState,
@@ -44,12 +45,25 @@ export interface Worker {
   toolDetail?: string;
 }
 
+/**
+ * A `parent` edge claimed before the child's own `session_start` was discovered (design.md /
+ * agent-tree.ts: the real live-stream ordering has the edge arrive FIRST). Held here — never
+ * upserted as a worker — until either `session_start` resolves it or `orphanGraceMs` elapses
+ * with no `session_start` ever showing up (mirrors `agent-tree.ts`'s `pending`/`promoteOrphans`).
+ */
+interface PendingParentEdge {
+  correlationId: string;
+  claimedAt: number;
+}
+
 export interface OfficeState {
   workers: Map<string, Worker>;
   /** The 4 physical archive docking slots plus their wait line (`archive-dock.ts`). */
   archive: ArchiveDockState;
   /** Per-worker FIFO carry queue plus batch collapse (`carry-queue.ts`). */
   carryQueues: Map<string, CarryQueueState>;
+  /** Unmatched `parent` edges awaiting their child's `session_start` — never rendered as workers. */
+  pendingParentEdges: Map<string, PendingParentEdge>;
 }
 
 export function createOfficeState(archiveSlotCount?: number): OfficeState {
@@ -57,6 +71,7 @@ export function createOfficeState(archiveSlotCount?: number): OfficeState {
     workers: new Map(),
     archive: createArchiveDockState(archiveSlotCount),
     carryQueues: new Map(),
+    pendingParentEdges: new Map(),
   };
 }
 
@@ -98,6 +113,11 @@ export function deserializeOfficeState(snapshot: {
     workers: new Map(snapshot.workers.map((w) => [w.sessionKey, w])),
     archive: snapshot.archive ?? createArchiveDockState(),
     carryQueues: new Map((snapshot.carryQueues ?? []).map(({ sessionKey, queue }) => [sessionKey, queue])),
+    // Deliberately not part of the wire shape: a still-pending edge is ephemeral ingestion
+    // bookkeeping, never state a resuming client needs to reconstruct. If the child's
+    // session_start eventually arrives, it lands as a normal live event on the same hub-owned
+    // `OfficeState` (never round-tripped through (de)serialize), so nothing is lost in practice.
+    pendingParentEdges: new Map(),
   };
 }
 
@@ -120,41 +140,77 @@ function upsertWorker(
   return { ...state, workers };
 }
 
+/** Drops any pending edge whose child never showed up within `orphanGraceMs` (agent-tree.ts's `promoteOrphans` sibling). */
+function pruneExpiredPendingParentEdges(
+  state: OfficeState,
+  now: number,
+  orphanGraceMs: number,
+): OfficeState {
+  if (state.pendingParentEdges.size === 0) return state;
+  const pendingParentEdges = new Map(state.pendingParentEdges);
+  for (const [sessionKey, edge] of pendingParentEdges) {
+    if (now - edge.claimedAt >= orphanGraceMs) pendingParentEdges.delete(sessionKey);
+  }
+  return { ...state, pendingParentEdges };
+}
+
 /**
- * Folds one normalized `AgentEvent` into `OfficeState`. Never throws and never drops an event:
- * an event referencing a session with no prior `session_start` (e.g. a `parent` event arriving
- * first) still creates a worker, matching the domain-wide "no event ever dropped" invariant
- * already established by `agent-tree.ts`.
+ * Folds one normalized `AgentEvent` into `OfficeState`. Never drops the CORRELATION carried by a
+ * `parent` event, but a correlation edge alone must never conjure a worker for a session that was
+ * never actually discovered (a subagent whose own transcript sits outside the ingestion window,
+ * for example): only `session_start` — a real discovery — creates a worker. When `parent` arrives
+ * first (the real live-stream ordering — subagent-correlation-coordinator.ts emits the edge from
+ * the PARENT's transcript before the child's own transcript is even opened), the edge is held in
+ * `pendingParentEdges` and applied the instant the matching `session_start` shows up, exactly
+ * like `agent-tree.ts`'s `pending`/`promoteOrphans` pair for the same ordering problem.
  */
 export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): OfficeState {
+  const pruned = pruneExpiredPendingParentEdges(state, event.at, DEFAULT_ORPHAN_GRACE_MS);
+
   switch (event.kind) {
-    case 'session_start':
-      return upsertWorker(state, event.sessionKey, {
+    case 'session_start': {
+      const pendingEdge = pruned.pendingParentEdges.get(event.sessionKey);
+      const worker = upsertWorker(pruned, event.sessionKey, {
         harness: event.harness,
         label: event.label,
         activity: 'working',
+        ...(pendingEdge ? { parentSessionKey: pendingEdge.correlationId } : {}),
       });
-
-    case 'session_end': {
-      const workers = new Map(state.workers);
-      workers.delete(event.sessionKey);
-      return { ...state, workers };
+      if (!pendingEdge) return worker;
+      const pendingParentEdges = new Map(worker.pendingParentEdges);
+      pendingParentEdges.delete(event.sessionKey);
+      return { ...worker, pendingParentEdges };
     }
 
-    case 'parent':
-      return upsertWorker(state, event.sessionKey, {
-        harness: event.harness,
-        label: event.label,
-        parentSessionKey: event.correlationId ?? null,
-      });
+    case 'session_end': {
+      const workers = new Map(pruned.workers);
+      workers.delete(event.sessionKey);
+      return { ...pruned, workers };
+    }
+
+    case 'parent': {
+      if (pruned.workers.has(event.sessionKey)) {
+        return upsertWorker(pruned, event.sessionKey, {
+          harness: event.harness,
+          label: event.label,
+          parentSessionKey: event.correlationId ?? null,
+        });
+      }
+      // The child was never discovered (yet, or ever) — record the edge, but do NOT create a
+      // worker for it. Nothing to hold without a correlationId to apply later.
+      if (!event.correlationId) return pruned;
+      const pendingParentEdges = new Map(pruned.pendingParentEdges);
+      pendingParentEdges.set(event.sessionKey, { correlationId: event.correlationId, claimedAt: event.at });
+      return { ...pruned, pendingParentEdges };
+    }
 
     case 'memory_write':
-      return applyMemoryWriteToOfficeState(state, event.sessionKey, event.at);
+      return applyMemoryWriteToOfficeState(pruned, event.sessionKey, event.at);
 
     default:
-      if (!event.label && !event.toolLabel) return state;
-      if (!state.workers.has(event.sessionKey)) return state;
-      return upsertWorker(state, event.sessionKey, {
+      if (!event.label && !event.toolLabel) return pruned;
+      if (!pruned.workers.has(event.sessionKey)) return pruned;
+      return upsertWorker(pruned, event.sessionKey, {
         harness: event.harness,
         label: event.label,
         toolLabel: event.toolLabel,

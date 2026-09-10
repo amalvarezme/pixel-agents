@@ -264,6 +264,28 @@ describe('OpenCodeActivitySource', () => {
       await source.close();
     });
 
+    // Session aging (design.md "Session discovery and aging out") ages from the synthetic
+    // `session_start`'s `at`. For OpenCode it must carry the session's real `time_updated`, never
+    // the moment `open()` happens to run.
+    it('stamps the synthetic session_start with the session\'s real time_updated, not the moment open() was called', async () => {
+      const dbPath = freshDbPath();
+      const now = 1_000_000_000_000;
+      const tenHoursAgo = now - 10 * 60 * 60 * 1000;
+      seedToolSession(dbPath, { id: 'ses_1', agent: 'general', time_updated: tenHoursAgo }, TOOL_PART_DATA);
+      const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 20, now: () => now });
+
+      const { value: sessionRef } = await source.discover()[Symbol.asyncIterator]().next();
+      const stream = source.open(sessionRef as OpenCodeSessionRef, null);
+      const iterator = stream.events[Symbol.asyncIterator]();
+
+      const first = await iterator.next();
+      expect(first.value?.event.kind).toBe('session_start');
+      expect(first.value?.event.at).toBe(tenHoursAgo);
+
+      stream.stop();
+      await source.close();
+    });
+
     it('emits memory_write IN ADDITION TO tool_start for a pre-existing engram_mem_save part', async () => {
       const dbPath = freshDbPath();
       seedToolSession(dbPath, { id: 'ses_1', agent: 'general' }, MEMORY_WRITE_PART_DATA);

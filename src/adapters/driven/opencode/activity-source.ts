@@ -155,7 +155,16 @@ export class OpenCodeActivitySource implements ActivitySource {
       seen.add(row.id);
       // `directory` is the launch correlator's OpenCode cwd signal (design.md "Launch <-> log
       // correlation"; real schema: `directory text NOT NULL`, research-local-evidence.md Q3).
-      fresh.push({ harness: 'opencode', sessionKey: openCodeSessionKey(row.id), cwd: row.directory, discoveredAt: this.now(), sessionId: row.id });
+      fresh.push({
+        harness: 'opencode',
+        sessionKey: openCodeSessionKey(row.id),
+        cwd: row.directory,
+        discoveredAt: this.now(),
+        // The session's REAL last-activity time (design.md "Session discovery and aging out"),
+        // distinct from `discoveredAt` — carried to the synthetic session_start by open() below.
+        lastActivityAt: row.time_updated,
+        sessionId: row.id,
+      });
     }
     return fresh;
   }
@@ -273,7 +282,7 @@ export class OpenCodeActivitySource implements ActivitySource {
 
     const sessionRow = this.selectSessionRow(opened.db, sessionId);
     if (sessionRow) {
-      for (const event of mapOpenCodeSessionToEvents(sessionRow, { allocateId: this.allocateId })) {
+      for (const event of mapOpenCodeSessionToEvents(sessionRow, { allocateId: this.allocateId, at: session.lastActivityAt })) {
         queue.push({ event, checkpoint: initialCheckpoint });
       }
     }

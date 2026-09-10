@@ -33,6 +33,18 @@ import { mapAntigravityRecordToEvents, parseAntigravityLine } from './parse';
 export interface AntigravityActivitySourceOptions {
   /** Injectable monotonic id allocator. Defaults to an in-process counter starting at 1. */
   allocateId?: () => number;
+  /** Injectable clock, for deterministic active-window tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Bootstrap window (design.md: attach only to sessions touched within 24h). */
+  activeWindowMs?: number;
+  /**
+   * Opt-in (design.md "Session discovery and aging out" — Bootstrap: "an opt-in --replay-since
+   * exists for demos and fixture capture"): when true, a session with NO prior checkpoint
+   * bootstraps by reading its entire transcript from offset 0. Defaults to false — bootstraps at
+   * EOF instead, so process start never floods the scene. An EXISTING checkpoint always resumes
+   * from where it left off regardless of this flag.
+   */
+  replayFromStart?: boolean;
 }
 
 function defaultAllocateId(): () => number {
@@ -43,6 +55,9 @@ function defaultAllocateId(): () => number {
 export class AntigravityActivitySource implements ActivitySource {
   readonly harness: HarnessId = 'antigravity';
   private readonly allocateId: () => number;
+  private readonly now: () => number;
+  private readonly activeWindowMs?: number;
+  private readonly replayFromStart: boolean;
   private discoveryWatcher: FSWatcher | null = null;
   private readonly fileWatchers = new Set<FSWatcher>();
   private closed = false;
@@ -52,6 +67,9 @@ export class AntigravityActivitySource implements ActivitySource {
     options: AntigravityActivitySourceOptions = {},
   ) {
     this.allocateId = options.allocateId ?? defaultAllocateId();
+    this.now = options.now ?? Date.now;
+    this.activeWindowMs = options.activeWindowMs;
+    this.replayFromStart = options.replayFromStart ?? false;
   }
 
   async probe(): Promise<SourceHealth> {
@@ -59,7 +77,7 @@ export class AntigravityActivitySource implements ActivitySource {
   }
 
   async *discover(): AsyncIterable<SessionRef> {
-    for (const ref of await discoverAntigravitySessions(this.root)) {
+    for (const ref of await discoverAntigravitySessions(this.root, { now: this.now, activeWindowMs: this.activeWindowMs })) {
       yield ref;
     }
     if (this.closed) return;
@@ -96,12 +114,15 @@ export class AntigravityActivitySource implements ActivitySource {
         kind: 'session_start',
         harness: 'antigravity',
         sessionKey,
-        at: Date.now(),
+        // The session's REAL last-activity time (design.md "Session discovery and aging out"),
+        // never the moment open() happens to run — falls back to now() only for a fake/scripted
+        // SessionRef that never set it.
+        at: session.lastActivityAt ?? this.now(),
       }),
       checkpoint: bootstrapCheckpoint,
     });
 
-    void readTailIncrement(filePath, initialCheckpoint)
+    void readTailIncrement(filePath, initialCheckpoint, { bootstrapFromEof: !this.replayFromStart })
       .then((result) => {
         if (stopped) return initialCheckpoint;
         const checkpointAfterBootstrap = result.kind === 'no-op' ? initialCheckpoint : result.checkpoint;

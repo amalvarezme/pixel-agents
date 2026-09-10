@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -45,7 +45,11 @@ describe('ClaudeCodeActivitySource', () => {
   it('open() emits a synthetic session_start event first, so the session renders as a worker before any content is parsed', async () => {
     const toolUseLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
     const { root: harnessRoot } = await makeSessionFile(toolUseLine);
-    const source = new ClaudeCodeActivitySource(harnessRoot);
+    // Opt-in (design.md: "an opt-in --replay-since exists for demos and fixture capture"): this
+    // test's purpose is proving event ORDERING (session_start before any content-derived event),
+    // which requires the pre-existing line to actually be read — the default (no replay) would
+    // never emit it at all, which is covered separately below.
+    const source = new ClaudeCodeActivitySource(harnessRoot, { replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
@@ -56,6 +60,57 @@ describe('ClaudeCodeActivitySource', () => {
     expect(first.value?.event.kind).toBe('session_start');
     expect(first.value?.event.sessionKey).toBe('claude-code:session-1');
 
+    const second = await streamIterator.next();
+    expect(second.value?.event.kind).toBe('tool_start');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "start their checkpoint at EOF
+  // ... not at zero. Replaying 173k Claude lines ... would flood the scene." Default behavior
+  // (no `replayFromStart`): a session with no prior checkpoint must NOT replay content already on
+  // disk — only the synthetic session_start, then whatever is appended AFTER open().
+  it('open() with no prior checkpoint and default options never replays pre-existing content, only newly appended lines', async () => {
+    const preExistingLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
+    const { root: harnessRoot, filePath } = await makeSessionFile(preExistingLine);
+    const source = new ClaudeCodeActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+
+    const newLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: 'hello' } });
+    const keepAppending = setInterval(() => { void writeFile(filePath, `${newLine}\n`, { flag: 'a' }); }, 150);
+    await writeFile(filePath, `${newLine}\n`, { flag: 'a' });
+
+    const second = await streamIterator.next();
+    clearInterval(keepAppending);
+    // Only the NEWLY appended `message` event ever arrives — never the pre-existing `tool_start`
+    // from the line that was already on disk before `open()` was called.
+    expect(second.value?.event.kind).toBe('message');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // The opt-in itself (design.md: "an opt-in --replay-since exists for demos and fixture
+  // capture"): with `replayFromStart: true`, the pre-existing line on disk IS replayed.
+  it('open() with replayFromStart: true DOES replay content already on disk', async () => {
+    const preExistingLine = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Read', input: {} }] } });
+    const { root: harnessRoot } = await makeSessionFile(preExistingLine);
+    const source = new ClaudeCodeActivitySource(harnessRoot, { replayFromStart: true });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    await streamIterator.next(); // session_start
     const second = await streamIterator.next();
     expect(second.value?.event.kind).toBe('tool_start');
 
@@ -97,7 +152,9 @@ describe('ClaudeCodeActivitySource', () => {
     const launchLine = JSON.stringify({ type: 'assistant', toolUseResult: { agentId: 'abc123' } });
     const { root: harnessRoot } = await makeSessionFile(launchLine);
     const onParentRecord = vi.fn();
-    const source = new ClaudeCodeActivitySource(harnessRoot, { onParentRecord });
+    // replayFromStart: true — this test's own pre-existing line IS the record onParentRecord must
+    // see; the default (no replay) would never read it at all.
+    const source = new ClaudeCodeActivitySource(harnessRoot, { onParentRecord, replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
@@ -121,7 +178,10 @@ describe('ClaudeCodeActivitySource', () => {
     const line = JSON.stringify({ type: 'assistant', toolUseResult: { agentId: 'nested-should-be-ignored' } });
     await writeFile(filePath, `${line}\n`);
     const onParentRecord = vi.fn();
-    const source = new ClaudeCodeActivitySource(root, { onParentRecord });
+    // replayFromStart: true — the subagent's pre-existing line must actually be PARSED for this
+    // test to prove anything; otherwise onParentRecord trivially "never called" because nothing
+    // was ever read at all.
+    const source = new ClaudeCodeActivitySource(root, { onParentRecord, replayFromStart: true });
 
     const iterator = source.discover()[Symbol.asyncIterator]();
     const { value: sessionRef } = await iterator.next();
@@ -132,6 +192,68 @@ describe('ClaudeCodeActivitySource', () => {
     await streamIterator.next(); // the subagent's own `message` event
 
     expect(onParentRecord).not.toHaveBeenCalled();
+
+    stream.stop();
+    await source.close();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)". Wiring test for the ActivitySource level: `discover()` must
+  // forward a caller-supplied `activeWindowMs` down to `discoverClaudeCodeSessions` (already
+  // proven correct in isolation by `discover.test.ts`). Deliberately uses a window SMALLER than
+  // the 24h default (1s, against a sibling touched 2s ago): if the constructor option were never
+  // threaded through and `discover()` fell back to the 24h default instead, the stale sibling
+  // would still be well within THAT window and would incorrectly surface as a second yielded
+  // value — this is what makes the test prove real wiring, not just coincide with the default.
+  it('discover() excludes a session file last touched outside the configured active window', async () => {
+    const { root: harnessRoot } = await makeSessionFile('{}');
+    const staleDir = join(harnessRoot, 'projects', 'other-slug');
+    await mkdir(staleDir, { recursive: true });
+    const staleFilePath = join(staleDir, 'session-old.jsonl');
+    await writeFile(staleFilePath, '{}\n');
+    const twoSecondsAgo = new Date(Date.now() - 2000);
+    await utimes(staleFilePath, twoSecondsAgo, twoSecondsAgo);
+    const source = new ClaudeCodeActivitySource(harnessRoot, { activeWindowMs: 1000 });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const withTimeout = (ms: number): Promise<{ timedOut: true } | { timedOut: false; sessionKey?: string }> =>
+      Promise.race([
+        iterator.next().then((r) => ({ timedOut: false as const, sessionKey: r.value?.sessionKey })),
+        new Promise<{ timedOut: true }>((resolve) => setTimeout(() => resolve({ timedOut: true }), 300)),
+      ]);
+
+    const first = await withTimeout(2000);
+    expect(first.timedOut).toBe(false);
+    expect((first as { sessionKey?: string }).sessionKey).toBe('claude-code:session-1');
+
+    // The stale sibling must never surface, now or later — the watcher stage that follows the
+    // one-shot scan never fires for it either, so a second call hangs forever (times out).
+    const second = await withTimeout(300);
+    expect(second.timedOut).toBe(true);
+
+    await source.close();
+  });
+
+  // Session aging (design.md "Session discovery and aging out") ages from the synthetic
+  // `session_start`'s `at`. It must carry the session's REAL last-activity time (the transcript
+  // file's mtime), never the moment `open()` happens to run — otherwise a dormant session that
+  // bootstraps at EOF (only this synthetic event, no real records) looks brand-new at every
+  // server restart no matter how stale its transcript actually is.
+  it('open() stamps the synthetic session_start with the session\'s real last-activity time, not the moment open() was called', async () => {
+    const { root: harnessRoot, filePath } = await makeSessionFile('{}');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+    const source = new ClaudeCodeActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+
+    const first = await streamIterator.next();
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.at).toBe(mtimeMs);
 
     stream.stop();
     await source.close();

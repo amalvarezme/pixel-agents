@@ -76,13 +76,35 @@ CLAUDE_HOME=/path/to/fixture-root CODEX_ENABLED=false ANTIGRAVITY_ENABLED=false 
 Each `<HARNESS>_HOME` is the harness ROOT — the directory that *contains* `projects/`, matching
 `~/.claude` itself, not `~/.claude/projects`.
 
+### Bootstrap: active window and replay
+
+On startup, each of the three JSONL harnesses (Claude Code, Codex, Antigravity) only attaches to
+sessions whose file was touched in the last 24h — a real `~/.claude` can carry hundreds of stale
+transcripts, and discovering all of them would flood the scene with sessions that are not actually
+running. A session with no prior checkpoint then bootstraps **at EOF**: it starts empty and only
+renders content appended from that point on, never the transcript's pre-existing history — the
+same flood risk applies to reading a single large file from the start.
+
+For a fixture tree, this means a freshly written session file (or a `cp -r` that preserves recent
+mtimes) is still discovered — the desk appears — but its EXISTING content is not replayed as
+worker activity. To see a fixture's full pre-existing history rendered (not just newly appended
+lines), set `REPLAY_FROM_START=true`:
+
+```sh
+REPLAY_FROM_START=true CLAUDE_HOME=/path/to/fixture-root CODEX_ENABLED=false ANTIGRAVITY_ENABLED=false OPENCODE_ENABLED=false npm run dev
+```
+
+This is the opt-in the design calls out for demos and fixture capture; it is OFF by default so a
+real `~/.claude` never replays 173k historical lines on every server start.
+
 ## Verifying it by hand
 
 Mounting a real PixiJS canvas is the one thing no automated test covers; it needs a real browser.
 
-1. Start against a fixture root as above and open the page. Every session already on disk should
-   appear as a desk, and the row should sit centred at any window size — the floor plan is a fixed
-   1920×1080 space contain-fitted to the viewport, so resizing rescales it instead of clipping.
+1. Start against a fixture root as above (add `REPLAY_FROM_START=true` if the fixture already has
+   content you want rendered) and open the page. Every session already on disk should appear as a
+   desk, and the row should sit centred at any window size — the floor plan is a fixed 1920×1080
+   space contain-fitted to the viewport, so resizing rescales it instead of clipping.
 2. Append a line to a new `.jsonl` under `<fixture-root>/projects/<slug>/` while the page is open.
    A new desk should appear within a second or two, with no reload.
 3. Append a `tool_use` record naming `mcp__engram__mem_save`. That worker should carry a document

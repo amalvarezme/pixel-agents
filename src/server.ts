@@ -50,6 +50,10 @@ const CLAUDE_HOME = process.env.CLAUDE_HOME ?? join(homedir(), '.claude');
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), '.codex');
 const GEMINI_HOME = process.env.GEMINI_HOME ?? join(homedir(), '.gemini');
 const OPENCODE_DB_PATH = process.env.OPENCODE_DB_PATH ?? join(homedir(), '.local', 'share', 'opencode', 'opencode.db');
+// design.md "Session discovery and aging out" — Bootstrap: "an opt-in --replay-since exists for
+// demos and fixture capture". Default OFF: a session with no prior checkpoint bootstraps at EOF,
+// never replaying a fixture's (or a real transcript's) full history on process start.
+const REPLAY_FROM_START = process.env.REPLAY_FROM_START === 'true';
 // Deliberately independent of every <HARNESS>_HOME/OPENCODE_DB_PATH above: this process's own
 // checkpoint file must never live inside a directory any adapter watches (guard test:
 // `checkpoint-path.test.ts`).
@@ -78,7 +82,11 @@ function createIdAllocator(): () => number {
  * ids silently drop another harness's unseen events on reconnect. Pinned by
  * `event-id-allocator.test.ts`.
  */
-function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator, allocateId: () => number): ActivitySource[] {
+function buildSources(
+  subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator,
+  allocateId: () => number,
+  clock: { now: () => number },
+): ActivitySource[] {
   const sources: ActivitySource[] = [];
   if (isHarnessEnabled('CLAUDE_CODE_ENABLED')) {
     // Shared with `subagentCorrelator` (same instance, built in `main()`) so a `parent` event and
@@ -86,14 +94,20 @@ function buildSources(subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinat
     sources.push(
       new ClaudeCodeActivitySource(CLAUDE_HOME, {
         allocateId,
+        now: clock.now,
+        replayFromStart: REPLAY_FROM_START,
         // Edge 2 (spec: "MUST correlate ... using toolUseResult.agentId"): fed straight from the
         // parsed PARENT-transcript record, alongside (never instead of) edge 1 below.
         onParentRecord: (parentSessionKey, record) => subagentCorrelator.offerParentRecord(parentSessionKey, record),
       }),
     );
   }
-  if (isHarnessEnabled('CODEX_ENABLED')) sources.push(new CodexActivitySource(CODEX_HOME, { allocateId }));
-  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId }));
+  if (isHarnessEnabled('CODEX_ENABLED')) {
+    sources.push(new CodexActivitySource(CODEX_HOME, { allocateId, now: clock.now, replayFromStart: REPLAY_FROM_START }));
+  }
+  if (isHarnessEnabled('ANTIGRAVITY_ENABLED')) {
+    sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId, now: clock.now, replayFromStart: REPLAY_FROM_START }));
+  }
   if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH, { allocateId }));
   return sources;
 }
@@ -120,7 +134,7 @@ async function main(): Promise<void> {
   // their own way (e.g. OpenCode's `session.parent_id`, mapped directly in its own `parse.ts`).
   const claudeCodeAllocateId = createIdAllocator();
   const subagentCorrelator = new ClaudeCodeSubagentCorrelationCoordinator(trackedPublisher, clock, claudeCodeAllocateId);
-  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId);
+  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId, clock);
   // Subsystem Separation from Ingestion (spec: agent-launcher): the launcher shares the bus
   // (`hub` as `EventPublisher`) but no code path with any of the four adapters above. The
   // correlator itself lives entirely inside the launcher subsystem too — this composition root is

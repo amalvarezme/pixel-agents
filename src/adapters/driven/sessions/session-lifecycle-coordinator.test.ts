@@ -18,12 +18,12 @@ function makeFakeClock(initial = 0): FakeClock {
   };
 }
 
-function sessionStart(sessionKey: string, harness: AgentEvent['harness'] = 'claude-code'): AgentEvent {
-  return { id: 1, kind: 'session_start', harness, sessionKey, at: 0 };
+function sessionStart(sessionKey: string, harness: AgentEvent['harness'] = 'claude-code', at = 0): AgentEvent {
+  return { id: 1, kind: 'session_start', harness, sessionKey, at };
 }
 
-function toolStart(sessionKey: string, harness: AgentEvent['harness'] = 'claude-code'): AgentEvent {
-  return { id: 2, kind: 'tool_start', harness, sessionKey, at: 0 };
+function toolStart(sessionKey: string, harness: AgentEvent['harness'] = 'claude-code', at = 0): AgentEvent {
+  return { id: 2, kind: 'tool_start', harness, sessionKey, at };
 }
 
 function makeCoordinator(): { coordinator: SessionLifecycleCoordinator; publish: ReturnType<typeof vi.fn>; clock: FakeClock } {
@@ -71,7 +71,8 @@ describe('SessionLifecycleCoordinator eviction boundary', () => {
     coordinator.observe(sessionStart('claude-code:old', 'claude-code'));
 
     clock.set(EVICT_TIMEOUT_MS - 1000);
-    coordinator.observe(sessionStart('codex:fresh', 'codex'));
+    // Real activity at EVICT_TIMEOUT_MS - 1000 — only 1000ms old once we tick at EVICT_TIMEOUT_MS.
+    coordinator.observe(sessionStart('codex:fresh', 'codex', EVICT_TIMEOUT_MS - 1000));
 
     clock.set(EVICT_TIMEOUT_MS);
     coordinator.tick();
@@ -88,12 +89,62 @@ describe('SessionLifecycleCoordinator eviction boundary', () => {
 
     // Fresh activity just before the original deadline resets `lastEventAt`.
     clock.set(EVICT_TIMEOUT_MS - 1);
-    coordinator.observe(toolStart('claude-code:s1'));
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', EVICT_TIMEOUT_MS - 1));
 
     clock.set(EVICT_TIMEOUT_MS);
     coordinator.tick();
 
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('ages from event.at, not from wall-clock ingest time: a session whose last REAL activity was already past EVICT_TIMEOUT_MS when observed is evicted on the very next tick', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    const bootTime = 20 * 60 * 60 * 1000; // server starts long after the session went quiet
+    const realLastActivity = bootTime - (EVICT_TIMEOUT_MS + 1000); // stale before ingestion even happens
+
+    clock.set(bootTime);
+    coordinator.observe(sessionStart('claude-code:stale', 'claude-code', realLastActivity));
+
+    // No further clock advance: eviction must already be overdue at the CURRENT wall-clock time,
+    // proving `lastEventAt` came from `event.at`, not from `clock.now()` at observe() time (which
+    // would have stamped `bootTime` itself, leaving `elapsed` at 0).
+    coordinator.tick();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    const event = publish.mock.calls[0]![0];
+    expect(event.sessionKey).toBe('claude-code:stale');
+    expect(event.reason).toBe('timeout');
+  });
+
+  it('adversarial twin: a session whose last REAL activity was mere seconds before ingestion is NOT evicted, even at the same far-future wall-clock ingest time', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    const bootTime = 20 * 60 * 60 * 1000;
+    const realLastActivity = bootTime - 5000; // 5s before boot — genuinely active
+
+    clock.set(bootTime);
+    coordinator.observe(sessionStart('claude-code:fresh', 'claude-code', realLastActivity));
+
+    coordinator.tick();
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('recordActivity also ages from event.at, not wall-clock ingest time: a replayed activity event carrying a stale timestamp does not rescue a session from eviction', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    const bootTime = 20 * 60 * 60 * 1000;
+    const staleStart = bootTime - (EVICT_TIMEOUT_MS + 5000);
+    const staleActivity = bootTime - (EVICT_TIMEOUT_MS + 1000); // still stale, just less so
+
+    clock.set(bootTime);
+    coordinator.observe(sessionStart('claude-code:stale', 'claude-code', staleStart));
+    coordinator.observe(toolStart('claude-code:stale', 'claude-code', staleActivity));
+
+    coordinator.tick();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    const event = publish.mock.calls[0]![0];
+    expect(event.sessionKey).toBe('claude-code:stale');
+    expect(event.reason).toBe('timeout');
   });
 
   it('never publishes twice for the same session on repeated ticks after eviction', () => {

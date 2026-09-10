@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, stat, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, stat, readFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, afterEach } from 'vitest';
@@ -99,6 +99,74 @@ describe('discoverClaudeCodeSessions', () => {
     const sessions = await discoverClaudeCodeSessions(root);
 
     expect(sessions[0]?.cwd).toBeNull();
+  });
+
+  // design.md "Session discovery and aging out" — Bootstrap: "attach only to sessions touched
+  // within `activeWindow` (24h)". Real trees carry hundreds of stale transcripts; unfiltered
+  // discovery floods the scene with every session ever recorded (measured: 575 total vs ~16
+  // actually active). A fresh file's mtime is "now", so it survives any reasonable window
+  // untouched — this proves the wiring itself, not the exact boundary math (that is
+  // `active-window.test.ts`'s job).
+  it('excludes a session file last touched outside the active window', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-discover-window-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    const staleFile = join(slugDir, 'session-stale.jsonl');
+    const freshFile = join(slugDir, 'session-fresh.jsonl');
+    await writeFile(staleFile, '{}\n');
+    await writeFile(freshFile, '{}\n');
+    const oneDayAgo = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    await utimes(staleFile, oneDayAgo, oneDayAgo);
+
+    const sessions = await discoverClaudeCodeSessions(root, { activeWindowMs: 24 * 60 * 60 * 1000 });
+
+    const sessionKeys = sessions.map((s) => s.sessionKey);
+    expect(sessionKeys).toEqual(['claude-code:session-fresh']);
+  });
+
+  // Triangulation: the previous test only proves the DEFAULT clock/window path. This drives the
+  // same file through the INJECTED `now`/`activeWindowMs` options instead, with the fake clock
+  // placed just inside vs just outside the window relative to the file's real mtime — proving the
+  // options are actually wired into the comparison, not merely accepted and ignored.
+  it('honors an injected clock: the same file is included just inside the window and excluded just outside it', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-discover-window-clock-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    const filePath = join(slugDir, 'session-abc.jsonl');
+    await writeFile(filePath, '{}\n');
+    const { mtimeMs } = await stat(filePath);
+
+    const included = await discoverClaudeCodeSessions(root, {
+      now: () => mtimeMs + 1000,
+      activeWindowMs: 2000,
+    });
+    const excluded = await discoverClaudeCodeSessions(root, {
+      now: () => mtimeMs + 30_000,
+      activeWindowMs: 2000,
+    });
+
+    expect(included.map((s) => s.sessionKey)).toEqual(['claude-code:session-abc']);
+    expect(excluded).toEqual([]);
+  });
+
+  // Session aging (design.md "Session discovery and aging out") ages from the session's REAL last
+  // write, never from when the server happened to discover it. `lastActivityAt` carries that real
+  // signal downstream to the synthetic `session_start` an ActivitySource emits — it must be the
+  // file's own mtime, not `discoveredAt` (which is merely "when this scan ran").
+  it('carries the file\'s real mtime as lastActivityAt, distinct from discoveredAt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'claude-code-discover-last-activity-'));
+    const slugDir = join(root, 'projects', 'my-slug');
+    await mkdir(slugDir, { recursive: true });
+    const filePath = join(slugDir, 'session-abc.jsonl');
+    await writeFile(filePath, '{}\n');
+    const tenHoursAgo = new Date(Date.now() - 10 * 60 * 60 * 1000);
+    await utimes(filePath, tenHoursAgo, tenHoursAgo);
+    const { mtimeMs } = await stat(filePath);
+
+    const sessions = await discoverClaudeCodeSessions(root);
+
+    expect(sessions[0]?.lastActivityAt).toBe(mtimeMs);
+    expect(sessions[0]?.lastActivityAt).not.toBe(sessions[0]?.discoveredAt);
   });
 
   it('performs zero writes under the discovered root', async () => {

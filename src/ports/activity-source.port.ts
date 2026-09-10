@@ -22,6 +22,16 @@ export interface SessionRef {
    */
   cwd: string | null;
   discoveredAt: number;
+  /**
+   * The session's real last-activity time (a JSONL adapter's file `mtimeMs`; OpenCode's
+   * `session.time_updated`) — DISTINCT from `discoveredAt`, which is only "when this scan ran".
+   * Session aging (design.md "Session discovery and aging out") must age from this real signal,
+   * never from ingestion time, so a transcript last written hours ago is not treated as brand new
+   * just because the server happened to notice it late. Optional so a fake/scripted `SessionRef`
+   * (tests, `FakeActivitySource`) that never set it keeps working — callers fall back to their own
+   * clock when it is absent.
+   */
+  lastActivityAt?: number;
 }
 
 /** JSONL tailer checkpoint: byte offset plus the inode/size pair that detects rotation. */
