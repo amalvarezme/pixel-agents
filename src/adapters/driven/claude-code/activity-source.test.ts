@@ -259,6 +259,47 @@ describe('ClaudeCodeActivitySource', () => {
     await source.close();
   });
 
+  // Agent profile tracking: "the orchestrator is distinguishable from its subagents" starts at
+  // the very first event a session ever produces — the synthetic session_start — so a worker is
+  // never rendered with an ambiguous/absent identity even before any correlation or join runs.
+  it('stamps the synthetic session_start with role: orchestrator for a root session', async () => {
+    const { root: harnessRoot } = await makeSessionFile('{}');
+    const source = new ClaudeCodeActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const first = await stream.events[Symbol.asyncIterator]().next();
+
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.agentProfile).toEqual({ role: 'orchestrator' });
+
+    stream.stop();
+    await source.close();
+  });
+
+  // Adversarial near-miss: the SAME synthetic event, but for a discovered SUBAGENT session, must
+  // stamp role: subagent instead — proving the role is read from the real discovery classifier,
+  // not hardcoded to one value.
+  it('stamps the synthetic session_start with role: subagent for a discovered subagent session', async () => {
+    root = await mktempRoot();
+    const subagentDir = join(root, 'projects', 'my-slug', 'parent-1', 'subagents');
+    await mkdir(subagentDir, { recursive: true });
+    const filePath = join(subagentDir, 'agent-abc123.jsonl');
+    await writeFile(filePath, '{}\n');
+    const source = new ClaudeCodeActivitySource(root);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const first = await stream.events[Symbol.asyncIterator]().next();
+
+    expect(first.value?.event.agentProfile).toEqual({ role: 'subagent' });
+
+    stream.stop();
+    await source.close();
+  });
+
   it('discover + open + close never writes anything under the harness root (Global No-Write Invariant, composition level)', async () => {
     const { root: harnessRoot, filePath } = await makeSessionFile('{"type":"system"}');
     const source = new ClaudeCodeActivitySource(harnessRoot);

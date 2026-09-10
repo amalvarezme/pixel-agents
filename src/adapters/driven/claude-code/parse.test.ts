@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   extractAgentIdFromToolUseResult,
+  extractAgentLaunchClaims,
+  extractRecordModel,
   extractToolUseBlocks,
   mapClaudeCodeRecordToEvents,
   parseClaudeCodeLine,
@@ -90,6 +92,95 @@ describe('resolveClaudeCodeToolCaption (design.md "Captions": tool_use.name + sh
   it('resolves toolLabel alone when the input has no recognized digest key', () => {
     const caption = resolveClaudeCodeToolCaption({ type: 'tool_use', id: 't1', name: 'WebSearch', input: { unrelated: 1 } });
     expect(caption).toEqual({ toolLabel: 'WebSearch' });
+  });
+});
+
+describe('extractAgentLaunchClaims (agent profile tracking: the tool_use.id -> launch input claim)', () => {
+  it('extracts subagent_type/model/description from an Agent tool_use block, keyed by its id', () => {
+    const record = parseClaudeCodeLine(
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Agent","input":{"subagent_type":"sdd-apply","model":"sonnet","description":"Apply slice 2","prompt":"a very long prompt body"}}]}}',
+    )!;
+
+    expect(extractAgentLaunchClaims(record)).toEqual([
+      { toolUseId: 'toolu_1', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' },
+    ]);
+  });
+
+  // Triangulation: a DIFFERENT launch, with a different id/type/model/description, must produce
+  // its OWN distinct claim — proves the extraction reads the block's own fields, not a hardcoded
+  // single-launch fake.
+  it('extracts a different launch with different fields into its own distinct claim', () => {
+    const record = parseClaudeCodeLine(
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_2","name":"Agent","input":{"subagent_type":"jd-judge-a","model":"opus","description":"Judge slice 3"}}]}}',
+    )!;
+
+    expect(extractAgentLaunchClaims(record)).toEqual([
+      { toolUseId: 'toolu_2', agentType: 'jd-judge-a', model: 'opus', task: 'Judge slice 3' },
+    ]);
+  });
+
+  it('omits model/agentType/task when the launch input omits them, rather than defaulting them', () => {
+    const record = parseClaudeCodeLine(
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_3","name":"Agent","input":{"description":"No model given"}}]}}',
+    )!;
+
+    expect(extractAgentLaunchClaims(record)).toEqual([{ toolUseId: 'toolu_3', task: 'No model given' }]);
+  });
+
+  // Adversarial near-miss: a tool_use block that is NOT an Agent launch (same record shape,
+  // different tool name) must never be mistaken for one.
+  it('ignores a non-Agent tool_use block entirely', () => {
+    const record = parseClaudeCodeLine(
+      '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_4","name":"Read","input":{"file_path":"x.ts"}}]}}',
+    )!;
+
+    expect(extractAgentLaunchClaims(record)).toEqual([]);
+  });
+
+  it('returns an empty array for a record with no tool_use blocks at all', () => {
+    const record = parseClaudeCodeLine('{"type":"user","message":{"role":"user","content":"plain text"}}')!;
+    expect(extractAgentLaunchClaims(record)).toEqual([]);
+  });
+});
+
+describe('extractRecordModel (agent profile tracking: the RESOLVED live model on message.model)', () => {
+  it('extracts the model from an assistant record message.model', () => {
+    const record = parseClaudeCodeLine('{"type":"assistant","message":{"role":"assistant","model":"claude-opus-5","content":[]}}')!;
+    expect(extractRecordModel(record)).toBe('claude-opus-5');
+  });
+
+  // Triangulation: a different model string on a different record must come through unchanged —
+  // this is also the "model switch" case: whichever record is read LAST wins, never the first.
+  it('extracts a different model value from a different record', () => {
+    const record = parseClaudeCodeLine('{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-5","content":[]}}')!;
+    expect(extractRecordModel(record)).toBe('claude-sonnet-5');
+  });
+
+  it('returns undefined when message.model is absent, rather than defaulting it', () => {
+    const record = parseClaudeCodeLine('{"type":"assistant","message":{"role":"assistant","content":[]}}')!;
+    expect(extractRecordModel(record)).toBeUndefined();
+  });
+
+  // Adversarial near-miss: a `user` record must never be read for message.model even if it
+  // happens to carry one — this field is only meaningful on an assistant turn.
+  it('ignores message.model on a non-assistant record', () => {
+    const record = parseClaudeCodeLine('{"type":"user","message":{"role":"user","model":"claude-opus-5","content":[]}}')!;
+    expect(extractRecordModel(record)).toBeUndefined();
+  });
+
+  // Real trap confirmed in live transcripts: system-generated records carry message.model:
+  // "<synthetic>" interleaved with real values (e.g. opus -> <synthetic> -> opus). Naively
+  // tracking "the latest value seen" would flip a worker's displayed model to this sentinel.
+  it('treats the "<synthetic>" sentinel as no model at all, never as a real value', () => {
+    const record = parseClaudeCodeLine('{"type":"assistant","message":{"role":"assistant","model":"<synthetic>","content":[]}}')!;
+    expect(extractRecordModel(record)).toBeUndefined();
+  });
+
+  // Adversarial near-miss of the sentinel guard: a real model string must still pass through
+  // fine, proving the filter targets the exact sentinel value, not e.g. any bracketed string.
+  it('a real model value on the SAME record shape as the sentinel test still comes through', () => {
+    const record = parseClaudeCodeLine('{"type":"assistant","message":{"role":"assistant","model":"claude-haiku-5","content":[]}}')!;
+    expect(extractRecordModel(record)).toBe('claude-haiku-5');
   });
 });
 
@@ -206,6 +297,52 @@ describe('mapClaudeCodeRecordToEvents', () => {
       const events = mapClaudeCodeRecordToEvents(record, context());
 
       expect(events.map((e) => e.id)).toEqual([1, 2]);
+    });
+  });
+
+  // Model is a LIVE, time-varying property of the session's own transcript — never fixed once at
+  // launch — so this wiring applies uniformly to the orchestrator AND to a subagent's own
+  // transcript, differing only in the `role` tag (from `ctx.isSubagent`).
+  describe('agent profile wiring: the live model from message.model', () => {
+    it('attaches the orchestrator agentProfile (role: orchestrator) onto a tool_start event for a non-subagent session', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events[0]).toMatchObject({ agentProfile: { role: 'orchestrator', model: 'claude-opus-5' } });
+    });
+
+    // Triangulation: the SAME message.model, but this session IS a subagent's own transcript —
+    // attaches role: subagent instead, proving the role tag (not the model extraction) is what's
+    // gated by isSubagent.
+    it('attaches the subagent agentProfile (role: subagent) from a subagent session\'s own transcript', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","model":"claude-sonnet-5","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, { ...context(), isSubagent: true });
+
+      expect(events[0]).toMatchObject({ agentProfile: { role: 'subagent', model: 'claude-sonnet-5' } });
+    });
+
+    it('omits agentProfile entirely when the record carries no message.model', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events[0]).not.toHaveProperty('agentProfile');
+    });
+
+    // The sentinel guard, exercised through the full wiring: a "<synthetic>" record must never
+    // attach an agentProfile at all (there is nothing else on this event to carry one for).
+    it('omits agentProfile when message.model is the "<synthetic>" sentinel', () => {
+      const record = parseClaudeCodeLine(
+        '{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":{"role":"assistant","model":"<synthetic>","content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}',
+      )!;
+      const events = mapClaudeCodeRecordToEvents(record, context());
+
+      expect(events[0]).not.toHaveProperty('agentProfile');
     });
   });
 });

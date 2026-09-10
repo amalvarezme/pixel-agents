@@ -19,6 +19,7 @@
  */
 import { createEventFromLogRecord, createMemoryWriteEvent } from '../../../domain/events/factories';
 import type { AgentEventBase } from '../../../domain/events/types';
+import type { AgentProfile } from '../../../domain/agents/agent-profile';
 import { ClaudeCodeMemoryWriteDetector } from './memory-write-detector';
 
 export interface ClaudeCodeContentBlock {
@@ -46,6 +47,9 @@ export interface ClaudeCodeRecord {
   message?: {
     role?: string;
     content?: ClaudeCodeContentBlock[] | string;
+    /** Agent profile tracking: the model running THIS record's turn (spec: "the orchestrator's
+     * own model is on its assistant records as message.model"). */
+    model?: string;
   };
   toolUseResult?: ClaudeCodeToolUseResult;
   [key: string]: unknown;
@@ -80,6 +84,71 @@ export function extractAgentIdFromToolUseResult(record: ClaudeCodeRecord): strin
   return record.toolUseResult?.agentId ?? null;
 }
 
+const AGENT_LAUNCH_TOOL_NAME = 'Agent';
+
+/**
+ * Agent profile tracking: a claim staged from one `Agent` tool_use block, keyed by that block's
+ * own `id` — the join key `correlate.ts` later matches against the corresponding tool_result's
+ * `tool_use_id` (spec: "the join to the spawned subagent is tool_use.id <-> toolUseResult.agentId
+ * on the matching tool_result record"). `agentType`/`model`/`task` are all optional and never
+ * defaulted — a launch that omits any of them stays absent on the claim, exactly as received.
+ *
+ * `model` here is the launch's REQUESTED model — an alias (`sonnet`/`opus`/`haiku`), or absent
+ * meaning "the default". It is NOT the resolved running model: the subagent's own transcript
+ * records the resolved id (e.g. `claude-sonnet-5`) on its own `message.model`, exactly like the
+ * orchestrator's (`extractRecordModel` below) — the two are surfaced as distinct `AgentProfile`
+ * fields (`requestedModel` vs `model`) by whatever assembles the final profile, never conflated.
+ */
+export interface AgentLaunchClaim {
+  toolUseId: string;
+  agentType?: string;
+  model?: string;
+  task?: string;
+}
+
+/**
+ * Extracts one claim per `Agent` tool_use block on this record (most records have none or one; a
+ * parent that launches several subagents in parallel emits several `tool_use` blocks on the SAME
+ * record). `task` is sourced from the launch's own `description` — the short 3-5 word summary the
+ * `Agent` tool contract requires — never the full `prompt`, which is far too long for a caption.
+ */
+export function extractAgentLaunchClaims(record: ClaudeCodeRecord): AgentLaunchClaim[] {
+  const claims: AgentLaunchClaim[] = [];
+  for (const block of extractToolUseBlocks(record)) {
+    if (block.name !== AGENT_LAUNCH_TOOL_NAME || typeof block.id !== 'string') continue;
+    const input = block.input ?? {};
+    const claim: AgentLaunchClaim = { toolUseId: block.id };
+    if (typeof input.subagent_type === 'string') claim.agentType = input.subagent_type;
+    if (typeof input.model === 'string') claim.model = input.model;
+    if (typeof input.description === 'string') claim.task = input.description;
+    claims.push(claim);
+  }
+  return claims;
+}
+
+/**
+ * A real, non-sentinel `message.model` value: Claude Code emits `<synthetic>` on some system-
+ * generated records, interleaved with real values (observed in live transcripts, e.g.
+ * `claude-opus-5 -> <synthetic> -> claude-opus-5`). Never a real model — must never be tracked as
+ * one, or a worker's displayed model would flip to this string.
+ */
+const SYNTHETIC_MODEL_SENTINEL = '<synthetic>';
+
+/**
+ * The RESOLVED, LIVE running model of whichever session's own transcript this record belongs to
+ * (spec correction: model is observed and time-varying, never fixed once at launch — this applies
+ * identically to the orchestrator's own transcript and to a subagent's own transcript; only the
+ * `role` tag differs, decided by the caller via `ctx.isSubagent`). Filters the `<synthetic>`
+ * sentinel: a record that carries it (or no model at all) yields `undefined`, so the caller's
+ * merge leaves whatever model was already tracked untouched rather than clearing or corrupting it.
+ */
+export function extractRecordModel(record: ClaudeCodeRecord): string | undefined {
+  if (record.type !== 'assistant') return undefined;
+  const model = record.message?.model;
+  if (typeof model !== 'string' || model.length === 0 || model === SYNTHETIC_MODEL_SENTINEL) return undefined;
+  return model;
+}
+
 const FALLBACK_LABEL_ID_LENGTH = 8;
 
 /**
@@ -104,6 +173,14 @@ export function resolveWorkerLabel(record: ClaudeCodeRecord, agentId: string | n
 export interface ClaudeCodeEventMappingContext {
   sessionKey: string;
   allocateId: () => number;
+  /**
+   * True when this record belongs to a SUBAGENT's own transcript, never the orchestrator's.
+   * Decides only the `role` tag on the `agentProfile` this module attaches from the session's OWN
+   * live `message.model` (`extractRecordModel` below) — the model-extraction logic itself is
+   * identical for both roles. Optional and defaults to "not a subagent" so every existing caller
+   * (which never dealt with profiles) keeps working unchanged.
+   */
+  isSubagent?: boolean;
 }
 
 export interface ToolCaption {
@@ -151,6 +228,14 @@ export function mapClaudeCodeRecordToEvents(
   const label = resolveWorkerLabel(record, agentId);
   const events: AgentEventBase[] = [];
 
+  // Agent profile tracking: the LIVE running model from this session's own transcript — a
+  // time-varying observation, never a value fixed once at launch — tagged with this session's own
+  // role. Absent (rather than defaulted) whenever this record carries no real model.
+  const recordModel = extractRecordModel(record);
+  const agentProfile: AgentProfile | undefined = recordModel
+    ? { role: ctx.isSubagent ? 'subagent' : 'orchestrator', model: recordModel }
+    : undefined;
+
   const toolUseBlocks = extractToolUseBlocks(record);
   for (const block of toolUseBlocks) {
     const caption = resolveClaudeCodeToolCaption(block);
@@ -163,6 +248,7 @@ export function mapClaudeCodeRecordToEvents(
         label,
         toolLabel: caption.toolLabel,
         toolDetail: caption.toolDetail,
+        ...(agentProfile ? { agentProfile } : {}),
       }),
     );
 
@@ -209,6 +295,7 @@ export function mapClaudeCodeRecordToEvents(
         sessionKey: ctx.sessionKey,
         at,
         label,
+        ...(agentProfile ? { agentProfile } : {}),
       }),
     );
   }

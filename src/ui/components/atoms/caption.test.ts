@@ -27,6 +27,67 @@ describe('buildCaption (atom) — the caption strip text shown under a worker (t
   });
 });
 
+// Agent profile tracking: "at minimum the agent type and model on/near the worker, and the task
+// available as the caption detail" — mirrors the existing {toolLabel}: {toolDetail} shape, with
+// no `harness` parameter here either (a profile is data, not a harness special case).
+describe('buildCaption — agent profile', () => {
+  // maxChars raised to 100 in these three: the composed string legitimately exceeds the default
+  // desk-width budget, and truncation itself is already covered generically elsewhere — these
+  // assert the FORMATTING, not the (separately-tested) truncation behavior.
+  it('renders a subagent profile as "agentType (model): task"', () => {
+    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' }, 100);
+    expect(result).toBe('sdd-apply (sonnet): Apply slice 2');
+  });
+
+  // Triangulation: a different role/agentType/model/task must render its OWN distinct caption,
+  // proving this reads the profile's own fields rather than a hardcoded string.
+  it('renders the orchestrator profile as "orchestrator (model)" with no task', () => {
+    const result = buildCaption('my-session', undefined, { role: 'orchestrator', model: 'claude-opus-5' }, 100);
+    expect(result).toBe('orchestrator (claude-opus-5)');
+  });
+
+  it('omits the model parens when the profile has no model, without inventing one', () => {
+    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', task: 'Apply slice 2' }, 100);
+    expect(result).toBe('sdd-apply: Apply slice 2');
+  });
+
+  it('falls back to "subagent" identity when a subagent profile has no agentType', () => {
+    const result = buildCaption('my-session', undefined, { role: 'subagent', model: 'sonnet' });
+    expect(result).toBe('subagent (sonnet)');
+  });
+
+  it('renders the identity alone when the profile has neither model nor task', () => {
+    const result = buildCaption('my-session', undefined, { role: 'orchestrator' });
+    expect(result).toBe('orchestrator');
+  });
+
+  // The live tool caption always wins over the (comparatively static) profile — it reflects what
+  // the worker is doing RIGHT NOW.
+  it('prefers an active tool caption over the agent profile when both are present', () => {
+    const result = buildCaption('my-session', { toolLabel: 'Read', toolDetail: 'design.md' }, { role: 'subagent', agentType: 'sdd-apply' });
+    expect(result).toBe('Read: design.md');
+  });
+
+  it('prefers the agent profile over the plain label when no tool caption is active', () => {
+    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply' });
+    expect(result).toBe('sdd-apply');
+  });
+
+  // Model is a live observation, distinct from the launch's requested alias: the resolved
+  // `model` must be shown once known, never the (possibly stale) `requestedModel` alias.
+  it('shows the resolved model over the requested alias once both are known', () => {
+    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', model: 'claude-sonnet-5' }, 100);
+    expect(result).toBe('sdd-apply (claude-sonnet-5)');
+  });
+
+  // Adversarial near-miss: before the resolved model ever arrives, the requested alias is the
+  // only signal available and should still be shown rather than nothing at all.
+  it('falls back to the requested alias when the resolved model is not known yet', () => {
+    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet' });
+    expect(result).toBe('sdd-apply (sonnet)');
+  });
+});
+
 // G.2: "worker captions overlap horizontally when several workers sit adjacent on the packed
 // row" — harness-specific captions (e.g. `McpToolCall: engram/mem_save`) are long enough to run
 // into the neighboring desk's caption at `DESK_SPACING`. Fix: truncate to a caption-width budget

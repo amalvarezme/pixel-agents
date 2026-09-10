@@ -9,6 +9,7 @@
  * for the same reason: no shared or harness-aware logic at the shared boundary).
  */
 import { DESK_SPACING } from '../../scene/layout/office-layout';
+import type { AgentRole } from '../../../domain/agents/agent-profile';
 
 const EMPTY_LABEL_PLACEHOLDER = '(unnamed worker)';
 const CAPTION_ELLIPSIS = '…';
@@ -49,14 +50,48 @@ export interface ToolCaptionSource {
   toolDetail?: string;
 }
 
-export function buildCaption(label: string, tool?: ToolCaptionSource, maxChars: number = CAPTION_MAX_CHARS): string {
+/**
+ * Agent profile tracking: "at minimum the agent type and model on/near the worker, and the task
+ * available as the caption detail" — the profile equivalent of `ToolCaptionSource`. Harness-
+ * agnostic data (role/agentType/model/task), never a `harness` field, so this atom stays
+ * structurally unable to branch on harness.
+ */
+export interface AgentProfileCaptionSource {
+  role: AgentRole;
+  agentType?: string;
+  /** The resolved, LIVE running model — shown in preference to `requestedModel` once known. */
+  model?: string;
+  /** The launch's requested model alias — shown only until the resolved `model` arrives. */
+  requestedModel?: string;
+  task?: string;
+}
+
+/** "sdd-apply (sonnet)" / "orchestrator" / "subagent (opus)" — identity first, model in
+ * parens only when known (the resolved live model, falling back to the requested alias before
+ * it arrives); never invents a model that was never reported. */
+function formatAgentProfileIdentity(profile: AgentProfileCaptionSource): string {
+  const identity = profile.role === 'orchestrator' ? 'orchestrator' : (profile.agentType ?? 'subagent');
+  const displayModel = profile.model ?? profile.requestedModel;
+  return displayModel ? `${identity} (${displayModel})` : identity;
+}
+
+export function buildCaption(
+  label: string,
+  tool?: ToolCaptionSource,
+  profile?: AgentProfileCaptionSource,
+  maxChars: number = CAPTION_MAX_CHARS,
+): string {
   const raw =
     tool && tool.toolLabel.length > 0
       ? tool.toolDetail
         ? `${tool.toolLabel}: ${tool.toolDetail}`
         : tool.toolLabel
-      : label.length > 0
-        ? label
-        : EMPTY_LABEL_PLACEHOLDER;
+      : profile
+        ? profile.task
+          ? `${formatAgentProfileIdentity(profile)}: ${profile.task}`
+          : formatAgentProfileIdentity(profile)
+        : label.length > 0
+          ? label
+          : EMPTY_LABEL_PLACEHOLDER;
   return truncateCaption(raw, maxChars);
 }

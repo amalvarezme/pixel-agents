@@ -131,7 +131,7 @@ export class ClaudeCodeActivitySource implements ActivitySource {
             // A correlation failure degrades that concern only — it must never break the tail.
           }
         }
-        for (const event of mapClaudeCodeRecordToEvents(record, { sessionKey, allocateId: this.allocateId })) {
+        for (const event of mapClaudeCodeRecordToEvents(record, { sessionKey, allocateId: this.allocateId, isSubagent })) {
           queue.push({ event, checkpoint });
         }
       }
@@ -150,6 +150,10 @@ export class ClaudeCodeActivitySource implements ActivitySource {
         // never the moment open() happens to run — falls back to now() only for a fake/scripted
         // SessionRef that never set it.
         at: session.lastActivityAt ?? this.now(),
+        // Agent profile tracking: the baseline role is known immediately from the discovery
+        // classifier, before any correlation or launch-join ever runs — "the orchestrator is
+        // distinguishable from its subagents" starts here, at the very first event.
+        agentProfile: { role: isSubagent ? 'subagent' : 'orchestrator' },
       }),
       checkpoint: bootstrapCheckpoint,
     });

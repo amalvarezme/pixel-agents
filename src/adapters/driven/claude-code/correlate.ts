@@ -13,8 +13,8 @@
  */
 import { claimParentChild, registerSession, type AgentTree } from '../../../domain/agents/agent-tree';
 import type { ClaudeCodeSessionRef } from './discover';
-import type { ClaudeCodeRecord } from './parse';
-import { extractAgentIdFromToolUseResult } from './parse';
+import type { AgentLaunchClaim, ClaudeCodeRecord } from './parse';
+import { extractAgentIdFromToolUseResult, extractAgentLaunchClaims, extractToolResultBlocks } from './parse';
 
 const HARNESS_PREFIX = 'claude-code:';
 
@@ -41,4 +41,42 @@ export function correlateFromParentRecord(
   if (!agentId) return;
   const childSessionKey = `${HARNESS_PREFIX}${agentId}`;
   claimParentChild(tree, parentSessionKey, childSessionKey, now);
+}
+
+/**
+ * Agent profile tracking, join step 1: stages every `Agent` tool_use claim on this PARENT record
+ * into `pendingLaunches`, keyed by the launch's own tool_use id — mutated in place, mirroring
+ * `agent-tree.ts`'s own mutate-the-passed-structure style. A record with no `Agent` launch is a
+ * no-op (most parent records are not one).
+ */
+export function trackAgentLaunches(pendingLaunches: Map<string, AgentLaunchClaim>, record: ClaudeCodeRecord): void {
+  for (const claim of extractAgentLaunchClaims(record)) {
+    pendingLaunches.set(claim.toolUseId, claim);
+  }
+}
+
+/**
+ * Agent profile tracking, join step 2: the load-bearing join itself — `tool_use.id` <->
+ * `toolUseResult.agentId` on the matching `tool_result` record (spec: "the join to the spawned
+ * subagent is tool_use.id <-> the toolUseResult.agentId on the matching tool_result record").
+ * Matches this record's `tool_result` block(s) by `tool_use_id` against `pendingLaunches`; on a
+ * match, consumes (deletes) that claim so it can never be joined twice. Returns `null` — and
+ * leaves `pendingLaunches` untouched — when this record carries no `toolUseResult.agentId`, or
+ * when no `tool_result` block's `tool_use_id` matches any pending claim.
+ */
+export function resolveAgentLaunchFromRecord(
+  pendingLaunches: Map<string, AgentLaunchClaim>,
+  record: ClaudeCodeRecord,
+): { childSessionKey: string; claim: AgentLaunchClaim } | null {
+  const agentId = extractAgentIdFromToolUseResult(record);
+  if (!agentId) return null;
+  for (const block of extractToolResultBlocks(record)) {
+    const toolUseId = block.tool_use_id;
+    if (typeof toolUseId !== 'string') continue;
+    const claim = pendingLaunches.get(toolUseId);
+    if (!claim) continue;
+    pendingLaunches.delete(toolUseId);
+    return { childSessionKey: `${HARNESS_PREFIX}${agentId}`, claim };
+  }
+  return null;
 }

@@ -107,3 +107,33 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
     expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual({ x: 1720, y: 540 });
   });
 });
+
+// Agent profile tracking: carries the domain's `Worker.agentProfile` straight through to the
+// view model, same shape as toolLabel/toolDetail already do.
+describe('buildOfficeViewModel — agent profile tracking', () => {
+  it('carries a resolved agentProfile through onto the view model worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' },
+    });
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.agentProfile).toEqual({ role: 'subagent', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' });
+  });
+
+  // Adversarial near-miss: a worker with no agentProfile at all must not gain one out of nowhere.
+  it('has no agentProfile when the worker has none', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.agentProfile).toBeUndefined();
+  });
+});
