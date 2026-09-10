@@ -9,6 +9,12 @@ export const ROOT_DESK_SIZE = 160;
 export const SINGLE_AGENT_DESK_SIZE = 240;
 export const CHILD_DESK_SIZE = 120;
 
+/** Defect fix: a desk used to be `{ width: size, height: size }` — a SQUARE, which was really the
+ * old worker-body rectangle reused unchanged. A desk is a wide, short surface: width stays the
+ * same (the packed-row spacing/caption budget already depend on it), height drops to a quarter
+ * of it so it reads as a desktop, not a crate the character stands on. */
+export const DESK_HEIGHT_RATIO = 0.25;
+
 export interface DeskView {
   sessionKey: string;
   x: number;
@@ -27,6 +33,6 @@ function sizeForDesk(desk: DeskLayout, ctx: DeskViewContext): number {
 }
 
 export function buildDeskView(desk: DeskLayout, ctx: DeskViewContext): DeskView {
-  const size = sizeForDesk(desk, ctx);
-  return { sessionKey: desk.sessionKey, x: desk.x, y: desk.y, width: size, height: size };
+  const width = sizeForDesk(desk, ctx);
+  return { sessionKey: desk.sessionKey, x: desk.x, y: desk.y, width, height: width * DESK_HEIGHT_RATIO };
 }

@@ -41,9 +41,20 @@ const WALL_HEIGHT = 220;
 const ARCHIVE_CABINET_SIZE = 100;
 const ARCHIVE_CABINET_COLOR = 0x4a4a5c;
 
-/** The character stands with its feet roughly at the desk's back edge, reading as "behind the
- * desk" rather than floating above it. */
-const CHARACTER_DESK_OFFSET_Y_RATIO = 0.5;
+/**
+ * Defect fix: filling the whole desk with the fully-saturated harness colour made a 160-unit
+ * block "the loudest thing on screen", pulling focus away from the character. The bulk of the
+ * desk is now a fixed, muted surface; only a thin strip along its front edge still carries the
+ * harness colour, so harness identity survives without dominating the frame.
+ */
+const DESK_SURFACE_COLOR = 0x4a4038;
+const DESK_ACCENT_HEIGHT_RATIO = 0.3;
+
+/** Defect fix: the character used to stand exactly ON the desk's back edge (`-height/2`), which
+ * read as "perched on top" once the desk was a tall square. A fixed clearance keeps the figure's
+ * feet strictly BEHIND that edge, so the desktop reads as furniture in front of it, not a
+ * platform under it — independent of how tall any given desk is. */
+const CHARACTER_DESK_CLEARANCE = 6;
 
 /** Adds the carried-document sprite + optional highlight ring + optional ×N batch badge directly
  * onto `group` (the worker's own desk group, so they move with it) for a worker currently mid
@@ -92,8 +103,22 @@ function renderWorkerCharacter(
   const accentColor = resolveModelAccentColor(worker.agentProfile?.model ?? worker.agentProfile?.requestedModel);
 
   const character = renderCharacter(buildCharacterPose({ role, state: animationState, frame, accentColor }));
-  character.y = -deskHeight * CHARACTER_DESK_OFFSET_Y_RATIO;
+  character.y = -(deskHeight / 2 + CHARACTER_DESK_CLEARANCE);
   return character;
+}
+
+/** The desk itself: a muted surface plus a thin harness-coloured accent strip along its front
+ * (near) edge, added directly onto `group` — furniture that stays in the background, not a block
+ * that competes with the character for attention. */
+function addDeskFurniture(group: Container, desk: { width: number; height: number }, badgeColor: string): void {
+  const surface = new Graphics().rect(-desk.width / 2, -desk.height / 2, desk.width, desk.height).fill(DESK_SURFACE_COLOR);
+  group.addChild(surface);
+
+  const accentHeight = desk.height * DESK_ACCENT_HEIGHT_RATIO;
+  const accent = new Graphics()
+    .rect(-desk.width / 2, desk.height / 2 - accentHeight, desk.width, accentHeight)
+    .fill(badgeColor);
+  group.addChild(accent);
 }
 
 function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number): Container {
@@ -105,10 +130,7 @@ function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number
   group.x = worker.x;
   group.y = worker.y;
 
-  const graphics = new Graphics()
-    .rect(-desk.width / 2, -desk.height / 2, desk.width, desk.height)
-    .fill(worker.badge.color);
-  group.addChild(graphics);
+  addDeskFurniture(group, desk, worker.badge.color);
 
   group.addChild(renderWorkerCharacter(worker, desk.height, now));
 

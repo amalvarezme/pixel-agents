@@ -24,6 +24,18 @@ export const DESK_SPACING = 200;
 const ROOT_LANE_Y = FLOOR_HEIGHT / 2;
 const CHILD_LANE_OFFSET_Y = 220;
 
+/**
+ * Defect fix: the packed row shares the root lane's y with the archive cabinet (`office-scene-
+ * renderer.ts`'s `ARCHIVE_DESTINATION = { x: 1720, y: 540 }`). Centering the row on the full
+ * `FLOOR_WIDTH` let a full 8-desk row reach far enough right to overlap the cabinet and its
+ * counter. Shifting the row's own centre left of the floor's centre reserves that space, so the
+ * archive destination the carry animation walks to stays visible as its own thing regardless of
+ * how many workers are packed into the row. Cannot import `ARCHIVE_DESTINATION` directly here —
+ * `archive-path.ts` already imports FROM this module, so the reverse import would be circular.
+ */
+const PACKED_ROW_ARCHIVE_CLEARANCE = 160;
+const PACKED_ROW_CENTER_X = FLOOR_WIDTH / 2 - PACKED_ROW_ARCHIVE_CLEARANCE;
+
 export interface LayoutWorkerInput {
   sessionKey: string;
   parentSessionKey: string | null;
@@ -46,7 +58,7 @@ export interface OfficeLayout {
 
 function computeRowX(index: number, count: number): number {
   const totalWidth = (count - 1) * DESK_SPACING;
-  const startX = FLOOR_WIDTH / 2 - totalWidth / 2;
+  const startX = PACKED_ROW_CENTER_X - totalWidth / 2;
   return startX + index * DESK_SPACING;
 }
 

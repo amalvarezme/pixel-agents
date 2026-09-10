@@ -196,11 +196,12 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       };
     }
 
-    // The character is drawn as its own nested Container inside the desk group (index 1: after
-    // the desk rect, before the caption) — see `renderWorkerCharacter`/`renderDeskGroup`.
+    // The character is drawn as its own nested Container inside the desk group (index 2: after
+    // the desk surface + accent strip, before the caption) — see
+    // `renderWorkerCharacter`/`renderDeskGroup`.
     function characterGraphicsCount(scene: Container): number {
       const deskGroup = scene.children[1] as Container;
-      const characterGroup = deskGroup.children[1] as Container;
+      const characterGroup = deskGroup.children[2] as Container;
       return characterGroup.children.filter((c) => c instanceof Graphics).length;
     }
 
@@ -217,6 +218,85 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const explicitSubagent = renderOfficeScene(floorWithProfile({ role: 'subagent' }));
 
       expect(characterGraphicsCount(noProfile)).toBe(characterGraphicsCount(explicitSubagent));
+    });
+  });
+
+  // Defect fix: a fully-saturated harness colour across the whole (now desk-shaped) surface was
+  // "the loudest thing on screen", pulling attention away from the character. The bulk of the
+  // desk is now a fixed, muted surface colour; only a thin front-edge accent strip carries the
+  // harness colour, preserving harness identity without dominating the frame.
+  describe('desk colour', () => {
+    function floorWithBadgeColor(color: string): OfficeFloorView {
+      return {
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 40 }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color }, caption: 'one' }],
+        overflowCount: 0,
+        archiveCount: 0,
+      };
+    }
+
+    it('draws the desk surface in a fixed muted colour, not the fully-saturated harness colour', () => {
+      const scene = renderOfficeScene(floorWithBadgeColor('#d97757'));
+      const deskGroup = scene.children[1] as Container;
+      const deskSurface = deskGroup.children[0] as Graphics;
+
+      // 0xd97757 as a number, matching the harness badge colour string above.
+      expect(deskSurface.fillStyle.color).not.toBe(0xd97757);
+    });
+
+    // Adversarial twin: the harness colour must still appear SOMEWHERE on the desk (the accent
+    // strip) — proves this tones the colour down rather than erasing harness identity entirely.
+    it('still carries the harness colour on a small accent strip', () => {
+      const scene = renderOfficeScene(floorWithBadgeColor('#d97757'));
+      const deskGroup = scene.children[1] as Container;
+      const deskAccent = deskGroup.children[1] as Graphics;
+
+      expect(deskAccent.fillStyle.color).toBe(0xd97757);
+    });
+
+    // Triangulate: a different harness colour must flow through to the SAME accent strip, proving
+    // it is read from `worker.badge.color`, not hardcoded to one harness.
+    it('reflects a different harness colour on the accent strip for a different harness', () => {
+      const scene = renderOfficeScene(floorWithBadgeColor('#10a37f'));
+      const deskGroup = scene.children[1] as Container;
+      const deskAccent = deskGroup.children[1] as Graphics;
+
+      expect(deskAccent.fillStyle.color).toBe(0x10a37f);
+    });
+  });
+
+  // Defect fix: the character stood exactly ON the desk's back edge (perched on top of what used
+  // to be a tall square). The figure must read as standing BEHIND the desk, with the desktop in
+  // front of it — a visible gap between the character's feet and the desk's own back edge.
+  describe('character anchor relative to the desk', () => {
+    function floorWithDeskSize(width: number, height: number): OfficeFloorView {
+      return {
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width, height }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        overflowCount: 0,
+        archiveCount: 0,
+      };
+    }
+
+    it("anchors the character strictly behind the desk's back edge, not exactly on it", () => {
+      const scene = renderOfficeScene(floorWithDeskSize(160, 40));
+      const deskGroup = scene.children[1] as Container;
+      const characterGroup = deskGroup.children[2] as Container;
+
+      expect(characterGroup.y).toBeLessThan(-40 / 2);
+    });
+
+    // Adversarial twin: a TALLER desk must push the anchor further back too — proves the offset
+    // is actually derived from desk.height, not a hardcoded constant that happens to clear a
+    // 40-unit desk.
+    it('moves the anchor further back for a taller desk', () => {
+      const shortDeskScene = renderOfficeScene(floorWithDeskSize(160, 40));
+      const tallDeskScene = renderOfficeScene(floorWithDeskSize(160, 80));
+
+      const shortAnchorY = ((shortDeskScene.children[1] as Container).children[2] as Container).y;
+      const tallAnchorY = ((tallDeskScene.children[1] as Container).children[2] as Container).y;
+
+      expect(tallAnchorY).toBeLessThan(shortAnchorY);
     });
   });
 
