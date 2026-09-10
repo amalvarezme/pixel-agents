@@ -154,6 +154,44 @@ export async function readTailIncrement(
 }
 
 /**
+ * Agent profile tracking (fix: profiles under DEFAULT settings — "profiles are state, not
+ * history"): streams the WHOLE file from byte 0, using the same chunked/decoder approach as
+ * `readLinesInChunks`, but keeps in memory only the lines for which `keepLine` returns true. A
+ * ~29MB transcript may hold only a handful of qualifying lines (an `Agent` launch or its resolving
+ * `tool_result`), spread anywhere from 4% to 98% through the file — discarding non-matching lines
+ * as they stream, rather than collecting every line first, is what keeps scanning the whole file
+ * affordable. `StringDecoder` still carries a multi-byte UTF-8 sequence split across a chunk
+ * boundary over to the next chunk, exactly like `readLinesInChunks`.
+ */
+export async function scanFileLines(
+  filePath: string,
+  keepLine: (line: string) => boolean,
+  maxChunkBytes: number = DEFAULT_MAX_CHUNK_BYTES,
+): Promise<string[]> {
+  return await new Promise((resolve, reject) => {
+    const decoder = new StringDecoder('utf8');
+    const kept: string[] = [];
+    let pending = '';
+
+    const consume = (decoded: string): void => {
+      if (decoded.length === 0) return;
+      const parts = (pending + decoded).split('\n');
+      pending = parts.pop() ?? '';
+      for (const line of parts) if (keepLine(line)) kept.push(line);
+    };
+
+    const stream = createReadStream(filePath, { highWaterMark: maxChunkBytes });
+    stream.on('data', (chunk) => consume(decoder.write(chunk as Buffer)));
+    stream.on('end', () => {
+      consume(decoder.end());
+      if (pending.length > 0 && keepLine(pending)) kept.push(pending);
+      resolve(kept);
+    });
+    stream.on('error', reject);
+  });
+}
+
+/**
  * Wraps `readTailIncrement` with a chokidar watcher on a single file (design.md: "`chokidar`
  * watch -> `stat` on `change`"). Each `change` (and any late `add`, e.g. the file did not exist
  * yet at watch-start time) triggers exactly one `readTailIncrement` call; `onIncrement` is skipped

@@ -220,3 +220,43 @@ describe('ClaudeCodeSubagentCorrelationCoordinator (agent profile tracking)', ()
     expect(publish).not.toHaveBeenCalled();
   });
 });
+
+// Agent profile tracking, historical path (fix: "profiles under DEFAULT settings" — a discovery-
+// time scan of a parent's already-written history feeds resolved profiles in here directly,
+// bypassing the live tail entirely).
+describe('ClaudeCodeSubagentCorrelationCoordinator (scanned/historical profiles)', () => {
+  it('publishes a profile event for a resolved historical claim, same shape as the live path', () => {
+    const { coordinator, publish } = makeCoordinator();
+
+    coordinator.offerScannedProfiles([
+      { childSessionKey: 'claude-code:agent-one', claim: { toolUseId: 'toolu_1', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply' } },
+    ]);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]![0]).toMatchObject({
+      kind: 'parent',
+      sessionKey: 'claude-code:agent-one',
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet', task: 'Apply' },
+    });
+  });
+
+  it('never publishes twice for a child already resolved by the live path', () => {
+    const { coordinator, publish } = makeCoordinator();
+    const launch: ClaudeCodeRecord = {
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Agent', input: { subagent_type: 'sdd-apply' } }] },
+    };
+    const result: ClaudeCodeRecord = {
+      type: 'user',
+      toolUseResult: { agentId: 'agent-one' },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1' }] },
+    };
+    coordinator.offerParentRecord('claude-code:parent-1', launch);
+    coordinator.offerParentRecord('claude-code:parent-1', result);
+    publish.mockClear();
+
+    coordinator.offerScannedProfiles([{ childSessionKey: 'claude-code:agent-one', claim: { toolUseId: 'toolu_1', agentType: 'sdd-apply' } }]);
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});

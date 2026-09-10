@@ -2,7 +2,7 @@ import { mkdtemp, rm, stat, truncate, unlink, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readTailIncrement, watchAndTailFile } from './tail';
+import { readTailIncrement, scanFileLines, watchAndTailFile } from './tail';
 
 // Records the byte length of every `data` chunk that flows through the real `createReadStream`
 // call made by production code, without changing stream behavior. This gives direct, honest
@@ -271,4 +271,40 @@ describe('watchAndTailFile', () => {
     if (increment.kind === 'no-op') throw new Error('unexpected no-op');
     expect(increment.lines).toEqual(['{"a":1}', '{"a":2}']);
   }, 10000);
+});
+
+// Agent profile tracking (fix: profiles under DEFAULT settings): the discovery-time profile scan
+// must cover a whole large transcript for the rare qualifying line without paying JSON.parse cost
+// on every line — `scanFileLines` is the cheap substring-filtered primitive that makes that
+// affordable. Bounded chunk reading (small `maxChunkBytes`) proves the match is found even when it
+// straddles a chunk boundary, mirroring `readTailIncrement`'s own chunk-boundary guarantee.
+describe('scanFileLines', () => {
+  let dir: string;
+  let filePath: string;
+
+  afterEach(async () => {
+    if (dir) await rm(dir, { recursive: true, force: true });
+  });
+
+  it('keeps only lines matching the predicate, even when the match straddles a chunk boundary', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-lines-'));
+    filePath = join(dir, 'session.jsonl');
+    const noise = '{"type":"tool_use","name":"Read","input":{}}\n'.repeat(20);
+    const target = '{"type":"tool_use","name":"Agent","input":{}}\n';
+    await writeFile(filePath, `${noise}${target}${noise}`);
+
+    const kept = await scanFileLines(filePath, (line) => line.includes('"name":"Agent"'), 32);
+
+    expect(kept).toEqual([target.trimEnd()]);
+  });
+
+  it('returns an empty array when no line matches the predicate', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'claude-code-scan-lines-empty-'));
+    filePath = join(dir, 'session.jsonl');
+    await writeFile(filePath, '{"type":"tool_use","name":"Read","input":{}}\n');
+
+    const kept = await scanFileLines(filePath, (line) => line.includes('"name":"Agent"'), 32);
+
+    expect(kept).toEqual([]);
+  });
 });

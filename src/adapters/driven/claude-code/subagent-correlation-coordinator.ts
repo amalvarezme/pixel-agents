@@ -73,6 +73,19 @@ export class ClaudeCodeSubagentCorrelationCoordinator {
     if (resolved) this.publishProfile(resolved.childSessionKey, resolved.claim);
   }
 
+  /**
+   * Agent profile tracking, historical path (fix: "profiles under DEFAULT settings"): applies
+   * profiles recovered by a one-time discovery-time scan of a parent's already-written history
+   * (`agent-profile-scan.ts`) — the join for a launch whose `Agent` tool_use and resolving
+   * `tool_result` both sit before the EOF bootstrap offset, so the live `offerParentRecord` path
+   * never reads them. Reuses `publishProfile`, so it is idempotent with the live path via the same
+   * `emittedProfileFor` guard: whichever path resolves a given child first wins, the other is a
+   * no-op.
+   */
+  offerScannedProfiles(resolved: Array<{ childSessionKey: string; claim: AgentLaunchClaim }>): void {
+    for (const { childSessionKey, claim } of resolved) this.publishProfile(childSessionKey, claim);
+  }
+
   private flushResolvedLinks(): void {
     for (const node of this.tree.nodes.values()) {
       if (!node.parentSessionKey || this.emitted.has(node.sessionKey)) continue;

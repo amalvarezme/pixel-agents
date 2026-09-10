@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import type { ActivitySource } from './ports/activity-source.port';
 import { AntigravityActivitySource } from './adapters/driven/antigravity/activity-source';
 import { ClaudeCodeActivitySource } from './adapters/driven/claude-code/activity-source';
+import { scanAndApplyAgentProfiles } from './adapters/driven/claude-code/agent-profile-scan';
 import type { ClaudeCodeSessionRef } from './adapters/driven/claude-code/discover';
 import { ClaudeCodeSubagentCorrelationCoordinator } from './adapters/driven/claude-code/subagent-correlation-coordinator';
 import { CodexActivitySource } from './adapters/driven/codex/activity-source';
@@ -159,7 +160,13 @@ async function main(): Promise<void> {
         // structurally compatible but semantically a no-op for `offerSession` since it never sets
         // `isSubagent`.
         if (source.harness === 'claude-code') {
-          subagentCorrelator.offerSession(session as ClaudeCodeSessionRef);
+          const claudeCodeSession = session as ClaudeCodeSessionRef;
+          subagentCorrelator.offerSession(claudeCodeSession);
+          // Agent profile tracking (fix: "profiles under DEFAULT settings" — profiles are state,
+          // not history): a one-time, read-only, fire-and-forget scan of this parent's already-
+          // written transcript, run alongside (never blocking) the live tail. A slow or failing
+          // scan degrades profiles only, matching the try/catch precedent above.
+          void scanAndApplyAgentProfiles(subagentCorrelator, claudeCodeSession);
         }
       },
     }).catch((error: unknown) => {
