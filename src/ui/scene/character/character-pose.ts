@@ -51,9 +51,14 @@ const SKIN_COLOR = 0xe0b088;
  * worker is the orchestrator" reads at a glance regardless of which model is running it. */
 const ORCHESTRATOR_ACCENT_COLOR = 0xffd166;
 
-const IDLE_BOB_OFFSET = 2;
-const WORKING_ARM_LIFT = 4;
-const WALKING_STRIDE_OFFSET = 6;
+// Amplitudes are in SCENE units on the fixed 1920-wide floor plan, which `fitToViewport` scales
+// down to the viewport — on a 1512px-wide canvas that is roughly 0.79 px per unit. The original
+// values (2 / 4 / 6) were measured as ~1.6 / ~3.2 / ~4.7 px on screen: real motion, verified
+// cycling at the data layer, and imperceptible to a person glancing at the office. These are sized
+// so the state is readable at a glance, which is the whole job of this display.
+const IDLE_BOB_OFFSET = 6;
+const WORKING_ARM_LIFT = 14;
+const WALKING_STRIDE_OFFSET = 18;
 
 /** Subtle breathing bob: the whole figure lifts by one offset on the second idle frame. */
 function idleBob(state: CharacterAnimationState, frame: number): number {
