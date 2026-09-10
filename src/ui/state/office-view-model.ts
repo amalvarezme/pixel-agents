@@ -8,7 +8,7 @@
  */
 import type { HarnessId } from '../../domain/events/types';
 import type { AgentProfile } from '../../domain/agents/agent-profile';
-import type { OfficeState } from '../../domain/office/office';
+import type { OfficeState, WorkerActivity } from '../../domain/office/office';
 import { computeArchivePath, type ScenePoint } from '../scene/layout/archive-path';
 import { computeOfficeLayout, type DeskLane, type LayoutWorkerInput } from '../scene/layout/office-layout';
 
@@ -40,6 +40,11 @@ export interface WorkerViewModel {
   /** Agent profile tracking: what this worker IS, what MODEL it runs, and what TASK it was
    * given — carried straight through from `Worker.agentProfile`. */
   agentProfile?: AgentProfile;
+  /** Carried straight through from `Worker.activity` — selects the drawn idle/working animation
+   * state (`ui/scene/character/animation-state.ts`). Optional here (unlike the always-present
+   * domain field) so a hand-built view model never needs to specify it; the render layer degrades
+   * a missing value to idle rather than inventing "working". */
+  activity?: WorkerActivity;
   archiveTrip?: ArchiveTripView;
 }
 
@@ -50,6 +55,11 @@ export interface OfficeViewModel {
    * counter increments"). Set by the render half's `applyTripOverlay`; `undefined`/`0` from
    * `buildOfficeViewModel` itself, which has no animation clock to count against. */
   archiveCount?: number;
+  /** The animation clock's current time, set by the render half's `applyTripOverlay` — reused by
+   * `ui/scene/pixi/office-scene-renderer.ts` to pick idle/working/walking animation FRAMES
+   * (`ui/scene/character/animation-clock.ts`), not just the archive-trip walk position. Absent
+   * from `buildOfficeViewModel` itself, which has no animation clock. */
+  now?: number;
 }
 
 /** Projects the current `OfficeState` into a renderable `OfficeViewModel`. Pure — no I/O. */
@@ -74,6 +84,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       x: desk.x,
       y: desk.y,
       lane: desk.lane,
+      activity: worker.activity,
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
       ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
       ...(held ? { archiveTrip: { path: computeArchivePath({ x: desk.x, y: desk.y }), carryCount: held.count } } : {}),

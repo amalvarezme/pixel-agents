@@ -137,3 +137,16 @@ describe('buildOfficeViewModel — agent profile tracking', () => {
     expect(vm.workers[0]!.agentProfile).toBeUndefined();
   });
 });
+
+// Character animation states (idle/working/walking) select from the worker's `activity` — this
+// carries `domain/office/office.ts`'s `Worker.activity` through, same shape as agentProfile above.
+describe('buildOfficeViewModel — worker activity', () => {
+  it('carries the worker activity through onto the view model', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.activity).toBe('working');
+  });
+});

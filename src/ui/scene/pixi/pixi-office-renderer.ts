@@ -60,7 +60,7 @@ export interface StageLike {
  * `PixiOfficeRenderer.render` — see the file header for why it is split out this way. */
 export function updateStage(stage: StageLike, viewModel: OfficeViewModel): void {
   stage.removeChildren();
-  stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel)));
+  stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0));
 }
 
 export interface PixiOfficeRendererOptions {

@@ -82,4 +82,27 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
 
     expect(view.archiveTrip).toBeUndefined();
   });
+
+  // Character rendering (ui/scene/pixi/office-scene-renderer.ts) needs the raw activity and
+  // agentProfile alongside the badge/caption already built here, to pick the drawn animation
+  // state and the orchestrator/subagent/model accent.
+  it('carries activity through when present', () => {
+    const view = buildWorkerView(workerViewModel({ activity: 'working' }));
+
+    expect(view.activity).toBe('working');
+  });
+
+  it('carries agentProfile through when present', () => {
+    const view = buildWorkerView(workerViewModel({ agentProfile: { role: 'orchestrator' } }));
+
+    expect(view.agentProfile).toEqual({ role: 'orchestrator' });
+  });
+
+  // Adversarial twin: a worker with neither must not gain either out of nowhere.
+  it('has no activity or agentProfile when the worker has neither', () => {
+    const view = buildWorkerView(workerViewModel());
+
+    expect(view.activity).toBeUndefined();
+    expect(view.agentProfile).toBeUndefined();
+  });
 });

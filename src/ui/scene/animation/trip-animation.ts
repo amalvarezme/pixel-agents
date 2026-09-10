@@ -199,5 +199,5 @@ export function applyTripOverlay(viewModel: OfficeViewModel, state: TripAnimator
     };
   });
 
-  return { ...viewModel, workers, archiveCount: state.archivedCount };
+  return { ...viewModel, workers, archiveCount: state.archivedCount, now };
 }

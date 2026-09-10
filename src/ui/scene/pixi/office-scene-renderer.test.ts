@@ -4,13 +4,13 @@ import { renderOfficeScene } from './office-scene-renderer';
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
 
 describe('renderOfficeScene (tasks.md 10.3) — the only module that imports PixiJS', () => {
-  it('renders one child (the archive counter) for an empty floor', () => {
+  it('renders the office background plus the archive counter for an empty floor', () => {
     const floor: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
 
     const scene = renderOfficeScene(floor);
 
     expect(scene).toBeInstanceOf(Container);
-    expect(scene.children).toHaveLength(1);
+    expect(scene.children).toHaveLength(2);
   });
 
   it('renders one desk graphic and one caption text per worker, positioned at the worker coordinates', () => {
@@ -32,7 +32,8 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
 
     const scene = renderOfficeScene(floor);
 
-    const deskGroups = scene.children.slice(0, floor.desks.length) as Container[];
+    // Index 0 is now the office background (floor/wall/archive cabinet) — desk groups follow it.
+    const deskGroups = scene.children.slice(1, 1 + floor.desks.length) as Container[];
     expect(deskGroups).toHaveLength(1);
     const [deskGroup] = deskGroups;
     expect(deskGroup!.x).toBe(760);
@@ -61,7 +62,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
 
     const scene = renderOfficeScene(floor);
 
-    const deskGroups = scene.children.slice(0, floor.desks.length) as Container[];
+    const deskGroups = scene.children.slice(1, 1 + floor.desks.length) as Container[];
     expect(deskGroups).toHaveLength(2);
     const captions = deskGroups.map((group) => group.children.find((c): c is Text => c instanceof Text)?.text);
     expect(captions).toEqual(['one', 'two']);
@@ -93,8 +94,8 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const withoutTrip = renderOfficeScene(floorWithOneWorker());
       const withTrip = renderOfficeScene(floorWithOneWorker({ carryCount: 1, highlight: false }));
 
-      const baselineGraphicsCount = (withoutTrip.children[0] as Container).children.filter((c) => c instanceof Graphics).length;
-      const withTripGraphicsCount = (withTrip.children[0] as Container).children.filter((c) => c instanceof Graphics).length;
+      const baselineGraphicsCount = (withoutTrip.children[1] as Container).children.filter((c) => c instanceof Graphics).length;
+      const withTripGraphicsCount = (withTrip.children[1] as Container).children.filter((c) => c instanceof Graphics).length;
 
       expect(withTripGraphicsCount).toBe(baselineGraphicsCount + 1);
     });
@@ -104,8 +105,8 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const withoutTrip = renderOfficeScene(floorWithOneWorker());
       const withTrip = renderOfficeScene(floorWithOneWorker({ carryCount: 1, highlight: false }));
 
-      const baselineGraphicsCount = (withoutTrip.children[0] as Container).children.filter((c) => c instanceof Graphics).length;
-      const withTripGraphicsCount = (withTrip.children[0] as Container).children.filter((c) => c instanceof Graphics).length;
+      const baselineGraphicsCount = (withoutTrip.children[1] as Container).children.filter((c) => c instanceof Graphics).length;
+      const withTripGraphicsCount = (withTrip.children[1] as Container).children.filter((c) => c instanceof Graphics).length;
 
       expect(baselineGraphicsCount).toBeLessThan(withTripGraphicsCount);
     });
@@ -116,8 +117,8 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const notHighlighted = renderOfficeScene(floorWithOneWorker({ carryCount: 1, highlight: false }));
       const highlighted = renderOfficeScene(floorWithOneWorker({ carryCount: 1, highlight: true }));
 
-      const notHighlightedCount = (notHighlighted.children[0] as Container).children.filter((c) => c instanceof Graphics).length;
-      const highlightedCount = (highlighted.children[0] as Container).children.filter((c) => c instanceof Graphics).length;
+      const notHighlightedCount = (notHighlighted.children[1] as Container).children.filter((c) => c instanceof Graphics).length;
+      const highlightedCount = (highlighted.children[1] as Container).children.filter((c) => c instanceof Graphics).length;
 
       expect(highlightedCount).toBe(notHighlightedCount + 1);
     });
@@ -126,11 +127,96 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const single = renderOfficeScene(floorWithOneWorker({ carryCount: 1, highlight: false }));
       const batch = renderOfficeScene(floorWithOneWorker({ carryCount: 5, highlight: false }));
 
-      const singleTexts = (single.children[0] as Container).children.filter((c): c is Text => c instanceof Text).map((t) => t.text);
-      const batchTexts = (batch.children[0] as Container).children.filter((c): c is Text => c instanceof Text).map((t) => t.text);
+      const singleTexts = (single.children[1] as Container).children.filter((c): c is Text => c instanceof Text).map((t) => t.text);
+      const batchTexts = (batch.children[1] as Container).children.filter((c): c is Text => c instanceof Text).map((t) => t.text);
 
       expect(singleTexts.some((t) => t.includes('×'))).toBe(false);
       expect(batchTexts.some((t) => t === '×5')).toBe(true);
+    });
+  });
+
+  // "An office background — floor, a back wall, desks the workers sit at" — always present,
+  // regardless of who is in the office, and drawn BEHIND every desk group.
+  describe('office background', () => {
+    it('renders the background as the very first child, before any desk group', () => {
+      const floor: OfficeFloorView = {
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 160 }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        overflowCount: 0,
+        archiveCount: 0,
+      };
+
+      const scene = renderOfficeScene(floor);
+      const background = scene.children[0] as Container;
+
+      expect(background).toBeInstanceOf(Container);
+      expect(background.children.every((c) => c instanceof Graphics)).toBe(true);
+      // Floor + back wall + archive cabinet: at least 3 distinct background shapes.
+      expect(background.children.length).toBeGreaterThanOrEqual(3);
+    });
+
+    // Adversarial twin: an empty floor still gets the SAME background — it never depends on
+    // there being any worker at all.
+    it('renders the identical background shape count for an empty floor', () => {
+      const populated = renderOfficeScene({
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 160 }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        overflowCount: 0,
+        archiveCount: 0,
+      });
+      const empty = renderOfficeScene({ desks: [], workers: [], overflowCount: 0, archiveCount: 0 });
+
+      const populatedBackground = populated.children[0] as Container;
+      const emptyBackground = empty.children[0] as Container;
+
+      expect(emptyBackground.children.length).toBe(populatedBackground.children.length);
+    });
+  });
+
+  // "an orchestrator must look visibly different from a subagent" — the pixel-art character
+  // built for each role has a structurally different shape count (character-pose.test.ts covers
+  // the pure decision; this proves the pixi wiring actually reaches it end to end).
+  describe('character sprite — orchestrator vs subagent', () => {
+    function floorWithProfile(agentProfile?: { role: 'orchestrator' | 'subagent' }): OfficeFloorView {
+      return {
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 160 }],
+        workers: [
+          {
+            sessionKey: 'claude-code:s1',
+            x: 100,
+            y: 100,
+            lane: 'root',
+            badge: { text: 'Claude', color: '#d97757' },
+            caption: 'one',
+            ...(agentProfile ? { agentProfile } : {}),
+          },
+        ],
+        overflowCount: 0,
+        archiveCount: 0,
+      };
+    }
+
+    // The character is drawn as its own nested Container inside the desk group (index 1: after
+    // the desk rect, before the caption) — see `renderWorkerCharacter`/`renderDeskGroup`.
+    function characterGraphicsCount(scene: Container): number {
+      const deskGroup = scene.children[1] as Container;
+      const characterGroup = deskGroup.children[1] as Container;
+      return characterGroup.children.filter((c) => c instanceof Graphics).length;
+    }
+
+    it('draws one more graphic for an orchestrator than for a subagent', () => {
+      const subagent = renderOfficeScene(floorWithProfile({ role: 'subagent' }));
+      const orchestrator = renderOfficeScene(floorWithProfile({ role: 'orchestrator' }));
+
+      expect(characterGraphicsCount(orchestrator)).toBe(characterGraphicsCount(subagent) + 1);
+    });
+
+    // Adversarial twin: no agentProfile at all must render like a subagent, not an orchestrator.
+    it('renders a worker with no agentProfile the same as an explicit subagent', () => {
+      const noProfile = renderOfficeScene(floorWithProfile(undefined));
+      const explicitSubagent = renderOfficeScene(floorWithProfile({ role: 'subagent' }));
+
+      expect(characterGraphicsCount(noProfile)).toBe(characterGraphicsCount(explicitSubagent));
     });
   });
 
