@@ -113,6 +113,27 @@ Mounting a real PixiJS canvas is the one thing no automated test covers; it need
 4. Stop the page, let a few saves be ingested, then reload. The counter should come back non-zero —
    that is the snapshot carrying archive state, not a replay.
 
+## Characters
+
+Agents are drawn with the **Pixel Office** sprite pack (`public/characters/`, four 32x32
+characters on 4x8 sheets; the pack's own guide is kept verbatim under `docs/characters/`).
+
+- **Who** a worker is comes from its project: `resolveCharacterId` hashes `projectPath` into the
+  four characters, so an orchestrator and every subagent under one project are the same person.
+- **Role** is size only: `ROLE_SPRITE_SCALE` draws an orchestrator at 5x and a subagent at 3x —
+  whole numbers, because a fractional scale destroys pixel-perfect rendering.
+- **State** picks the clip: `typing` at the desk while working, `sit` once the session goes quiet
+  (dimmed), `walk` while crossing to the archive, `celebrate` on arrival. Timing comes from each
+  character's own JSON, never from a table in our code.
+- The pack draws a desk INTO its `typing`/`sit`/`work` frames, so those clips are pinned by that
+  built-in table line (row 21 of 32, measured from the shipped PNGs) onto the scene's own desk
+  surface — otherwise every worker would have two desks.
+- If the pack fails to load, the scene falls back to the procedural figure in
+  `ui/scene/character/character-pose.ts`. Nothing blocks on the textures.
+
+`public/characters/demo.html` is the pack's own standalone player — open it at
+`/characters/demo.html` to step through every clip without the office around it.
+
 ## Architecture
 
 Hexagonal: `domain/` (framework-free) ← `application/` (use cases) ← `ports/` (interfaces) ←

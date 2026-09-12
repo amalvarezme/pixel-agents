@@ -36,8 +36,24 @@ export interface WorkerViewModel {
   sessionKey: string;
   harness: HarnessId;
   label: string;
+  /** Where the CHARACTER currently is. Equal to `deskX`/`deskY` at rest, but overwritten with the
+   * animated position while an archive trip is in flight (`animation/trip-animation.ts`'s
+   * `applyTripOverlay`). */
   x: number;
   y: number;
+  /**
+   * Where the worker's DESK is — its layout position, fixed for as long as the worker holds that
+   * desk. Separate from `x`/`y` because furniture does not walk: building the desk from the
+   * animated position sent the whole workstation across the office on every archive trip, with the
+   * character standing on it the entire way. `applyTripOverlay` deliberately leaves these two
+   * fields alone, which is what lets the character leave its desk behind.
+   *
+   * Optional only so a hand-built view model in a test never has to restate a position it already
+   * gave as `x`/`y` (the same concession `activity` makes below); `buildOfficeViewModel` always
+   * sets both, and `buildOfficeFloorView` falls back to `x`/`y` when they are absent.
+   */
+  deskX?: number;
+  deskY?: number;
   lane: DeskLane;
   /** Normalized tool_start caption pair (design.md "Captions"), resolved upstream per-harness. */
   toolLabel?: string;
@@ -91,6 +107,8 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       label: worker.label,
       x: desk.x,
       y: desk.y,
+      deskX: desk.x,
+      deskY: desk.y,
       lane: desk.lane,
       activity: worker.activity,
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),

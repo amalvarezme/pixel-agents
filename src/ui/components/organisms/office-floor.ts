@@ -18,7 +18,11 @@ export interface OfficeFloorView {
 export function buildOfficeFloorView(viewModel: OfficeViewModel): OfficeFloorView {
   const ctx = { totalWorkerCount: viewModel.workers.length };
   return {
-    desks: viewModel.workers.map((w) => buildDeskView({ sessionKey: w.sessionKey, x: w.x, y: w.y, lane: w.lane }, ctx)),
+    // From `deskX`/`deskY`, never `x`/`y`: the latter carry the archive-trip animation's moving
+    // position, and building the furniture from those made the desk travel to the cabinet too.
+    desks: viewModel.workers.map((w) =>
+      buildDeskView({ sessionKey: w.sessionKey, x: w.deskX ?? w.x, y: w.deskY ?? w.y, lane: w.lane }, ctx),
+    ),
     workers: viewModel.workers.map((w) => buildWorkerView(w)),
     overflowCount: viewModel.overflowCount,
     archiveCount: viewModel.archiveCount ?? 0,

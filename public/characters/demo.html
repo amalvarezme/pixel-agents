@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8"/>
+<title>Pixel Office Demo</title>
+<style>
+body{font-family:system-ui;background:#111;color:#eee;text-align:center}
+canvas{image-rendering:pixelated;border:1px solid #555;background:#20252b}
+button{margin:4px;padding:8px 12px}
+</style>
+<h1>Pixel Office Characters</h1>
+<canvas id="c" width="640" height="220"></canvas><br>
+<div id="buttons"></div>
+<script type="module">
+import {PixelOfficeCharacter} from "./pixel_office_player.js";
+const ids=["alex","marcus","sophia","elena"];
+const c=document.querySelector("#c"),ctx=c.getContext("2d");
+const chars=[];
+for (const id of ids){
+  const meta=await fetch(`./${id}/${id}.json`).then(r=>r.json());
+  chars.push(new PixelOfficeCharacter(`./${id}/${id}_spritesheet.png`,meta,4));
+}
+let last=performance.now();
+function loop(t){
+  const dt=t-last; last=t;
+  ctx.clearRect(0,0,c.width,c.height);
+  chars.forEach((ch,i)=>{ch.update(dt);ch.draw(ctx,30+i*150,45);});
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+for(const a of ["idle","walk","work","typing","talk","point","celebrate","sit"]){
+ const b=document.createElement("button"); b.textContent=a;
+ b.onclick=()=>chars.forEach(c=>c.setAnimation(a));
+ document.querySelector("#buttons").appendChild(b);
+}
+</script>

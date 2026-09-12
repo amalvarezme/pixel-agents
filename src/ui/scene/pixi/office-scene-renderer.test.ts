@@ -411,7 +411,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const background = renderOfficeBackground();
       const floor: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
 
-      const scene = renderOfficeScene(floor, 0, background);
+      const scene = renderOfficeScene(floor, 0, { background });
 
       expect(scene.children[0]).toBe(background);
     });
@@ -425,8 +425,8 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const background = renderOfficeBackground();
       const floor: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
 
-      const first = renderOfficeScene(floor, 0, background);
-      const second = renderOfficeScene(floor, 16, background);
+      const first = renderOfficeScene(floor, 0, { background });
+      const second = renderOfficeScene(floor, 16, { background });
 
       expect(second.children[0]).toBe(background);
       expect(first.children).not.toContain(background);
@@ -469,5 +469,81 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       expect(counterText?.text).toContain('7');
       expect(counterText?.text).not.toContain('3');
     });
+  });
+});
+
+describe('renderOfficeScene scene ordering and worker state', () => {
+  function worker(sessionKey: string, x: number, y: number, extra: Record<string, unknown> = {}) {
+    return {
+      sessionKey,
+      x,
+      y,
+      lane: 'root' as const,
+      badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
+      caption: sessionKey,
+      tooltip: TEST_TOOLTIP,
+      ...extra,
+    };
+  }
+
+  function floorOf(workers: ReturnType<typeof worker>[], deskPositions?: Array<{ x: number; y: number }>): OfficeFloorView {
+    return {
+      desks: workers.map((w, i) => ({
+        sessionKey: w.sessionKey,
+        x: deskPositions?.[i]?.x ?? w.x,
+        y: deskPositions?.[i]?.y ?? w.y,
+        width: 160,
+        height: 40,
+      })),
+      workers: workers as unknown as OfficeFloorView['workers'],
+      overflowCount: 0,
+      archiveCount: 0,
+    };
+  }
+
+  /** Character pack guide section 18: a workstation lower on the plan draws in front of one further back. */
+  it('draws workers back-to-front by their y position, regardless of input order', () => {
+    const scene = renderOfficeScene(floorOf([worker('far', 100, 800), worker('near', 300, 200)]));
+
+    const groups = scene.children.slice(1, 3) as Container[];
+    const captions = groups.map((g) => g.children.find((c): c is Text => c instanceof Text)?.text);
+    expect(captions).toEqual(['near', 'far']);
+  });
+
+  /**
+   * Regression: the desk used to be drawn at the WORKER's animated position, so a memory_write
+   * sent the whole workstation walking to the archive cabinet.
+   */
+  it('leaves the desk at its own position while the character walks away from it', () => {
+    const scene = renderOfficeScene(
+      floorOf([worker('s1', 900, 150, { archiveTrip: { carryCount: 1, highlight: false } })], [{ x: 200, y: 700 }]),
+    );
+
+    const group = scene.children[1] as Container;
+    expect({ x: group.x, y: group.y }).toEqual({ x: 200, y: 700 });
+  });
+
+  it('carries the archive document with the character, not with the desk it left behind', () => {
+    const scene = renderOfficeScene(
+      floorOf([worker('s1', 900, 150, { archiveTrip: { carryCount: 1, highlight: false } })], [{ x: 200, y: 700 }]),
+    );
+
+    const group = scene.children[1] as Container;
+    const documents = group.children.filter((c) => c instanceof Graphics && c.x === 700);
+    expect(documents).toHaveLength(1);
+  });
+
+  /** design.md "Session discovery and aging out": idle means "worker dims, stays on stage". */
+  it('dims a worker whose session has gone quiet', () => {
+    const working = renderOfficeScene(floorOf([worker('s1', 100, 100, { activity: 'working' })]));
+    const idle = renderOfficeScene(floorOf([worker('s1', 100, 100, { activity: 'idle' })]));
+
+    const alphaOf = (scene: Container): number => {
+      const group = scene.children[1] as Container;
+      return (group.children.find((c) => c instanceof Container && c.alpha < 1)?.alpha ?? 1) as number;
+    };
+
+    expect(alphaOf(working)).toBe(1);
+    expect(alphaOf(idle)).toBeLessThan(1);
   });
 });
