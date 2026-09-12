@@ -19,6 +19,7 @@
  */
 import type { OfficeViewModel, WorkerViewModel } from '../../state/office-view-model';
 import type { ScenePoint } from '../layout/archive-path';
+import { resolveCharacterFacing, type CharacterFacing } from '../character/character-facing';
 
 export type TripPhase = 'walking-out' | 'at-archive' | 'walking-back';
 
@@ -164,6 +165,21 @@ export interface TripRenderOverlay {
   highlight: boolean;
   /** True for the whole trip — the carried document sprite is visible throughout. */
   showDocument: boolean;
+  /** Which way the character should face for this leg of the trip (`character-facing.ts`):
+   * `'walking-out'` heads from the desk toward the archive, `'walking-back'` reverses that same
+   * leg — read from the trip's own fixed path endpoints, never from `now`/position alone (a
+   * worker's CURRENT position cannot tell outbound from inbound on its own: both legs pass
+   * through the same stretch of floor). */
+  facing: CharacterFacing;
+}
+
+/** The trip's own direction: the desk end of its path, and the archive end. Read from the fixed
+ * path endpoints (set once when the trip starts, `advanceTripAnimations`), never from a moving
+ * position — that is what makes outbound vs inbound reliably distinguishable. */
+function tripFacing(trip: ActiveTrip): CharacterFacing {
+  const deskX = trip.path[0]?.x ?? 0;
+  const archiveX = trip.path[trip.path.length - 1]?.x ?? deskX;
+  return trip.phase === 'walking-back' ? resolveCharacterFacing(archiveX, deskX) : resolveCharacterFacing(deskX, archiveX);
 }
 
 /** The current rendered position/highlight for `sessionKey`'s active trip, or `null` if it has
@@ -172,15 +188,17 @@ export function getTripOverlay(state: TripAnimatorState, sessionKey: string, now
   const trip = state.active.get(sessionKey);
   if (!trip) return null;
 
+  const facing = tripFacing(trip);
+
   if (trip.phase === 'at-archive') {
     const destination = trip.path[trip.path.length - 1]!;
-    return { x: destination.x, y: destination.y, highlight: true, showDocument: true };
+    return { x: destination.x, y: destination.y, highlight: true, showDocument: true, facing };
   }
 
   const elapsed = now - trip.phaseStartedAt;
   const progress = Math.min(1, elapsed / WALK_DURATION_MS);
   const position = interpolatePath(trip.path, trip.phase === 'walking-out' ? progress : 1 - progress);
-  return { x: position.x, y: position.y, highlight: false, showDocument: true };
+  return { x: position.x, y: position.y, highlight: false, showDocument: true, facing };
 }
 
 /**
@@ -195,7 +213,7 @@ export function applyTripOverlay(viewModel: OfficeViewModel, state: TripAnimator
       ...worker,
       x: overlay.x,
       y: overlay.y,
-      archiveTrip: { ...worker.archiveTrip, highlight: overlay.highlight, showDocument: overlay.showDocument },
+      archiveTrip: { ...worker.archiveTrip, highlight: overlay.highlight, showDocument: overlay.showDocument, facing: overlay.facing },
     };
   });
 

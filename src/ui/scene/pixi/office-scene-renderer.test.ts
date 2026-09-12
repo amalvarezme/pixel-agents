@@ -315,6 +315,62 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
     });
   });
 
+  // Project sets COLOUR: every worker under the same project shares one torso colour
+  // (`resolveProjectCharacterColor`), proving the pixi wiring actually reaches it end to end
+  // (character-pose.test.ts covers the pure colour decision itself).
+  describe('character sprite — project colour', () => {
+    function floorWithProject(projectPath?: string): OfficeFloorView {
+      return {
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 160 }],
+        workers: [
+          {
+            sessionKey: 'claude-code:s1',
+            x: 100,
+            y: 100,
+            lane: 'root',
+            badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
+            caption: 'one',
+            tooltip: TEST_TOOLTIP,
+            agentProfile: { role: 'subagent' },
+            ...(projectPath !== undefined ? { projectPath } : {}),
+          },
+        ],
+        overflowCount: 0,
+        archiveCount: 0,
+      };
+    }
+
+    // No cape for a subagent, so the torso is the THIRD shape drawn (after both legs) — index 2
+    // in the character group's own children, matching buildCharacterPose's draw order.
+    function torsoGraphics(scene: Container): Graphics {
+      const deskGroup = scene.children[1] as Container;
+      const characterGroup = deskGroup.children[2] as Container;
+      return characterGroup.children[2] as Graphics;
+    }
+
+    it("paints the character's torso with the project's resolved colour", () => {
+      const scene = renderOfficeScene(floorWithProject('/Users/andresalvarez/Documents/pixel-agents'));
+
+      // 0x4fd1c5 is resolveProjectCharacterColor('/Users/andresalvarez/Documents/pixel-agents').
+      expect(torsoGraphics(scene).fillStyle.color).toBe(0x4fd1c5);
+    });
+
+    // Adversarial twin: a different project must paint a different torso colour.
+    it('reflects a different project with a different torso colour', () => {
+      const sceneA = renderOfficeScene(floorWithProject('/Users/andresalvarez/Documents/pixel-agents'));
+      const sceneB = renderOfficeScene(floorWithProject('/Users/andresalvarez/Documents/other-project'));
+
+      expect(torsoGraphics(sceneA).fillStyle.color).not.toBe(torsoGraphics(sceneB).fillStyle.color);
+    });
+
+    it('paints the fixed neutral colour when the worker has no projectPath', () => {
+      const scene = renderOfficeScene(floorWithProject(undefined));
+
+      // 0x6b7280 is resolveProjectCharacterColor(undefined) — the fixed neutral.
+      expect(torsoGraphics(scene).fillStyle.color).toBe(0x6b7280);
+    });
+  });
+
   // Desk props (monitor/keyboard/mouse/mug, `scenery/office-scenery.ts`'s `buildDeskProps`) must
   // draw AFTER the character so the monitor occludes the figure standing behind the desk.
   describe('desk props (monitor, keyboard, mouse, mug)', () => {

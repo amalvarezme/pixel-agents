@@ -16,6 +16,7 @@ import { ARCHIVE_DESTINATION } from '../layout/archive-path';
 import { selectCharacterAnimationState } from '../character/animation-state';
 import { selectAnimationFrame } from '../character/animation-clock';
 import { resolveModelAccentColor } from '../character/model-accent';
+import { resolveProjectCharacterColor } from '../character/project-accent';
 import { buildCharacterPose } from '../character/character-pose';
 import { buildDeskProps, buildOfficeScenery } from '../scenery/office-scenery';
 import { renderCharacter } from './character-renderer';
@@ -81,11 +82,18 @@ function isWorkerWalking(worker: { archiveTrip?: { highlight: boolean } }): bool
 
 /** Builds and draws the pixel-art character standing at `desk`, picking its animation
  * state/frame from data the scene already has (blocker/tasks.md: "idle/working/walking, driven
- * by data the scene already has") and its silhouette/accent from the worker's `agentProfile`
- * (blocker: "an orchestrator must look visibly different from a subagent ... the model should be
- * distinguishable at a glance"). */
+ * by data the scene already has"), its SIZE from `agentProfile.role` (an orchestrator is drawn
+ * larger, the SAME character design as its subagents — `character-pose.ts`'s `ROLE_SCALE`), its
+ * COLOUR from the worker's `projectPath` (every worker under one project shares a torso colour,
+ * `resolveProjectCharacterColor`), its model accent badge from `agentProfile`, and which way it
+ * faces from the currently active archive trip leg, if any (`character-facing.ts`). */
 function renderWorkerCharacter(
-  worker: { activity?: 'working' | 'idle'; archiveTrip?: { highlight: boolean }; agentProfile?: { role: 'orchestrator' | 'subagent'; model?: string; requestedModel?: string } },
+  worker: {
+    activity?: 'working' | 'idle';
+    archiveTrip?: { highlight: boolean; facing?: 'left' | 'right' };
+    agentProfile?: { role: 'orchestrator' | 'subagent'; model?: string; requestedModel?: string };
+    projectPath?: string;
+  },
   deskHeight: number,
   now: number,
 ): Container {
@@ -93,8 +101,10 @@ function renderWorkerCharacter(
   const frame = selectAnimationFrame(animationState, now);
   const role = worker.agentProfile?.role ?? 'subagent';
   const accentColor = resolveModelAccentColor(worker.agentProfile?.model ?? worker.agentProfile?.requestedModel);
+  const bodyColor = resolveProjectCharacterColor(worker.projectPath);
+  const facing = worker.archiveTrip?.facing ?? 'right';
 
-  const character = renderCharacter(buildCharacterPose({ role, state: animationState, frame, accentColor }));
+  const character = renderCharacter(buildCharacterPose({ role, state: animationState, frame, accentColor, bodyColor, facing }));
   character.y = -(deskHeight / 2 + CHARACTER_DESK_CLEARANCE);
   return character;
 }

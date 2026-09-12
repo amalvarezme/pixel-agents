@@ -175,6 +175,58 @@ describe('getTripOverlay — the currently-rendered position/highlight for an ac
 
     expect(overlay).toMatchObject({ x: 1720, y: 540, highlight: false, showDocument: true });
   });
+
+  // Movement animations: "including which way it is facing". The trip's path here runs from
+  // desk x=100 to archive x=1720 (increasing x), so walking-out must face right.
+  describe('facing — reads the trip leg\'s own direction, not just the current position', () => {
+    it('faces toward the archive while walking out', () => {
+      const state = createTripAnimatorState();
+      const started = advanceTripAnimations(state, [workerWithTrip()], 0).state;
+
+      const overlay = getTripOverlay(started, 'claude-code:s1', 0);
+
+      expect(overlay?.facing).toBe('right');
+    });
+
+    // The decisive case: BOTH legs of the trip occupy the exact same stretch of floor (the path
+    // is retraced), so a naive "current position" read would give the same answer for both — the
+    // facing must actually flip once the trip reverses.
+    it('flips to face back toward the desk once the trip reverses (walking-back)', () => {
+      const state = createTripAnimatorState();
+      let s = advanceTripAnimations(state, [workerWithTrip()], 0).state;
+      s = advanceTripAnimations(s, [workerWithTrip()], WALK_DURATION_MS).state;
+      s = advanceTripAnimations(s, [workerWithTrip()], WALK_DURATION_MS + DOCK_DURATION_MS).state;
+
+      const overlay = getTripOverlay(s, 'claude-code:s1', WALK_DURATION_MS + DOCK_DURATION_MS);
+
+      expect(overlay?.facing).toBe('left');
+    });
+
+    it('reports a defined facing while dwelling at the archive', () => {
+      const state = createTripAnimatorState();
+      let s = advanceTripAnimations(state, [workerWithTrip()], 0).state;
+      s = advanceTripAnimations(s, [workerWithTrip()], WALK_DURATION_MS).state;
+
+      const overlay = getTripOverlay(s, 'claude-code:s1', WALK_DURATION_MS);
+
+      expect(overlay?.facing).toBe('right');
+    });
+
+    // Adversarial twin: a trip walking in the OPPOSITE horizontal direction (desk to the right of
+    // the archive) must face the opposite way, proving this reads the path's own endpoints rather
+    // than being hardcoded to "right" for outbound.
+    it('faces left while walking out when the desk sits to the right of the archive', () => {
+      const reversedPathWorker = workerWithTrip({
+        archiveTrip: { path: [{ x: 1720, y: 100 }, { x: 1720, y: 1000 }, { x: 100, y: 1000 }, { x: 100, y: 540 }], carryCount: 1 },
+      });
+      const state = createTripAnimatorState();
+      const started = advanceTripAnimations(state, [reversedPathWorker], 0).state;
+
+      const overlay = getTripOverlay(started, 'claude-code:s1', 0);
+
+      expect(overlay?.facing).toBe('left');
+    });
+  });
 });
 
 describe('applyTripOverlay — overlays animated position/highlight onto an OfficeViewModel', () => {
@@ -207,6 +259,15 @@ describe('applyTripOverlay — overlays animated position/highlight onto an Offi
     const overlaid = applyTripOverlay(viewModel, s, WALK_DURATION_MS);
 
     expect(overlaid.archiveCount).toBe(1);
+  });
+
+  it('carries the resolved facing through onto the overlaid worker\'s archiveTrip', () => {
+    const started = advanceTripAnimations(createTripAnimatorState(), [workerWithTrip()], 0).state;
+    const viewModel: OfficeViewModel = { workers: [workerWithTrip()], overflowCount: 0 };
+
+    const overlaid = applyTripOverlay(viewModel, started, 0);
+
+    expect(overlaid.workers[0]!.archiveTrip?.facing).toBe('right');
   });
 
   // Character animation frames (ui/scene/character/animation-clock.ts) need the same clock the

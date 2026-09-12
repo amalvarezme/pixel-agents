@@ -106,6 +106,38 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     expect(view.agentProfile).toBeUndefined();
   });
 
+  // Project colour (ui/scene/character/project-accent.ts) needs the associated project's working
+  // directory to resolve a colour — carried through onto WorkerView, not just into the tooltip.
+  it('carries projectPath through onto the view for the pixi renderer to resolve a colour from', () => {
+    const view = buildWorkerView(workerViewModel({ projectPath: '/Users/andresalvarez/Documents/pixel-agents' }));
+
+    expect(view.projectPath).toBe('/Users/andresalvarez/Documents/pixel-agents');
+  });
+
+  // Adversarial twin: a worker with no projectPath must not gain one out of nowhere.
+  it('has no projectPath when the worker has none', () => {
+    const view = buildWorkerView(workerViewModel());
+
+    expect(view.projectPath).toBeUndefined();
+  });
+
+  // Movement animations: the render half resolves which way a walking worker should face
+  // (`applyTripOverlay`) — this molecule must carry it through unchanged, like highlight.
+  it('carries archiveTrip.facing through when the render half has resolved it', () => {
+    const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 1, highlight: false, facing: 'left' } }));
+
+    expect(view.archiveTrip?.facing).toBe('left');
+  });
+
+  // Adversarial twin: a structural-only view model (no render-half overlay yet) must not gain a
+  // facing out of nowhere — proves this is carried through, not defaulted here.
+  it('has no archiveTrip.facing when the render half has not resolved one yet', () => {
+    const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 1 } }));
+
+    expect(view.archiveTrip).toEqual({ carryCount: 1, highlight: false });
+    expect(view.archiveTrip?.facing).toBeUndefined();
+  });
+
   // Hover tooltip: the DOM overlay (ui/scene/layout/hover-hit-test.ts + agent-tooltip.ts) needs
   // more than the pre-truncated `caption` — this molecule is where harness, label, tool pair, and
   // agentProfile are all available at once to build the untruncated four-row tooltip content.

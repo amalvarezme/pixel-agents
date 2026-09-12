@@ -7,6 +7,7 @@ import {
   type ViewportFit,
 } from './hover-hit-test';
 import type { DeskView } from '../../components/molecules/desk';
+import { buildCharacterPose } from '../character/character-pose';
 
 function desk(overrides: Partial<DeskView> = {}): DeskView {
   return { sessionKey: 'claude-code:s1', x: 760, y: 540, width: 160, height: 40, ...overrides };
@@ -66,6 +67,28 @@ describe('workerHoverBox — the desk slab plus the character standing behind it
     const large = workerHoverBox(desk({ width: 240, height: 60 }));
 
     expect(large.height).toBeGreaterThan(small.height);
+  });
+
+  // Regression guard: role now SCALES the drawn character (`ROLE_SCALE` in character-pose.ts), so
+  // a large orchestrator reaches further above its feet than a subagent. The hover box must cover
+  // that full reach, not just whatever pose CHARACTER_TOP_REACH happened to be measured from.
+  it("covers a LARGE orchestrator's full height, not just a smaller subagent's", () => {
+    const d = desk();
+    const box = workerHoverBox(d);
+
+    // Mirrors office-scene-renderer.ts's CHARACTER_DESK_CLEARANCE and character anchoring, and
+    // hover-hit-test.ts's own duplicate of that constant.
+    const CHARACTER_DESK_CLEARANCE = 6;
+    const characterOriginY = d.y - d.height / 2 - CHARACTER_DESK_CLEARANCE;
+
+    const orchestratorShapes = buildCharacterPose({ role: 'orchestrator', state: 'idle', frame: 1, accentColor: 0, bodyColor: 0 });
+    const orchestratorTopReach = Math.min(...orchestratorShapes.map((s) => s.y - s.height / 2));
+    const orchestratorTopWorldY = characterOriginY + orchestratorTopReach;
+
+    // The box's own top edge must sit AT OR ABOVE (a smaller/equal y) the orchestrator's actual
+    // topmost drawn pixel — otherwise part of a large orchestrator would render above the hover
+    // box and never register a hover.
+    expect(box.y).toBeLessThanOrEqual(orchestratorTopWorldY);
   });
 });
 
