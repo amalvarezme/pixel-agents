@@ -9,13 +9,21 @@
  *
  *   1. `background.png`
  *   2. the exterior Sentinel, clipped by `window_mask.png`
- *   3. agents, sorted by the y of their FEET
+ *   3. agents standing BEHIND furniture, sorted by the y of their FEET
  *   4. `foreground.png`
- *   5. UI (captions, carried documents, the archive counter)
+ *   5. agents standing IN FRONT of furniture, sorted the same way
+ *   6. UI (captions, carried documents, the archive counter)
  *
  * Sorting by feet (section 12: "No ordenar por el centro del sprite ni por su esquina superior
  * izquierda") is what lets a character walking along the front of the room pass in front of the
- * desks behind it; the foreground layer is what lets it disappear behind the ones in front.
+ * desks behind it.
+ *
+ * The split around the foreground is what makes an agent SIT AT its workstation rather than hide
+ * behind it. A workstation's anchor is the floor in front of the desk — that is what the anchor
+ * means — so its occupant belongs on top of that desk's art, facing the laptop, with the desk
+ * behind it. A character the furniture really does stand in front of goes under the layer instead.
+ * `world/foreground-occlusion.ts` makes that call per character, from the map's own rectangles;
+ * nothing here decides it.
  *
  * Still no ticker of its own — `ui/scene/animation/trip-animation.ts` has already resolved every
  * position and highlight into the `OfficeFloorView` this module receives; `now` only selects which
@@ -276,11 +284,20 @@ export function renderOfficeScene(
   // Guide section 12: sort by the FEET. A character lower in the room is nearer the viewer and
   // draws in front of everyone behind it.
   const ordered = [...floor.workers].sort((a, b) => a.y - b.y);
-  for (const worker of ordered) scene.addChild(renderWorker(worker, now, options.atlas));
 
-  // The foreground goes on top of the agents so desk fronts, plants and the sofa can occlude them
-  // (guide section 4) — that overlap is what stops the characters looking pasted onto the picture.
+  for (const worker of ordered.filter((candidate) => candidate.behindForeground)) {
+    scene.addChild(renderWorker(worker, now, options.atlas));
+  }
+
+  // Guide section 4: the foreground is what lets furniture occlude the people behind it — the
+  // overlap that stops the characters looking pasted onto the picture.
   if (options.foreground) scene.addChild(new Sprite(options.foreground));
+
+  // ...and everyone the furniture does NOT stand in front of goes on top of it, which is how an
+  // agent at its own workstation reads as sitting at the desk rather than hiding behind it.
+  for (const worker of ordered.filter((candidate) => !candidate.behindForeground)) {
+    scene.addChild(renderWorker(worker, now, options.atlas));
+  }
 
   scene.addChild(renderArchiveCounter(floor.archiveCount));
   return scene;

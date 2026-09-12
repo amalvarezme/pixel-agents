@@ -125,9 +125,14 @@ own map — is the single source of truth for what is where.
 - **Eleven workstations.** `office-map.json` names them `ws_01`..`ws_11` with the anchor a
   character stands on to use each one. Agents are seated in that order; anyone past the eleventh is
   counted as overflow and listed by name in the roster panel instead.
-- **Layer order** (guide section 4): background → agents sorted by the y of their feet →
-  foreground → UI. Sorting by feet is what lets an agent crossing the room pass in front of the
-  desks behind it; the foreground layer is what hides its legs behind the desk it is working at.
+- **Layer order** (guide section 4): background → agents the furniture stands in front of →
+  foreground → agents it does not → UI, each group sorted by the y of their feet. The split is what
+  makes an agent SIT AT its workstation instead of behind it: a workstation's anchor is the floor
+  in front of the desk, so its occupant is drawn on top of that desk's art, facing the laptop.
+  `world/foreground-occlusion.ts` decides which side each character is on, from the map's own
+  collision rectangles — furniture only occludes a character when it overlaps the column its feet
+  are in, overlaps the rows its body is drawn across, and has its own front edge nearer the viewer
+  than those feet.
 - **Perspective** comes from the map's own `depth.scaleBands`, plus one whole readability step and
   one more for an orchestrator. Whole numbers only — a fractional scale destroys pixel-perfect
   rendering.
@@ -137,7 +142,7 @@ own map — is the single source of truth for what is where.
 - **The Sentinel** patrols outside, drawn only through `window_mask.png` so it can never appear to
   be in the room. It is scenery: it represents no session, no agent and no event. Nothing else on
   the floor is decorative, which is exactly why this one thing has to say so.
-- Two anchors in the shipped map needed tuning; the reasons are recorded in the map's own
+- One anchor in the shipped map needed tuning; the reason is recorded in the map's own
   `localAdjustments` field, which is the only place the guide allows that kind of fix.
 
 ## Characters

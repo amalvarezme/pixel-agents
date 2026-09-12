@@ -7,6 +7,7 @@ import type { WorkerViewModel } from '../../state/office-view-model';
 import type { WorkerActivity } from '../../../domain/office/office';
 import type { AgentProfile } from '../../../domain/agents/agent-profile';
 import { resolveCharacterScale, type CharacterDirection } from '../../scene/character/character-sprite';
+import { isBehindForeground } from '../../scene/world/foreground-occlusion';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip';
@@ -30,6 +31,10 @@ export interface WorkerView {
    * role bonus (`resolveCharacterScale`). Resolved here, once, so the renderer and the hover
    * hit-test can never disagree about how big a figure is. */
   scale: number;
+  /** True when a piece of the room's furniture stands between this character and the viewer, so
+   * the renderer must draw it BEFORE `foreground.png` (`world/foreground-occlusion.ts`). False for
+   * an agent at its own workstation, which stands in front of the desk it is using. */
+  behindForeground: boolean;
   badge: HarnessBadge;
   caption: string;
   /** Untruncated hover-tooltip content (`ui/scene/layout/hover-hit-test.ts` drives the DOM
@@ -51,12 +56,14 @@ export interface WorkerView {
 
 export function buildWorkerView(worker: WorkerViewModel): WorkerView {
   const badge = buildHarnessBadge(worker.harness);
+  const scale = resolveCharacterScale(worker.y, worker.agentProfile?.role ?? 'subagent');
 
   return {
     sessionKey: worker.sessionKey,
     x: worker.x,
     y: worker.y,
-    scale: resolveCharacterScale(worker.y, worker.agentProfile?.role ?? 'subagent'),
+    scale,
+    behindForeground: isBehindForeground({ x: worker.x, y: worker.y, scale }),
     badge,
     caption: buildCaption(
       worker.label,

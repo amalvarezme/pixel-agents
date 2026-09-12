@@ -24,6 +24,7 @@ function worker(overrides: Partial<WorkerView> = {}): WorkerView {
     x: 660,
     y: 695,
     scale: 3,
+    behindForeground: false,
     badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
     caption: 'my-session',
     tooltip: TEST_TOOLTIP,
@@ -35,9 +36,10 @@ function floorOf(workers: WorkerView[], archiveCount = 0): OfficeFloorView {
   return { workers, overflowCount: 0, archiveCount };
 }
 
-/** The worker groups, i.e. everything between the background and the archive counter. */
+/** The worker groups: everything between the background and the archive counter that is not one
+ * of the artwork layers (a PixiJS `Sprite` is itself a `Container`, so identity is not enough). */
 function workerGroups(scene: Container): Container[] {
-  return scene.children.slice(1, scene.children.length - 1) as Container[];
+  return scene.children.slice(1, scene.children.length - 1).filter((child) => !(child instanceof Sprite)) as Container[];
 }
 
 /** A worker group's caption text, which lives inside its own plated label container. */
@@ -92,14 +94,55 @@ describe('renderOfficeScene — the room, its people, and the layer order betwee
   });
 
   /**
-   * Guide section 4: the foreground layer goes ON TOP of the agents, so desk fronts, plants and
-   * the sofa can occlude them. Without it the characters look pasted onto the picture.
+   * Guide section 4: the foreground layer lets furniture occlude the people BEHIND it. The split
+   * around that layer is what makes an agent sit AT its workstation instead of hiding behind it —
+   * a workstation anchor is the floor in front of the desk, so its occupant belongs on top of the
+   * desk's art.
    */
-  it('draws the foreground artwork above every character and below nothing but the UI', () => {
-    const scene = renderOfficeScene(floorOf([worker()]), 0, { foreground: Texture.EMPTY });
+  it('draws a character the furniture stands in front of BELOW the foreground', () => {
+    const scene = renderOfficeScene(floorOf([worker({ behindForeground: true })]), 0, { foreground: Texture.EMPTY });
 
     const foregroundIndex = scene.children.findIndex((child) => child instanceof Sprite);
-    expect(foregroundIndex).toBe(scene.children.length - 2); // after the worker, before the counter
+    const workerIndex = scene.children.indexOf(workerGroups(scene)[0]!);
+    expect(workerIndex).toBeLessThan(foregroundIndex);
+  });
+
+  it('draws a character seated at its own workstation ABOVE the foreground', () => {
+    const scene = renderOfficeScene(floorOf([worker({ behindForeground: false })]), 0, { foreground: Texture.EMPTY });
+
+    const foregroundIndex = scene.children.findIndex((child) => child instanceof Sprite);
+    const workerIndex = scene.children.indexOf(workerGroups(scene)[0]!);
+    expect(workerIndex).toBeGreaterThan(foregroundIndex);
+  });
+
+  it('keeps the foreground between the two groups, and both below the UI', () => {
+    const scene = renderOfficeScene(
+      floorOf([
+        worker({ sessionKey: 'behind', caption: 'behind', behindForeground: true }),
+        worker({ sessionKey: 'front', caption: 'front', behindForeground: false }),
+      ]),
+      0,
+      { foreground: Texture.EMPTY },
+    );
+
+    const foregroundIndex = scene.children.findIndex((child) => child instanceof Sprite);
+    expect(workerGroups(scene).map(captionOf)).toEqual(['behind', 'front']);
+    expect(foregroundIndex).toBe(2); // background, the occluded worker, then the artwork
+    expect(foregroundIndex).toBeLessThan(scene.children.length - 2);
+  });
+
+  // Both groups keep their own depth order, so the split never reorders people within a side.
+  it('sorts each side of the foreground by the y of their feet', () => {
+    const scene = renderOfficeScene(
+      floorOf([
+        worker({ sessionKey: 'front-near', caption: 'front-near', y: 880, behindForeground: false }),
+        worker({ sessionKey: 'front-far', caption: 'front-far', y: 500, behindForeground: false }),
+      ]),
+      0,
+      { foreground: Texture.EMPTY },
+    );
+
+    expect(workerGroups(scene).map(captionOf)).toEqual(['front-far', 'front-near']);
   });
 
   it('draws no foreground layer at all when the artwork has not loaded', () => {
