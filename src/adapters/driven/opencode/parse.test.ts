@@ -47,6 +47,30 @@ describe('mapOpenCodeSessionToEvents (tasks.md 18.6, 18.7)', () => {
     expect(events[0]).toMatchObject({ kind: 'session_start', harness: 'opencode', sessionKey: 'opencode:ses_parent1', label: 'general' });
   });
 
+  // Associated-project tracking: `projectPath` is threaded through from the caller's context
+  // (`activity-source.ts`'s `open()`, sourced from `SessionRef.cwd`) — this row-mapping function
+  // has no db access of its own to read `directory` itself.
+  it('carries ctx.projectPath onto the session_start event when given', () => {
+    const session: OpenCodeSessionRow = { id: 'ses_parent1', parent_id: null, title: 'root', agent: 'general' };
+
+    const events = mapOpenCodeSessionToEvents(session, {
+      allocateId: allocator(),
+      at: 1000,
+      projectPath: '/Users/andresalvarez/Documents/pixel-agents',
+    });
+
+    expect(events[0]).toMatchObject({ kind: 'session_start', projectPath: '/Users/andresalvarez/Documents/pixel-agents' });
+  });
+
+  // Adversarial twin: no ctx.projectPath must leave the field unset, never guessed.
+  it('leaves projectPath unset on session_start when ctx has none', () => {
+    const session: OpenCodeSessionRow = { id: 'ses_parent1', parent_id: null, title: 'root', agent: 'general' };
+
+    const events = mapOpenCodeSessionToEvents(session, { allocateId: allocator(), at: 1000 });
+
+    expect(events[0]?.projectPath).toBeUndefined();
+  });
+
   it('emits session_start AND a parent event carrying correlationId = the parent session key', () => {
     const session: OpenCodeSessionRow = {
       id: 'ses_child1',

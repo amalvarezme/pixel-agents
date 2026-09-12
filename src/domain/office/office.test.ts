@@ -556,6 +556,63 @@ describe('applyEventToOfficeState — agent profile tracking', () => {
   });
 });
 
+// Associated-project tracking: the working directory an ingestion adapter observed for a session
+// (`AgentEventBase.projectPath`), carried onto `Worker.projectPath` with the same merge-not-
+// replace discipline already proven for `agentProfile` above.
+describe('applyEventToOfficeState — project path tracking', () => {
+  it('records projectPath from session_start', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:proj1',
+      at: 1000,
+      projectPath: '/Users/andresalvarez/Documents/pixel-agents',
+    });
+
+    expect(state.workers.get('claude-code:proj1')?.projectPath).toBe('/Users/andresalvarez/Documents/pixel-agents');
+  });
+
+  it('a root worker with no projectPath at all stays undefined, never invented', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:proj-none',
+      at: 1000,
+    });
+
+    expect(state.workers.get('claude-code:proj-none')?.projectPath).toBeUndefined();
+  });
+
+  // Adversarial twin (merge-not-replace, mirrors the agentProfile guard above): a LATER event
+  // that carries no projectPath at all must leave the already-known project untouched, never
+  // clear it.
+  it('a later event carrying no projectPath at all leaves the previously known project untouched', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:proj2',
+      at: 1000,
+      projectPath: '/Users/andresalvarez/Documents/pixel-agents',
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:proj2',
+      at: 1100,
+      label: 'plain-tool-event',
+    });
+
+    expect(state.workers.get('claude-code:proj2')?.projectPath).toBe('/Users/andresalvarez/Documents/pixel-agents');
+  });
+});
+
 describe('applyEventToOfficeState — memory_write drives the carry queue and archive docking (design.md: "animation is a lagging view, ingestion never blocks")', () => {
   it('a memory_write for an existing worker starts a held carry and docks it', () => {
     let state = createOfficeState();

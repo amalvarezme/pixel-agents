@@ -138,6 +138,36 @@ describe('buildOfficeViewModel — agent profile tracking', () => {
   });
 });
 
+// Associated-project tracking: carries `domain/office/office.ts`'s `Worker.projectPath` through
+// to the view model, same shape as agentProfile above.
+describe('buildOfficeViewModel — project path tracking', () => {
+  it('carries a known projectPath through onto the view model worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+      projectPath: '/Users/andresalvarez/Documents/pixel-agents',
+    });
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.projectPath).toBe('/Users/andresalvarez/Documents/pixel-agents');
+  });
+
+  // Adversarial near-miss: a worker with no projectPath at all must not gain one out of nowhere.
+  it('has no projectPath when the worker has none', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.projectPath).toBeUndefined();
+  });
+});
+
 // Character animation states (idle/working/walking) select from the worker's `activity` — this
 // carries `domain/office/office.ts`'s `Worker.activity` through, same shape as agentProfile above.
 describe('buildOfficeViewModel — worker activity', () => {

@@ -84,6 +84,11 @@ export function resolveOpenCodeWorkerLabel(session: Pick<OpenCodeSessionRow, 'ag
 export interface OpenCodeSessionMappingContext {
   allocateId: () => number;
   at?: number;
+  /** Associated-project tracking: the session's cwd, resolved from the `session.directory`
+   * column by the caller (`activity-source.ts`'s `open()`, off the `SessionRef.cwd` it was
+   * discovered with) — this row-mapping function has no db access of its own. `undefined` when
+   * the caller has none to offer. */
+  projectPath?: string;
 }
 
 /**
@@ -104,6 +109,7 @@ export function mapOpenCodeSessionToEvents(session: OpenCodeSessionRow, ctx: Ope
       sessionKey,
       at,
       label,
+      ...(ctx.projectPath !== undefined ? { projectPath: ctx.projectPath } : {}),
     }),
   ];
 

@@ -286,6 +286,44 @@ describe('OpenCodeActivitySource', () => {
       await source.close();
     });
 
+    // Associated-project tracking: `session.directory` (discover-time `SessionRef.cwd`, proven
+    // separately above) must actually land on the synthetic `session_start` event `open()` emits
+    // — not just on the discovered ref.
+    it('stamps the synthetic session_start with projectPath from the session\'s directory column', async () => {
+      const dbPath = freshDbPath();
+      seedToolSession(dbPath, { id: 'ses_1', agent: 'general', directory: '/Users/andresalvarez/Documents/pixel-agents' }, TOOL_PART_DATA);
+      const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 20 });
+
+      const { value: sessionRef } = await source.discover()[Symbol.asyncIterator]().next();
+      const stream = source.open(sessionRef as OpenCodeSessionRef, null);
+      const iterator = stream.events[Symbol.asyncIterator]();
+
+      const first = await iterator.next();
+      expect(first.value?.event.kind).toBe('session_start');
+      expect(first.value?.event.projectPath).toBe('/Users/andresalvarez/Documents/pixel-agents');
+
+      stream.stop();
+      await source.close();
+    });
+
+    // Adversarial twin: a session with no directory (cwd: null) must leave projectPath unset,
+    // never guessed.
+    it('leaves projectPath unset on session_start when the session ref has no cwd', async () => {
+      const dbPath = freshDbPath();
+      seedToolSession(dbPath, { id: 'ses_1', agent: 'general' }, TOOL_PART_DATA);
+      const source = new OpenCodeActivitySource(dbPath, { cadenceMs: 20 });
+
+      const sessionRef: OpenCodeSessionRef = { harness: 'opencode', sessionKey: 'opencode:ses_1', cwd: null, discoveredAt: 0, sessionId: 'ses_1' };
+      const stream = source.open(sessionRef, null);
+      const iterator = stream.events[Symbol.asyncIterator]();
+
+      const first = await iterator.next();
+      expect(first.value?.event.projectPath).toBeUndefined();
+
+      stream.stop();
+      await source.close();
+    });
+
     it('emits memory_write IN ADDITION TO tool_start for a pre-existing engram_mem_save part', async () => {
       const dbPath = freshDbPath();
       seedToolSession(dbPath, { id: 'ses_1', agent: 'general' }, MEMORY_WRITE_PART_DATA);

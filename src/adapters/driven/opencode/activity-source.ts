@@ -282,7 +282,14 @@ export class OpenCodeActivitySource implements ActivitySource {
 
     const sessionRow = this.selectSessionRow(opened.db, sessionId);
     if (sessionRow) {
-      for (const event of mapOpenCodeSessionToEvents(sessionRow, { allocateId: this.allocateId, at: session.lastActivityAt })) {
+      // Associated-project tracking: `session.cwd` was already resolved from the `directory`
+      // column at discovery time (`selectActiveSessions` above); `sessionRow` itself carries no
+      // directory (its query never selects it), so it is threaded through here instead.
+      for (const event of mapOpenCodeSessionToEvents(sessionRow, {
+        allocateId: this.allocateId,
+        at: session.lastActivityAt,
+        ...(session.cwd !== null ? { projectPath: session.cwd } : {}),
+      })) {
         queue.push({ event, checkpoint: initialCheckpoint });
       }
     }

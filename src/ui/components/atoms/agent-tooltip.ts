@@ -12,6 +12,11 @@
  * LAUNCHED with. `requestedModel` must never be displayed as, or mistaken for, the running
  * model — it always carries an explicit "(requested: ...)" marker. A missing model stays
  * visibly "Unknown", never invented or substituted.
+ *
+ * Project row contract: `projectPath` is the absolute working directory an ingestion adapter
+ * observed for the session (`domain/events/types.ts`'s `AgentEventBase.projectPath`); the row
+ * renders only its FINAL path segment (`resolveProjectSegment`) — the full path is far too long
+ * for the panel. Runs in the BROWSER, so this deliberately never imports `node:path`.
  */
 import type { AgentRole } from '../../../domain/agents/agent-profile';
 
@@ -34,6 +39,11 @@ export interface AgentTooltipSource {
   task?: string;
   toolLabel?: string;
   toolDetail?: string;
+  /** The session's associated project — an absolute working directory, sourced from
+   * `Worker.projectPath` (`domain/office/office.ts`). Renders as just its final path segment
+   * (`resolveProjectSegment`), never the full path. `undefined` for a harness that reports none
+   * of it (Antigravity). */
+  projectPath?: string;
 }
 
 const UNKNOWN = 'Unknown';
@@ -77,6 +87,22 @@ function buildModelValue(source: AgentTooltipSource): string {
   return UNKNOWN;
 }
 
+/**
+ * Extracts the final path segment of an absolute (or bare) project path, for the Project row —
+ * the full path is far too long for the tooltip panel. Deliberately does NOT import `node:path`:
+ * this module runs in the browser. Splits on both `/` and `\` (a session's `projectPath` may be
+ * POSIX or Windows-shaped), ignores empty segments produced by trailing/duplicate separators, and
+ * returns "Unknown" — never a guess — for the filesystem root or a blank/absent path.
+ */
+export function resolveProjectSegment(projectPath: string | undefined): string {
+  if (!projectPath) return UNKNOWN;
+  const trimmed = projectPath.trim();
+  if (trimmed.length === 0) return UNKNOWN;
+  const segments = trimmed.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  const last = segments[segments.length - 1];
+  return last && last.length > 0 ? last : UNKNOWN;
+}
+
 function buildTaskValue(source: AgentTooltipSource): string {
   const task = presence(source.task);
   if (task) return truncateTask(task);
@@ -93,6 +119,7 @@ function buildTaskValue(source: AgentTooltipSource): string {
 export function buildAgentTooltip(source: AgentTooltipSource): AgentTooltipView {
   return {
     rows: [
+      { label: 'Project', value: resolveProjectSegment(source.projectPath) },
       { label: 'Agent', value: source.harnessName },
       { label: 'Role', value: buildRoleValue(source) },
       { label: 'Model', value: buildModelValue(source) },

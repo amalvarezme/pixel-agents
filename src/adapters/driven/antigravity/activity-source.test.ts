@@ -255,6 +255,27 @@ describe('AntigravityActivitySource', () => {
     await source.close();
   });
 
+  // Associated-project tracking: Antigravity's transcript carries no cwd field at all
+  // (discover.ts: "never guessed") — its synthetic session_start must simply never set
+  // projectPath, never invent one.
+  it('never emits projectPath on the synthetic session_start — Antigravity has no cwd signal', async () => {
+    const { root: harnessRoot } = await makeCliTranscript('{}');
+    const source = new AntigravityActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    expect(sessionRef?.cwd).toBeNull();
+
+    const stream = source.open(sessionRef!, null);
+    const first = await stream.events[Symbol.asyncIterator]().next();
+
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.projectPath).toBeUndefined();
+
+    stream.stop();
+    await source.close();
+  });
+
   it('discover + open + close never writes anything under the harness root (Global No-Write Invariant, composition level)', async () => {
     const { root: harnessRoot, filePath } = await makeCliTranscript('{"step_index":1,"source":"USER","type":"USER_QUERY"}');
     const source = new AntigravityActivitySource(harnessRoot);

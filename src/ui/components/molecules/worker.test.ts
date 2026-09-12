@@ -110,10 +110,24 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
   // more than the pre-truncated `caption` — this molecule is where harness, label, tool pair, and
   // agentProfile are all available at once to build the untruncated four-row tooltip content.
   describe('tooltip', () => {
-    it('always builds exactly four rows: Agent, Role, Model, Task', () => {
+    it('always builds exactly five rows: Project, Agent, Role, Model, Task', () => {
       const view = buildWorkerView(workerViewModel());
 
-      expect(view.tooltip.rows.map((r) => r.label)).toEqual(['Agent', 'Role', 'Model', 'Task']);
+      expect(view.tooltip.rows.map((r) => r.label)).toEqual(['Project', 'Agent', 'Role', 'Model', 'Task']);
+    });
+
+    // The associated project (Worker.projectPath -> WorkerViewModel.projectPath) must reach the
+    // tooltip through this molecule, rendered as just its final path segment.
+    it('reflects the projectPath in the tooltip Project row, as just its final segment', () => {
+      const view = buildWorkerView(workerViewModel({ projectPath: '/Users/andresalvarez/Documents/pixel-agents' }));
+
+      expect(view.tooltip.rows.find((r) => r.label === 'Project')?.value).toBe('pixel-agents');
+    });
+
+    it('shows "Unknown" for Project when the worker has no projectPath', () => {
+      const view = buildWorkerView(workerViewModel());
+
+      expect(view.tooltip.rows.find((r) => r.label === 'Project')?.value).toBe('Unknown');
     });
 
     it("uses the harness badge's FULL product name for the Agent row, not the short badge text", () => {

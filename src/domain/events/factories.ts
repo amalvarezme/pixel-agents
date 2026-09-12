@@ -18,6 +18,7 @@ export interface CreateLogSourcedEventInput {
   toolLabel?: string;
   toolDetail?: string;
   agentProfile?: AgentProfile;
+  projectPath?: string;
 }
 
 /**
