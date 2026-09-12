@@ -121,21 +121,21 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     expect(view.projectPath).toBeUndefined();
   });
 
-  // Movement animations: the render half resolves which way a walking worker should face
+  // Movement animations: the render half resolves which way a walking worker is heading
   // (`applyTripOverlay`) — this molecule must carry it through unchanged, like highlight.
-  it('carries archiveTrip.facing through when the render half has resolved it', () => {
-    const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 1, highlight: false, facing: 'left' } }));
+  it('carries archiveTrip.direction through when the render half has resolved it', () => {
+    const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 1, highlight: false, direction: 'left' } }));
 
-    expect(view.archiveTrip?.facing).toBe('left');
+    expect(view.archiveTrip?.direction).toBe('left');
   });
 
   // Adversarial twin: a structural-only view model (no render-half overlay yet) must not gain a
-  // facing out of nowhere — proves this is carried through, not defaulted here.
-  it('has no archiveTrip.facing when the render half has not resolved one yet', () => {
+  // direction out of nowhere — proves this is carried through, not defaulted here.
+  it('has no archiveTrip.direction when the render half has not resolved one yet', () => {
     const view = buildWorkerView(workerViewModel({ archiveTrip: { path: [], carryCount: 1 } }));
 
     expect(view.archiveTrip).toEqual({ carryCount: 1, highlight: false });
-    expect(view.archiveTrip?.facing).toBeUndefined();
+    expect(view.archiveTrip?.direction).toBeUndefined();
   });
 
   // Hover tooltip: the DOM overlay (ui/scene/layout/hover-hit-test.ts + agent-tooltip.ts) needs

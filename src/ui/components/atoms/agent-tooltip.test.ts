@@ -214,7 +214,7 @@ describe('buildAgentTooltip portrait', () => {
   it('points at the portrait of the character the scene draws for that project', () => {
     const view = buildAgentTooltip({ harnessName: 'Claude Code', projectPath: '/Users/me/pixel-agents' });
 
-    expect(view.portraitUrl).toMatch(/^\/characters\/(alex|marcus|sophia|elena)\/\1_portrait\.png$/);
+    expect(view.portraitUrl).toMatch(/^\/characters\/(alex|marcus|sophia|elena)\/\1_portrait_v2\.png$/);
   });
 
   it('gives every worker of one project the same portrait, orchestrator and subagent alike', () => {
@@ -227,6 +227,6 @@ describe('buildAgentTooltip portrait', () => {
   it('still resolves a portrait for a worker whose harness reports no project', () => {
     const view = buildAgentTooltip({ harnessName: 'Antigravity' });
 
-    expect(view.portraitUrl).toContain('_portrait.png');
+    expect(view.portraitUrl).toContain('_portrait_v2.png');
   });
 });

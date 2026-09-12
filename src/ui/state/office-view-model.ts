@@ -11,7 +11,7 @@ import type { AgentProfile } from '../../domain/agents/agent-profile';
 import type { OfficeState, WorkerActivity } from '../../domain/office/office';
 import { computeArchivePath, type ScenePoint } from '../scene/layout/archive-path';
 import { computeOfficeLayout, type DeskLane, type LayoutWorkerInput } from '../scene/layout/office-layout';
-import type { CharacterFacing } from '../scene/character/character-facing';
+import type { CharacterDirection } from '../scene/character/character-sprite';
 
 /** memory_write archive-trip animation data (tasks.md 21.2-21.4). `path` is harness-agnostic —
  * it is computed from the worker's desk position alone, never from `harness`. */
@@ -26,10 +26,11 @@ export interface ArchiveTripView {
   highlight?: boolean;
   /** Set by the render half: true for the whole trip once animation playback has started. */
   showDocument?: boolean;
-  /** Set by the render half (`applyTripOverlay`): which way the character should face for the
-   * CURRENT leg of the trip (`ui/scene/character/character-facing.ts`). `undefined` from
-   * `buildOfficeViewModel` itself, exactly like `highlight`/`showDocument` above. */
-  facing?: CharacterFacing;
+  /** Set by the render half (`applyTripOverlay`): which way the character is heading on the
+   * CURRENT leg of the trip, in the sprite pack's four-way vocabulary
+   * (`ui/scene/character/character-facing.ts`). `undefined` from `buildOfficeViewModel` itself,
+   * exactly like `highlight`/`showDocument` above. */
+  direction?: CharacterDirection;
 }
 
 export interface WorkerViewModel {

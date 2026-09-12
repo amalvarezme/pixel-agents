@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   CHARACTER_IDS,
-  DESK_LINE_ROW,
-  GROUND_LINE_ROW,
   ROLE_SPRITE_SCALE,
+  SPRITE_ACTIONS,
   computeSpriteFrameRect,
   resolveCharacterId,
-  resolveSpriteAnchor,
-  selectSpriteAnimation,
+  resolveSpriteClip,
   selectSpriteFrame,
+  selectSpritePose,
+  spriteAnchorPoint,
   type CharacterSpriteMeta,
 } from './character-sprite';
 
@@ -51,22 +51,65 @@ describe('resolveCharacterId', () => {
   });
 });
 
-describe('selectSpriteAnimation', () => {
-  it('shows the desk-bound typing clip while working', () => {
-    expect(selectSpriteAnimation({ state: 'working' })).toBe('typing');
+describe('resolveSpriteClip', () => {
+  const meta = loadMeta('alex');
+
+  it('draws the clip the character actually ships for that direction', () => {
+    expect(resolveSpriteClip(meta, 'walk', 'down')?.direction).toBe('down');
+    expect(resolveSpriteClip(meta, 'walk', 'up')?.direction).toBe('up');
   });
 
-  it('shows the desk-bound sitting clip once the session has gone quiet', () => {
-    expect(selectSpriteAnimation({ state: 'idle' })).toBe('sit');
+  it('collapses right onto the single drawn side clip, unmirrored', () => {
+    // The pack draws `side` facing right (`sideFaces`), so a right-facing character needs no flip.
+    expect(resolveSpriteClip(meta, 'walk', 'right')).toMatchObject({ direction: 'side', mirror: false });
   });
 
-  it('shows the walk cycle while crossing the office', () => {
-    expect(selectSpriteAnimation({ state: 'walking' })).toBe('walk');
+  it('answers left with the SAME side clip, mirrored — never a second set of art', () => {
+    // Guide section 5: "No crear una segunda copia gráfica para left."
+    const left = resolveSpriteClip(meta, 'walk', 'left');
+    const right = resolveSpriteClip(meta, 'walk', 'right');
+    expect(left?.mirror).toBe(true);
+    expect(left?.clip.row).toBe(right?.clip.row);
   });
 
-  it('celebrates on arrival at the archive, which outranks every other state', () => {
-    expect(selectSpriteAnimation({ state: 'walking', atArchive: true })).toBe('celebrate');
-    expect(selectSpriteAnimation({ state: 'working', atArchive: true })).toBe('celebrate');
+  it('falls back to the direction an action is actually drawn in', () => {
+    // `work`/`typing` exist only as `up`, `celebrate`/`sit` only as `down`.
+    expect(resolveSpriteClip(meta, 'typing', 'down')?.direction).toBe('up');
+    expect(resolveSpriteClip(meta, 'sit', 'up')?.direction).toBe('down');
+  });
+
+  it('never reports a mirror for a fallback that is not the side clip', () => {
+    expect(resolveSpriteClip(meta, 'typing', 'left')?.mirror).toBe(false);
+  });
+
+  it('returns null for an action the pack does not ship, instead of throwing at render time', () => {
+    expect(resolveSpriteClip(meta, 'backflip', 'down')).toBeNull();
+  });
+});
+
+describe('selectSpritePose', () => {
+  it('types at the workstation, facing it, while the session is producing events', () => {
+    // office_map.json: every workstation declares `defaultAnimation: "typing"`, `facing: "up"`.
+    expect(selectSpritePose({ state: 'working' })).toEqual({ action: 'typing', direction: 'up' });
+  });
+
+  it('turns away from the laptop toward the room once the session goes quiet', () => {
+    expect(selectSpritePose({ state: 'idle' })).toEqual({ action: 'idle', direction: 'down' });
+  });
+
+  it('walks the way it is actually heading', () => {
+    expect(selectSpritePose({ state: 'walking', direction: 'left' })).toEqual({ action: 'walk', direction: 'left' });
+    expect(selectSpritePose({ state: 'walking', direction: 'up' })).toEqual({ action: 'walk', direction: 'up' });
+  });
+
+  it('walks facing the viewer when no direction was resolved, never an undefined clip', () => {
+    expect(selectSpritePose({ state: 'walking' })).toEqual({ action: 'walk', direction: 'down' });
+  });
+
+  it('points at the archive on arrival, which outranks every other state', () => {
+    // specialZones.persistent_memory: `defaultAnimation: "point"`, `facing: "up"`.
+    expect(selectSpritePose({ state: 'walking', atArchive: true })).toEqual({ action: 'point', direction: 'up' });
+    expect(selectSpritePose({ state: 'working', atArchive: true })).toEqual({ action: 'point', direction: 'up' });
   });
 });
 
@@ -103,51 +146,52 @@ describe('selectSpriteFrame', () => {
 describe('computeSpriteFrameRect', () => {
   const meta = loadMeta('alex');
 
-  it('reads the source rectangle straight off the pack metadata (guide section 7)', () => {
-    expect(computeSpriteFrameRect(meta, 'walk', 2)).toEqual({ x: 64, y: 32, width: 32, height: 32 });
+  it('reads the source rectangle straight off the resolved clip', () => {
+    const walkSide = resolveSpriteClip(meta, 'walk', 'right')!;
+    expect(computeSpriteFrameRect(meta, walkSide.clip, 2)).toEqual({
+      x: 64,
+      y: walkSide.clip.row * 32,
+      width: 32,
+      height: 32,
+    });
   });
 
-  it('places every animation on its own declared row', () => {
-    expect(computeSpriteFrameRect(meta, 'idle', 0).y).toBe(0);
-    expect(computeSpriteFrameRect(meta, 'sit', 0).y).toBe(7 * 32);
-  });
-
-  it('never reads outside the sheet for any shipped character, animation or frame', () => {
+  it('never reads outside the sheet for any shipped character, action, direction or frame', () => {
     for (const id of CHARACTER_IDS) {
       const characterMeta = loadMeta(id);
-      for (const [animation, clip] of Object.entries(characterMeta.animations)) {
-        for (let frame = 0; frame < clip.frames; frame++) {
-          const rect = computeSpriteFrameRect(characterMeta, animation, frame);
-          expect(rect.x + rect.width).toBeLessThanOrEqual(characterMeta.sheetWidth);
-          expect(rect.y + rect.height).toBeLessThanOrEqual(characterMeta.sheetHeight);
+      for (const group of Object.values(characterMeta.animations)) {
+        for (const clip of Object.values(group)) {
+          for (let frame = 0; frame < clip.frames; frame++) {
+            const rect = computeSpriteFrameRect(characterMeta, clip, frame);
+            expect(rect.x + rect.width).toBeLessThanOrEqual(characterMeta.sheetWidth);
+            expect(rect.y + rect.height).toBeLessThanOrEqual(characterMeta.sheetHeight);
+          }
         }
       }
     }
   });
 });
 
-describe('resolveSpriteAnchor', () => {
-  /**
-   * The pack draws a desk INTO the `work`/`typing`/`sit` frames (verified by scanning the shipped
-   * PNGs: the table's top edge is row 21 of 32 in every one of those frames, for all four
-   * characters). Pinning that row to the scene's own desk surface is what stops the office showing
-   * two desks per worker — the built-in table lands exactly on ours and reads as the same plane.
-   */
-  it('pins a desk-bearing clip by its built-in table line', () => {
-    expect(resolveSpriteAnchor('typing')).toEqual({ reference: 'desk-surface', row: DESK_LINE_ROW });
-    expect(resolveSpriteAnchor('sit')).toEqual({ reference: 'desk-surface', row: DESK_LINE_ROW });
-    expect(resolveSpriteAnchor('work')).toEqual({ reference: 'desk-surface', row: DESK_LINE_ROW });
+describe('spriteAnchorPoint', () => {
+  it('pins the sprite by the character\'s own declared origin, not the frame corner', () => {
+    // Guide section 5: `(agent.x, agent.y)` are the FEET. Anchoring there is also what makes the
+    // left-facing mirror keep the feet in place instead of sliding the body sideways.
+    const meta = loadMeta('alex');
+    expect(spriteAnchorPoint(meta)).toEqual({ x: 16 / 32, y: 30 / 32 });
   });
 
-  it('pins a desk-free clip by the ground under its feet', () => {
-    expect(resolveSpriteAnchor('walk')).toEqual({ reference: 'floor', row: GROUND_LINE_ROW });
-    expect(resolveSpriteAnchor('idle')).toEqual({ reference: 'floor', row: GROUND_LINE_ROW });
-    expect(resolveSpriteAnchor('celebrate')).toEqual({ reference: 'floor', row: GROUND_LINE_ROW });
+  it('puts the anchor on the horizontal centre and at the foot line for every shipped character', () => {
+    for (const id of CHARACTER_IDS) {
+      const anchor = spriteAnchorPoint(loadMeta(id));
+      expect(anchor.x).toBe(0.5);
+      expect(anchor.y).toBeGreaterThan(0.9);
+      expect(anchor.y).toBeLessThanOrEqual(1);
+    }
   });
 });
 
 describe('ROLE_SPRITE_SCALE', () => {
-  /** Guide section 9: integer scales only — a fractional one destroys pixel-perfect rendering. */
+  /** Guide section 6: integer scales only — a fractional one destroys pixel-perfect rendering. */
   it('uses whole-number scales for both roles', () => {
     expect(Number.isInteger(ROLE_SPRITE_SCALE.orchestrator)).toBe(true);
     expect(Number.isInteger(ROLE_SPRITE_SCALE.subagent)).toBe(true);
@@ -159,25 +203,59 @@ describe('ROLE_SPRITE_SCALE', () => {
 });
 
 describe('shipped asset pack', () => {
-  /** Guide section 31 "Verificación mínima", enforced rather than trusted. */
+  /** Guide section 18 "Criterios de aceptación", enforced rather than trusted. */
   it('ships every character the code can resolve, with the frame geometry the code assumes', () => {
     for (const id of CHARACTER_IDS) {
       const meta = loadMeta(id);
+      expect(meta.schemaVersion ?? 2).toBe(2);
       expect(meta.frameWidth).toBe(32);
       expect(meta.frameHeight).toBe(32);
       expect(meta.sheetWidth).toBe(128);
-      expect(meta.sheetHeight).toBe(256);
-      for (const animation of ['idle', 'walk', 'work', 'typing', 'talk', 'point', 'celebrate', 'sit']) {
-        expect(meta.animations[animation]?.frames).toBe(4);
+      expect(meta.sheetHeight).toBe(512);
+      expect(meta.sideFaces).toBe('right');
+      for (const action of SPRITE_ACTIONS) {
+        expect(Object.keys(meta.animations[action] ?? {}).length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('resolves every pose the scene can ask for, on every shipped character', () => {
+    // The renderer has a fallback for a missing clip, but a pose the PACK cannot answer would mean
+    // a silent downgrade for every worker of that project — catch it here instead.
+    const poses = [
+      selectSpritePose({ state: 'working' }),
+      selectSpritePose({ state: 'idle' }),
+      selectSpritePose({ state: 'walking', atArchive: true }),
+      ...(['up', 'down', 'left', 'right'] as const).map((direction) => selectSpritePose({ state: 'walking', direction })),
+    ];
+
+    for (const id of CHARACTER_IDS) {
+      const meta = loadMeta(id);
+      for (const pose of poses) {
+        expect(resolveSpriteClip(meta, pose.action, pose.direction)).not.toBeNull();
       }
     }
   });
 
   /**
-   * Guide section 23 asks callers not to hardcode the character list when the manifest can supply
-   * it. `CHARACTER_IDS` is hardcoded anyway, because the union type it produces is what makes
-   * every lookup in this module exhaustive at compile time — so this test is the guard that keeps
-   * the two from drifting apart if the pack is ever regenerated.
+   * The v2 sprites are body-only (guide section 5): desks, laptops and chairs belong to the
+   * environment. Nothing in code can assert "no furniture", but the sheet HEIGHT can: v1 packed 8
+   * furniture-bearing rows into 256px, v2 needs 16 directional rows and 512px. A pack that fails
+   * this is the old one, and every anchor in the renderer would be wrong.
+   */
+  it('ships the 16-row directional sheet, not the 8-row v1 sheet', () => {
+    for (const id of CHARACTER_IDS) {
+      const meta = loadMeta(id);
+      const rows = Object.values(meta.animations).flatMap((group) => Object.values(group).map((clip) => clip.row));
+      expect(new Set(rows).size).toBe(16);
+      expect(Math.max(...rows)).toBe(15);
+    }
+  });
+
+  /**
+   * `CHARACTER_IDS` is hardcoded because the union type it produces is what makes every lookup in
+   * this module exhaustive at compile time — so this test is the guard that keeps it and the
+   * shipped manifest from drifting apart if the pack is ever regenerated.
    */
   it('lists exactly the characters the shipped manifest declares', () => {
     const manifest = JSON.parse(readFileSync(join(PACK_ROOT, 'characters_manifest.json'), 'utf8')) as {
@@ -187,10 +265,10 @@ describe('shipped asset pack', () => {
     expect([...CHARACTER_IDS].sort()).toEqual(Object.keys(manifest.characters).sort());
   });
 
-  it('ships a spritesheet and a portrait file for every character', () => {
+  it('ships a spritesheet and a portrait file for every character, at the URLs the code builds', () => {
     for (const id of CHARACTER_IDS) {
-      expect(() => readFileSync(join(PACK_ROOT, id, `${id}_spritesheet.png`))).not.toThrow();
-      expect(() => readFileSync(join(PACK_ROOT, id, `${id}_portrait.png`))).not.toThrow();
+      expect(() => readFileSync(join(PACK_ROOT, id, `${id}_spritesheet_v2.png`))).not.toThrow();
+      expect(() => readFileSync(join(PACK_ROOT, id, `${id}_portrait_v2.png`))).not.toThrow();
     }
   });
 });

@@ -7,7 +7,7 @@ import type { DeskLane } from '../../scene/layout/office-layout';
 import type { WorkerViewModel } from '../../state/office-view-model';
 import type { WorkerActivity } from '../../../domain/office/office';
 import type { AgentProfile } from '../../../domain/agents/agent-profile';
-import type { CharacterFacing } from '../../scene/character/character-facing';
+import type { CharacterDirection } from '../../scene/character/character-sprite';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip';
@@ -17,9 +17,9 @@ import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip
 export interface WorkerArchiveTripView {
   carryCount: number;
   highlight: boolean;
-  /** Which way the character should face for the current leg — carried through only once the
-   * render half (`applyTripOverlay`) has resolved it; absent from a structural-only view model. */
-  facing?: CharacterFacing;
+  /** Which way the character is heading on the current leg — carried through only once the render
+   * half (`applyTripOverlay`) has resolved it; absent from a structural-only view model. */
+  direction?: CharacterDirection;
 }
 
 export interface WorkerView {
@@ -79,7 +79,7 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
           archiveTrip: {
             carryCount: worker.archiveTrip.carryCount,
             highlight: worker.archiveTrip.highlight ?? false,
-            ...(worker.archiveTrip.facing !== undefined ? { facing: worker.archiveTrip.facing } : {}),
+            ...(worker.archiveTrip.direction !== undefined ? { direction: worker.archiveTrip.direction } : {}),
           },
         }
       : {}),

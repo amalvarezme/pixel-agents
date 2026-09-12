@@ -1,16 +1,25 @@
 /**
- * Pixel Office character pack — the PURE half of sprite rendering. No PixiJS, no DOM, no file I/O
- * (dependency-cruiser's `pixi-only-in-scene-pixi` rule keeps every geometry decision testable
+ * Pixel Office v2 character pack — the PURE half of sprite rendering. No PixiJS, no DOM, no file
+ * I/O (dependency-cruiser's `pixi-only-in-scene-pixi` rule keeps every geometry decision testable
  * without a canvas). Everything here decides WHICH frame of WHICH sheet to draw and WHERE to pin
  * it; `ui/scene/pixi/sprite-character-renderer.ts` is the only module that turns those numbers
  * into textures.
  *
- * The pack ships four 32x32 characters, each a 4-column x 8-row sheet, with a per-character JSON
- * declaring every clip's row/frames/fps/loop (`docs/characters/GUIA_AGENTE_PIXEL_OFFICE.md`).
- * That JSON is the source of truth for animation timing — section 6 of the guide and section 32's
- * priority list both say so, so `selectSpriteFrame` takes the clip metadata rather than consulting
- * a table of its own. `ui/scene/character/animation-clock.ts` keeps its hardcoded frame counts for
- * the procedural fallback figure, which has no JSON to read.
+ * What v2 changed, and why this module was rewritten rather than patched
+ * (`docs/pixel-office/IMPLEMENTACION_AGENTE_CODIGO.md` section 5):
+ * - Sprites are BODY-ONLY. v1 drew a desk, a laptop and a chair into the `work`/`typing`/`sit`
+ *   frames, which forced the old anchor table pinning a frame ROW onto the scene's desk surface.
+ *   Furniture now belongs to the environment, so every clip anchors the same way: feet on the
+ *   floor, at the character's own declared `origin`.
+ * - Clips are DIRECTIONAL. `animations[action]` is no longer one clip but a map of `down`/`up`/
+ *   `side` clips, so a character can face its workstation, the room, or the way it is walking.
+ * - `left` is a runtime MIRROR of `side` (the pack draws `side` facing right and says so in
+ *   `sideFaces`); shipping a second set of art for it is explicitly forbidden.
+ *
+ * The per-character JSON remains the source of truth for row/frames/fps/loop — section 2 of the
+ * guide ("no codificar manualmente FPS, filas del spritesheet, anchors") — so nothing here carries
+ * a table of its own; `character-sprite.test.ts` re-reads the shipped JSON so a repacked asset set
+ * cannot silently drift away from the assumptions the renderer makes.
  */
 import type { AgentRole } from '../../../domain/agents/agent-profile';
 import type { CharacterAnimationState } from './animation-state';
@@ -18,9 +27,15 @@ import type { CharacterAnimationState } from './animation-state';
 export const CHARACTER_IDS = ['alex', 'marcus', 'sophia', 'elena'] as const;
 export type CharacterId = (typeof CHARACTER_IDS)[number];
 
-/** Every clip the pack ships, in sheet-row order (guide section 4). */
-export const SPRITE_ANIMATIONS = ['idle', 'walk', 'work', 'typing', 'talk', 'point', 'celebrate', 'sit'] as const;
-export type SpriteAnimationName = (typeof SPRITE_ANIMATIONS)[number];
+/** Every action the pack ships (guide section 5). */
+export const SPRITE_ACTIONS = ['idle', 'walk', 'work', 'typing', 'talk', 'point', 'celebrate', 'sit'] as const;
+export type SpriteAction = (typeof SPRITE_ACTIONS)[number];
+
+/** The directions the pack actually DRAWS. `side` is drawn facing right (`meta.sideFaces`). */
+export type SpriteDirection = 'down' | 'up' | 'side';
+
+/** The directions a character can logically face. `left` resolves to a mirrored `side` clip. */
+export type CharacterDirection = 'down' | 'up' | 'left' | 'right';
 
 /** One clip's entry in a character's JSON. Mirrors the shipped shape exactly. */
 export interface SpriteClipMeta {
@@ -28,11 +43,16 @@ export interface SpriteClipMeta {
   frames: number;
   fps: number;
   loop: boolean;
+  /** Declared by the pack on every `side` clip; the renderer honours `resolveSpriteClip`'s own
+   * `mirror` flag rather than this field, which exists to document the asset's intent. */
+  mirrorForLeft?: boolean;
 }
 
 /** A character's JSON file (`public/characters/<id>/<id>.json`). */
 export interface CharacterSpriteMeta {
-  name: string;
+  /** `2` for every file in this pack; asserted by the test so a v1 drop-in fails loudly. */
+  schemaVersion?: number;
+  id: string;
   displayName: string;
   role: string;
   image: string;
@@ -40,79 +60,108 @@ export interface CharacterSpriteMeta {
   frameHeight: number;
   sheetWidth: number;
   sheetHeight: number;
-  animations: Record<string, SpriteClipMeta>;
+  /** The character's logical position IN FRAME PIXELS: the centre of its feet, not the frame's
+   * top-left corner (guide section 5). `(agent.x, agent.y)` is this point. */
+  origin: { x: number; y: number };
+  /** Small box around the feet used for navigation collisions — deliberately NOT the full 32x32
+   * frame, so head and torso can overlap a desk or a plant without blocking the floor
+   * (guide section 13). Unused by the renderer; consumed by the navigation layer. */
+  hitbox?: { offsetX: number; offsetY: number; width: number; height: number };
+  defaultScale: number;
+  defaultDirection: CharacterDirection;
+  sideFaces: 'right' | 'left';
+  animations: Record<string, Record<string, SpriteClipMeta>>;
+  /** Which direction to fall back to for an action the pack draws only one way — `work`/`typing`
+   * exist only as `up`, `celebrate`/`sit` only as `down`. */
+  fallbackDirections?: Record<string, SpriteDirection>;
 }
 
 /**
- * Scale factor per role. Whole numbers only — guide section 9 is explicit that a fractional scale
- * destroys pixel-perfect rendering, and section 32 ranks preserving it third out of six. The
- * orchestrator is drawn larger than the subagents of the SAME character, which is how role stays
- * readable at a glance without changing who the character is.
+ * Scale factor per role, applied on top of whatever the scene's own depth scale is. Whole numbers
+ * only — guide section 6 is explicit that anything else destroys pixel-perfect rendering.
  *
- * The actual numbers come from looking at the rendered office, not from theory. At 3x/2x on the
- * fixed 1920x1080 floor plan a subagent cleared its 40-unit desk by barely a head, which reads as
- * a blob rather than a person — the same "readable at a glance" defect commit e7bb2ca had to fix
- * once already for the procedural figure. Only rows 0..20 of a desk-bearing frame sit above the
- * desk surface, so the visible height is `21 * scale`: 105 units for an orchestrator, 63 for a
- * subagent.
+ * The orchestrator is drawn larger than the subagents of the SAME character, which is how role
+ * stays readable at a glance without changing who the character is. v2 sprites are body-only, so
+ * unlike v1 the WHOLE figure is visible: the drawn height is the full `32 * scale`, not the 21
+ * rows that used to clear a built-in desk.
  */
 export const ROLE_SPRITE_SCALE: Record<AgentRole, number> = { orchestrator: 5, subagent: 3 };
 
-/**
- * Row (0-based, in 32px frame units) where the pack's OWN desk surface is drawn inside the
- * `work`/`typing`/`sit` frames. Measured, not guessed: scanning every shipped PNG for the table
- * colour puts its top edge on row 21 in all three clips, all four frames, all four characters.
- * `character-sprite.test.ts` re-reads the shipped JSON so a repacked asset set cannot silently
- * drift away from this number.
- */
-export const DESK_LINE_ROW = 21;
+export interface ResolvedSpriteClip {
+  clip: SpriteClipMeta;
+  /** The direction actually DRAWN, after `left`/`right` collapse onto `side` and after any
+   * fallback. */
+  direction: SpriteDirection;
+  /** True when the caller must flip the frame horizontally about the character's origin. */
+  mirror: boolean;
+}
 
 /**
- * Row the feet stand on in the desk-free clips. The lowest opaque row in those frames is 30, so
- * the standing line is the row directly below it.
- */
-export const GROUND_LINE_ROW = 31;
-
-const DESK_BEARING_ANIMATIONS = new Set<SpriteAnimationName>(['work', 'typing', 'sit']);
-
-/**
- * Which scene line a clip pins to, and which of its own rows lands exactly on that line.
+ * Port of the pack's own `CharacterAnimator.resolve` (`04_engine/CharacterAnimator.js`), with one
+ * deliberate difference: an unknown action returns `null` instead of throwing, because the scene
+ * must degrade to another clip rather than take the whole render loop down with it.
  *
- * The pack draws a desk INTO the `work`/`typing`/`sit` frames. Standing those on the floor like
- * any other clip would put a second desk next to the one the scene already draws, so they pin by
- * their built-in table line to the scene's desk surface instead — the two tables become one plane
- * and the laptop reads as sitting on the desk the office already has.
+ * Resolution order, exactly as the pack defines it: `left`/`right` collapse onto the single drawn
+ * `side` clip, an action that does not draw the requested direction falls back to
+ * `fallbackDirections[action]` (then to whatever direction the action does draw), and `mirror` is
+ * set only for a `left` request answered by a `side` clip.
  */
-export interface SpriteAnchor {
-  reference: 'desk-surface' | 'floor';
-  row: number;
+export function resolveSpriteClip(
+  meta: CharacterSpriteMeta,
+  action: string,
+  direction: CharacterDirection,
+): ResolvedSpriteClip | null {
+  const group = meta.animations[action];
+  if (!group) return null;
+
+  const requested: SpriteDirection = direction === 'left' || direction === 'right' ? 'side' : direction;
+  let resolved: SpriteDirection = requested;
+  let clip = group[requested];
+
+  if (!clip) {
+    const fallback = meta.fallbackDirections?.[action] ?? (Object.keys(group)[0] as SpriteDirection | undefined);
+    if (!fallback) return null;
+    resolved = fallback;
+    clip = group[fallback];
+  }
+  if (!clip) return null;
+
+  return { clip, direction: resolved, mirror: direction === 'left' && resolved === 'side' };
 }
 
-export function resolveSpriteAnchor(animation: SpriteAnimationName): SpriteAnchor {
-  return DESK_BEARING_ANIMATIONS.has(animation)
-    ? { reference: 'desk-surface', row: DESK_LINE_ROW }
-    : { reference: 'floor', row: GROUND_LINE_ROW };
+export interface SpritePose {
+  action: SpriteAction;
+  direction: CharacterDirection;
 }
 
-export interface SpriteAnimationInput {
+export interface SpritePoseInput {
   state: CharacterAnimationState;
-  /** True only while the worker is dwelling at the archive cabinet (`ArchiveTripView.highlight`). */
+  /** True only while the worker is dwelling at the Persistent Memory Archive. */
   atArchive?: boolean;
+  /** Where the character is currently heading. Only read while walking; the other states are
+   * pinned to the direction their station or the room demands. */
+  direction?: CharacterDirection;
 }
 
 /**
- * Maps the scene's own three-state animation vocabulary onto the pack's eight clips, following
- * the guide's suggested office sequence (section 13: walk -> sit -> work -> typing -> celebrate).
+ * Maps the scene's three-state animation vocabulary onto the pack's directional clips.
  *
- * `working`/`idle` both pick a DESK-BEARING clip because a worker in either state is at its desk;
- * the difference a viewer needs to see is typing hands versus a still figure, not a change of
- * furniture. Arrival at the archive outranks everything: it is the one moment in the whole scene
- * worth celebrating, and it is brief.
+ * Every choice here comes from the map and the guide rather than taste:
+ * - the Persistent Memory Archive declares `defaultAnimation: "point"` and `facing: "up"`
+ *   (`office_map.json` `specialZones.persistent_memory`), and guide section 9 maps every
+ *   `read_memory`/`write_memory` action onto `point` until dedicated clips exist. Reaching the
+ *   archive outranks everything else: it is the one moment in the scene worth showing.
+ * - a workstation declares `defaultAnimation: "typing"` and `facing: "up"`, so a working agent
+ *   faces its laptop with its back to the viewer.
+ * - an idle agent turns AWAY from the laptop, toward the room (`down`). That is the difference a
+ *   viewer needs to read at a glance — hands on keys versus a figure facing the floor — and it is
+ *   also the only way the character's face, and therefore its project identity, is ever visible.
  */
-export function selectSpriteAnimation(input: SpriteAnimationInput): SpriteAnimationName {
-  if (input.atArchive) return 'celebrate';
-  if (input.state === 'walking') return 'walk';
-  return input.state === 'working' ? 'typing' : 'sit';
+export function selectSpritePose(input: SpritePoseInput): SpritePose {
+  if (input.atArchive) return { action: 'point', direction: 'up' };
+  if (input.state === 'walking') return { action: 'walk', direction: input.direction ?? 'down' };
+  if (input.state === 'working') return { action: 'typing', direction: 'up' };
+  return { action: 'idle', direction: 'down' };
 }
 
 /**
@@ -120,9 +169,8 @@ export function selectSpriteAnimation(input: SpriteAnimationInput): SpriteAnimat
  * from the pack JSON.
  *
  * A non-looping clip holds its final frame rather than wrapping. The scene has no per-worker
- * animation epoch to restart `celebrate` from, so in practice that clip settles on its last frame
- * — a held celebratory pose for the length of the archive dwell, which is the honest reading of
- * `loop: false` rather than quietly looping a clip the pack says plays once.
+ * animation epoch to restart such a clip from, so in practice it settles on its last frame — the
+ * honest reading of `loop: false` rather than quietly looping a clip the pack says plays once.
  */
 export function selectSpriteFrame(clip: SpriteClipMeta, elapsedMs: number): number {
   const frameDurationMs = 1000 / clip.fps;
@@ -138,19 +186,29 @@ export interface SpriteFrameRect {
 }
 
 /**
- * Source rectangle inside the sheet, exactly as the guide's section 7 defines it:
- * `sx = frameIndex * frameWidth`, `sy = animation.row * frameHeight`. An animation the metadata
- * does not declare falls back to row 0 rather than producing `NaN` coordinates that would read
- * garbage off the sheet.
+ * Source rectangle inside the sheet: `sx = frameIndex * frameWidth`, `sy = clip.row * frameHeight`
+ * — the same arithmetic `CharacterAnimator.draw` uses. Takes the already-resolved CLIP rather than
+ * an action name, because in v2 an action alone no longer identifies a row.
  */
-export function computeSpriteFrameRect(meta: CharacterSpriteMeta, animation: string, frame: number): SpriteFrameRect {
-  const row = meta.animations[animation]?.row ?? 0;
+export function computeSpriteFrameRect(meta: CharacterSpriteMeta, clip: SpriteClipMeta, frame: number): SpriteFrameRect {
   return {
     x: frame * meta.frameWidth,
-    y: row * meta.frameHeight,
+    y: clip.row * meta.frameHeight,
     width: meta.frameWidth,
     height: meta.frameHeight,
   };
+}
+
+/**
+ * The character's `origin` expressed as a NORMALIZED anchor (0..1 of the frame), which is how a
+ * sprite renderer pins a texture to a point.
+ *
+ * Anchoring on the origin rather than offsetting a top-left corner is what makes mirroring free:
+ * a horizontal flip about the anchor keeps the feet in exactly the same place, which is precisely
+ * what the pack's own `ctx.scale(-1, 1)`-around-the-origin draw call does.
+ */
+export function spriteAnchorPoint(meta: CharacterSpriteMeta): { x: number; y: number } {
+  return { x: meta.origin.x / meta.frameWidth, y: meta.origin.y / meta.frameHeight };
 }
 
 /**
@@ -179,12 +237,13 @@ export function resolveCharacterId(projectPath?: string): CharacterId {
 
 /** Path of a character's sheet under the served asset root, so no caller hand-builds one. */
 export function characterSheetUrl(id: CharacterId, assetRoot = '/characters'): string {
-  return `${assetRoot}/${id}/${id}_spritesheet.png`;
+  return `${assetRoot}/${id}/${id}_spritesheet_v2.png`;
 }
 
-/** Path of a character's portrait (guide section 20: panels and tooltips, never the scene). */
+/** Path of a character's portrait (guide section 20 of the v1 pack, kept in v2: panels and
+ * tooltips, never the scene). */
 export function characterPortraitUrl(id: CharacterId, assetRoot = '/characters'): string {
-  return `${assetRoot}/${id}/${id}_portrait.png`;
+  return `${assetRoot}/${id}/${id}_portrait_v2.png`;
 }
 
 /** Path of a character's metadata JSON, the source of truth for every clip's timing. */
