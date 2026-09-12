@@ -48,7 +48,9 @@ describe('SessionLifecycleCoordinator eviction boundary', () => {
     clock.set(EVICT_TIMEOUT_MS - 1);
     coordinator.tick();
 
-    expect(publish).not.toHaveBeenCalled();
+    // Asserted on KIND, not on silence: this far past the idle threshold the session has already
+    // (correctly) announced itself idle. What must not have happened is the eviction.
+    expect(publish.mock.calls.map((call) => call[0]?.kind)).not.toContain('session_end');
   });
 
   it('emits exactly one synthetic session_end(reason: timeout) for the RIGHT sessionKey/harness pair at EVICT_TIMEOUT_MS', () => {
@@ -159,12 +161,63 @@ describe('SessionLifecycleCoordinator eviction boundary', () => {
     expect(publish).toHaveBeenCalledTimes(1);
   });
 
-  it('emits nothing at the idle threshold alone (idle is silent by design)', () => {
+  /**
+   * Replaces an earlier assertion that idle was SILENT. design.md "Session discovery and aging
+   * out" specifies "worker dims, stays on stage" for the idle threshold — a UI behaviour the UI
+   * can only perform if it is told, and nothing else in the system ever set `Worker.activity` to
+   * anything but `'working'`. Silence at this boundary was the defect, not the contract: it left
+   * every worker on the floor drawn as actively typing forever.
+   */
+  it('announces the idle threshold as a status(activity: idle) event, never as an eviction', () => {
     const { coordinator, publish, clock } = makeCoordinator();
     coordinator.observe(sessionStart('claude-code:s1'));
 
     clock.set(IDLE_TIMEOUT_MS);
     coordinator.tick();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'status',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      activity: 'idle',
+    });
+  });
+
+  it('announces idle exactly once, not on every tick that follows it', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1'));
+
+    clock.set(IDLE_TIMEOUT_MS);
+    coordinator.tick();
+    clock.set(IDLE_TIMEOUT_MS + 1000);
+    coordinator.tick();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces the return to work when a real event arrives after the idle threshold', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1'));
+
+    clock.set(IDLE_TIMEOUT_MS);
+    coordinator.tick();
+    publish.mockClear();
+
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', IDLE_TIMEOUT_MS + 1));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'status',
+      sessionKey: 'claude-code:s1',
+      activity: 'working',
+    });
+  });
+
+  it('does not re-announce work for a session that was never idle', () => {
+    const { coordinator, publish } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1'));
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', 1000));
 
     expect(publish).not.toHaveBeenCalled();
   });
@@ -174,6 +227,58 @@ describe('SessionLifecycleCoordinator eviction boundary', () => {
     coordinator.observe(sessionStart('claude-code:s1'));
     clock.set(500);
     coordinator.observe({ id: 3, kind: 'session_end', harness: 'claude-code', sessionKey: 'claude-code:s1', at: 500 });
+
+    clock.set(EVICT_TIMEOUT_MS);
+    coordinator.tick();
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regression: correlation/profile events are SYNTHESIZED, and every one of them is stamped with
+ * `clock.now()` at the moment the correlator runs (`claude-code/subagent-correlation-
+ * coordinator.ts`'s `buildParentEvent`/`publishProfile`/`applyModel`). Feeding those timestamps
+ * into `recordActivity` made a session whose transcript was last written HOURS ago look like it
+ * had just been active, so the eviction window restarted from process start and the worker sat on
+ * the office floor indefinitely. A `parent` event describes STRUCTURE (who launched whom, what
+ * model resolved) — it is never evidence that the session is still doing work.
+ */
+describe('SessionLifecycleCoordinator liveness evidence', () => {
+  function parentEvent(sessionKey: string, at: number): AgentEvent {
+    return { id: 9, kind: 'parent', harness: 'claude-code', sessionKey, at, correlationId: 'claude-code:parent' };
+  }
+
+  it('does not let a synthesized parent event rescue a session from eviction', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1', 'claude-code', 0));
+
+    // The correlator stamps its edge with the CURRENT wall clock, far newer than any real
+    // transcript write this session ever made.
+    coordinator.observe(parentEvent('claude-code:s1', EVICT_TIMEOUT_MS));
+
+    clock.set(EVICT_TIMEOUT_MS);
+    coordinator.tick();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({ kind: 'session_end', reason: 'timeout' });
+  });
+
+  it('adversarial twin: a REAL activity event at the same timestamp does rescue it', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1', 'claude-code', 0));
+
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', EVICT_TIMEOUT_MS));
+
+    clock.set(EVICT_TIMEOUT_MS);
+    coordinator.tick();
+
+    expect(publish.mock.calls.map((call) => call[0]?.kind)).not.toContain('session_end');
+  });
+
+  it('does not let a parent event alone start tracking a session that never started', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    coordinator.observe(parentEvent('claude-code:ghost', 0));
 
     clock.set(EVICT_TIMEOUT_MS);
     coordinator.tick();

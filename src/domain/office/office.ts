@@ -12,7 +12,7 @@
  * (to build a resume `snapshot` frame, tasks.md 9.2) and the browser-side `OfficeContainer`
  * client projection (tasks.md 10.4) — one canonical fold over the normalized event stream.
  */
-import type { AgentEvent, HarnessId } from '../events/types';
+import type { AgentEvent, HarnessId, SessionActivity } from '../events/types';
 import { DEFAULT_ORPHAN_GRACE_MS } from '../agents/agent-tree';
 import type { AgentProfile } from '../agents/agent-profile';
 import {
@@ -27,7 +27,9 @@ export type { CarryJob, CarryQueueState } from './carry-queue';
 export type { ArchiveSlot, ArchiveDockState, ArchiveWaitEntry } from './archive-dock';
 export { ARCHIVE_SLOT_COUNT } from './archive-dock';
 
-export type WorkerActivity = 'working' | 'idle';
+/** Alias of the wire-level `SessionActivity` (`domain/events/types.ts`), which is canonical
+ * because the value travels on `status` events from the session-lifecycle coordinator. */
+export type WorkerActivity = SessionActivity;
 
 export interface Worker {
   sessionKey: string;
@@ -245,7 +247,9 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
       return applyMemoryWriteToOfficeState(pruned, event.sessionKey, event.at);
 
     default:
-      if (!event.label && !event.toolLabel && !event.agentProfile && !event.projectPath) return pruned;
+      if (!event.label && !event.toolLabel && !event.agentProfile && !event.projectPath && !event.activity) {
+        return pruned;
+      }
       if (!pruned.workers.has(event.sessionKey)) return pruned;
       return upsertWorker(pruned, event.sessionKey, {
         harness: event.harness,
@@ -254,6 +258,10 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         toolDetail: event.toolDetail,
         ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
         ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
+        // The idle/working announcement from `session-lifecycle-coordinator.ts`. This is the only
+        // path that can ever move a worker OUT of 'working': every other branch either defaults it
+        // to 'working' or preserves what is already there.
+        ...(event.activity !== undefined ? { activity: event.activity } : {}),
       });
   }
 }

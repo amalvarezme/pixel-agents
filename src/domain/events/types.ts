@@ -9,6 +9,15 @@ import type { AgentProfile } from '../agents/agent-profile';
 export const HARNESS_IDS = ['claude-code', 'codex', 'opencode', 'antigravity'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
+/**
+ * Whether a session is currently DOING work, or has gone quiet without ending. Canonical here
+ * (rather than in `domain/office/office.ts`, which aliases it as `WorkerActivity`) because it
+ * travels on the wire: `adapters/driven/sessions/session-lifecycle-coordinator.ts` announces a
+ * crossing of the idle threshold as a `status` event carrying this field, which is the ONLY way
+ * the office projection — and therefore the renderer — can ever learn that a worker went quiet.
+ */
+export type SessionActivity = 'working' | 'idle';
+
 const LOG_SOURCED_EVENT_KINDS = [
   'session_start',
   'tool_start',
@@ -54,6 +63,14 @@ export interface AgentEventBase {
    */
   toolLabel?: string;
   toolDetail?: string;
+  /**
+   * Liveness projection, carried only by the synthetic `status` events
+   * `SessionLifecycleCoordinator` publishes when a session crosses the idle threshold in either
+   * direction (design.md "Session discovery and aging out": idle means "worker dims, stays on
+   * stage"). Never set by an ingestion adapter — a transcript line says what a session DID, never
+   * that it has since gone quiet, which is knowable only by watching a clock run out.
+   */
+  activity?: SessionActivity;
   /**
    * Launcher-only fields (design.md "The Launcher"). Populated exclusively by
    * `createSelfOriginatedEvent` for `launch_requested`/`launch_started`, and by the launcher

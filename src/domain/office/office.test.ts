@@ -780,3 +780,59 @@ describe('serializeOfficeState / deserializeOfficeState (G.1: snapshot wire shap
     expect(restored.archive.slots.some((s) => s.occupiedBySessionKey === 'claude-code:s1')).toBe(true);
   });
 });
+
+/**
+ * The idle announcement from `adapters/driven/sessions/session-lifecycle-coordinator.ts` is the
+ * ONLY path in the whole system that can move a worker out of `'working'` — every other branch
+ * either defaults the field to `'working'` or preserves whatever is already there. Before it
+ * existed, `Worker.activity` was write-once and every worker on the floor was drawn as actively
+ * typing no matter how long its transcript had been untouched.
+ */
+describe('applyEventToOfficeState worker activity', () => {
+  function started(sessionKey: string): AgentEvent {
+    return { id: 1, kind: 'session_start', harness: 'claude-code', sessionKey, at: 0 };
+  }
+  function activityStatus(sessionKey: string, activity: 'working' | 'idle', at: number, id = 2): AgentEvent {
+    return { id, kind: 'status', harness: 'claude-code', sessionKey, at, activity };
+  }
+
+  it('marks a worker idle when a status event announces it', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    expect(state.workers.get('claude-code:s1')?.activity).toBe('working');
+
+    state = applyEventToOfficeState(state, activityStatus('claude-code:s1', 'idle', 1000));
+
+    expect(state.workers.get('claude-code:s1')?.activity).toBe('idle');
+  });
+
+  it('brings an idle worker back to working when the announcement reverses', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    state = applyEventToOfficeState(state, activityStatus('claude-code:s1', 'idle', 1000));
+    state = applyEventToOfficeState(state, activityStatus('claude-code:s1', 'working', 2000, 3));
+
+    expect(state.workers.get('claude-code:s1')?.activity).toBe('working');
+  });
+
+  it('keeps a worker idle across later events that carry no activity of their own', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    state = applyEventToOfficeState(state, activityStatus('claude-code:s1', 'idle', 1000));
+    state = applyEventToOfficeState(state, {
+      id: 4,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 2000,
+      toolLabel: 'Bash',
+    });
+
+    // The lifecycle coordinator owns the transition back to work and announces it separately; a
+    // caption update must never silently resurrect a worker's activity as a side effect.
+    expect(state.workers.get('claude-code:s1')?.activity).toBe('idle');
+  });
+
+  it('never conjures a worker from an activity announcement for an unknown session', () => {
+    const state = applyEventToOfficeState(createOfficeState(), activityStatus('claude-code:ghost', 'idle', 1000));
+
+    expect(state.workers.size).toBe(0);
+  });
+});
