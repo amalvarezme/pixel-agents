@@ -134,6 +134,9 @@ own map — is the single source of truth for what is where.
 - **Walking is routed, not interpolated.** `office-navigation.ts` is a typed port of the pack's own
   A*, run over the map's walkable bounds minus its collision rectangles, so an agent carrying a
   memory write to the Persistent Memory Archive goes around the desks instead of through them.
+- **The Sentinel** patrols outside, drawn only through `window_mask.png` so it can never appear to
+  be in the room. It is scenery: it represents no session, no agent and no event. Nothing else on
+  the floor is decorative, which is exactly why this one thing has to say so.
 - Two anchors in the shipped map needed tuning; the reasons are recorded in the map's own
   `localAdjustments` field, which is the only place the guide allows that kind of fix.
 

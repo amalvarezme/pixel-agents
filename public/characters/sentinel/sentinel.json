@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "id": "sentinel",
+  "displayName": "Sentinel",
+  "role": "External Physical AI Threat",
+  "image": "sentinel_spritesheet.png",
+  "frameWidth": 64,
+  "frameHeight": 96,
+  "sheetWidth": 256,
+  "sheetHeight": 576,
+  "origin": {
+    "x": 32,
+    "y": 92
+  },
+  "defaultScale": 1.6,
+  "animations": {
+    "idle": {
+      "row": 0,
+      "frames": 4,
+      "fps": 4,
+      "loop": true
+    },
+    "walk": {
+      "row": 1,
+      "frames": 4,
+      "fps": 7,
+      "loop": true
+    },
+    "scan": {
+      "row": 2,
+      "frames": 4,
+      "fps": 6,
+      "loop": true
+    },
+    "look": {
+      "row": 3,
+      "frames": 4,
+      "fps": 5,
+      "loop": true
+    },
+    "alert": {
+      "row": 4,
+      "frames": 4,
+      "fps": 8,
+      "loop": true
+    },
+    "disappear": {
+      "row": 5,
+      "frames": 4,
+      "fps": 8,
+      "loop": false
+    }
+  },
+  "renderLayer": "outside-window",
+  "notes": [
+    "Original science-fiction sentinel; evokes a hostile physical AI without using a licensed character.",
+    "Render only through window_mask.png."
+  ]
+}

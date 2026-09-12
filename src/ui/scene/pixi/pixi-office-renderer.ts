@@ -30,6 +30,7 @@ import { buildOfficeFloorView, type OfficeFloorView } from '../../components/org
 import { OFFICE_LAYER_URLS, WORLD_HEIGHT, WORLD_WIDTH } from '../world/office-map';
 import { renderOfficeBackground, renderOfficeScene, type RenderOfficeSceneOptions } from './office-scene-renderer';
 import { CharacterAtlas } from './sprite-character-renderer';
+import { SentinelAsset } from './sentinel-renderer';
 import type { AgentTooltipView } from '../../components/atoms/agent-tooltip';
 import { findWorkerAtScenePoint, screenToScene, type ScenePoint, type ScreenPoint, type ViewportFit } from '../layout/hover-hit-test';
 
@@ -115,6 +116,10 @@ export class PixiOfficeRenderer implements OfficeRenderer {
   /** The room's front layer — desk fronts, plants, the sofa — drawn OVER the agents so they can
    * be occluded by the furniture they stand behind (guide section 4). Undefined until it loads. */
   private foreground?: Texture;
+  /** The exterior Sentinel and the window mask that confines it to the glass. Both must be present
+   * before either is used: drawing the Sentinel unmasked would walk it through the office. */
+  private sentinel?: SentinelAsset;
+  private windowMask?: Texture;
   /** The Pixel Office sprite pack, loaded once in `mount`. Stays `undefined` until that async load
    * resolves, and forever if it fails — the scene draws the procedural figure in the meantime, so
    * the office is never blank while textures are in flight. */
@@ -170,6 +175,14 @@ export class PixiOfficeRenderer implements OfficeRenderer {
         renderer.foreground = texture;
       })
       .catch(() => {});
+    void Assets.load<Texture>(OFFICE_LAYER_URLS.windowMask)
+      .then((texture) => {
+        renderer.windowMask = texture;
+      })
+      .catch(() => {});
+    void SentinelAsset.load().then((asset) => {
+      if (asset) renderer.sentinel = asset;
+    });
 
     return renderer;
   }
@@ -202,6 +215,9 @@ export class PixiOfficeRenderer implements OfficeRenderer {
       background: this.background,
       ...(this.foreground ? { foreground: this.foreground } : {}),
       ...(this.atlas ? { atlas: this.atlas } : {}),
+      ...(this.sentinel && this.windowMask
+        ? { sentinel: { asset: this.sentinel, windowMask: this.windowMask } }
+        : {}),
     });
   }
 }
