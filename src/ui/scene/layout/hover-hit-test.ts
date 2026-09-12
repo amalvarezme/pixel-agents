@@ -14,6 +14,8 @@
  */
 import type { DeskView } from '../../components/molecules/desk';
 import { buildCharacterPose } from '../character/character-pose';
+import type { AgentRole } from '../../../domain/agents/agent-profile';
+import type { CharacterAnimationState } from '../character/animation-state';
 
 export interface ScreenPoint {
   x: number;
@@ -58,14 +60,31 @@ const CHARACTER_DESK_CLEARANCE = 6;
 /**
  * The character's own topmost drawn edge (a negative scene-unit offset above its origin/feet),
  * derived from the ACTUAL pose data in `character-pose.ts` rather than a guessed magic number.
- * Computed once, for the worst-case reach: `idle` state with `frame` chosen for the upward bob
- * (`idleBob` in `character-pose.ts` lifts the whole figure on odd idle frames), `role:
- * 'orchestrator'` (its supervisor "cape" panel sits behind the torso and never extends above the
- * head, so it never changes this value, but including it keeps this honest about what's drawn).
+ * Swept over the FULL role x state x frame space — not just one pose — because role now also
+ * SCALES the figure (`ROLE_SCALE` in `character-pose.ts`): a large orchestrator reaches further
+ * above its feet than a subagent does, so the worst case must come from actually measuring every
+ * combination rather than assuming which single pose is tallest.
  */
 function computeCharacterTopReach(): number {
-  const shapes = buildCharacterPose({ role: 'orchestrator', state: 'idle', frame: 1, accentColor: 0 });
-  return Math.min(...shapes.map((shape) => shape.y - shape.height / 2));
+  const roles: AgentRole[] = ['orchestrator', 'subagent'];
+  const states: CharacterAnimationState[] = ['idle', 'working', 'walking'];
+  let minY = Infinity;
+
+  for (const role of roles) {
+    for (const state of states) {
+      // Frames 0-3 cover every state's own cycle length without duplicating
+      // `animation-clock.ts`'s frame counts here: idle/working wrap at 2 via `% 2`, walking uses
+      // its full 4-frame cycle.
+      for (let frame = 0; frame < 4; frame++) {
+        const shapes = buildCharacterPose({ role, state, frame, accentColor: 0, bodyColor: 0 });
+        for (const shape of shapes) {
+          minY = Math.min(minY, shape.y - shape.height / 2);
+        }
+      }
+    }
+  }
+
+  return minY;
 }
 
 const CHARACTER_TOP_REACH = computeCharacterTopReach();
@@ -81,8 +100,9 @@ export interface HoverBox {
  * The hover box for one desk: the desk slab plus the character standing behind it
  * (`renderWorkerCharacter` in `office-scene-renderer.ts` positions the character's feet at
  * `-(deskHeight / 2 + CHARACTER_DESK_CLEARANCE)` relative to the desk centre, matched here).
- * Horizontally it is just the desk's own width — the character (~50 scene units across at its
- * widest, the orchestrator's cape) never draws wider than even the smallest desk (120 units).
+ * Horizontally it is just the desk's own width — the character (~70 scene units across at its
+ * widest, a scaled-up orchestrator's cape) never draws wider than even the smallest desk (120
+ * units).
  */
 export function workerHoverBox(desk: DeskView): HoverBox {
   const halfHeight = desk.height / 2;

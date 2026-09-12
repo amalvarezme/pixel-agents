@@ -7,6 +7,7 @@ import type { DeskLane } from '../../scene/layout/office-layout';
 import type { WorkerViewModel } from '../../state/office-view-model';
 import type { WorkerActivity } from '../../../domain/office/office';
 import type { AgentProfile } from '../../../domain/agents/agent-profile';
+import type { CharacterFacing } from '../../scene/character/character-facing';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip';
@@ -16,6 +17,9 @@ import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip
 export interface WorkerArchiveTripView {
   carryCount: number;
   highlight: boolean;
+  /** Which way the character should face for the current leg — carried through only once the
+   * render half (`applyTripOverlay`) has resolved it; absent from a structural-only view model. */
+  facing?: CharacterFacing;
 }
 
 export interface WorkerView {
@@ -35,6 +39,10 @@ export interface WorkerView {
   /** Carried straight through from `WorkerViewModel.agentProfile` — the pixi renderer uses
    * `role`/`model` to pick the orchestrator/subagent silhouette and the model accent colour. */
   agentProfile?: AgentProfile;
+  /** Carried straight through from `WorkerViewModel.projectPath` — the pixi renderer resolves it
+   * into the project's character colour (`resolveProjectCharacterColor`), shared by every worker
+   * under that project regardless of role. */
+  projectPath?: string;
   archiveTrip?: WorkerArchiveTripView;
 }
 
@@ -65,8 +73,15 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     }),
     ...(worker.activity !== undefined ? { activity: worker.activity } : {}),
     ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
+    ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
     ...(worker.archiveTrip
-      ? { archiveTrip: { carryCount: worker.archiveTrip.carryCount, highlight: worker.archiveTrip.highlight ?? false } }
+      ? {
+          archiveTrip: {
+            carryCount: worker.archiveTrip.carryCount,
+            highlight: worker.archiveTrip.highlight ?? false,
+            ...(worker.archiveTrip.facing !== undefined ? { facing: worker.archiveTrip.facing } : {}),
+          },
+        }
       : {}),
   };
 }
