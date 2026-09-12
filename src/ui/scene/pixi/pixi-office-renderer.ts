@@ -12,21 +12,27 @@
  *   `Application`, initializing its WebGL/Canvas context, and appending the resulting `<canvas>`
  *   to the DOM, and keeping the fixed floor plan fitted to it. This needs an actual browser; it is
  *   verified manually (see README "Verifying the scene renders"), not by an automated test.
+ *
+ * Hover tooltip (DOM overlay, not PixiJS interactivity): because `updateStage` rebuilds the
+ * ENTIRE scene graph every frame, any `eventMode`/`hitArea`/`on('pointerover')` attached to a
+ * PixiJS display object would be destroyed ~60x/second. Hover state instead lives here, driven by
+ * `pointermove`/`pointerleave` listeners on the real `<canvas>` element itself (which is NOT
+ * rebuilt every frame) — the same untestable-in-vitest bucket as the rest of `mount`. The DECISION
+ * logic (whether to fire `onHoverChange`, and what tooltip content to fire it with) is pulled out
+ * into the pure, exported `shouldEmitHoverChange`/`resolveHoverTooltip` below, mirroring the
+ * `updateStage`/`mount` split above for the same testability reason. The actual hit-test math
+ * (`screenToScene`, `findWorkerAtScenePoint`) lives in `ui/scene/layout/hover-hit-test.ts`.
  */
 import { Application, Container } from 'pixi.js';
 import type { OfficeRenderer } from '../OfficeStage';
 import type { OfficeViewModel } from '../../state/office-view-model';
-import { buildOfficeFloorView } from '../../components/organisms/office-floor';
+import { buildOfficeFloorView, type OfficeFloorView } from '../../components/organisms/office-floor';
 import { FLOOR_HEIGHT, FLOOR_WIDTH } from '../layout/office-layout';
 import { renderOfficeBackground, renderOfficeScene } from './office-scene-renderer';
+import type { AgentTooltipView } from '../../components/atoms/agent-tooltip';
+import { findWorkerAtScenePoint, screenToScene, type ScenePoint, type ScreenPoint, type ViewportFit } from '../layout/hover-hit-test';
 
-export interface ViewportFit {
-  /** Uniform scale applied to the stage so the whole floor plan fits the viewport. */
-  scale: number;
-  /** Stage offset centring the scaled floor plan inside the viewport (letter/pillarboxing). */
-  x: number;
-  y: number;
-}
+export type { ViewportFit } from '../layout/hover-hit-test';
 
 /**
  * Contain-fits the fixed `FLOOR_WIDTH` x `FLOOR_HEIGHT` floor plan into a real viewport.
@@ -63,18 +69,49 @@ export function updateStage(stage: StageLike, viewModel: OfficeViewModel, backgr
   stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0, background));
 }
 
+/**
+ * Decides whether a `pointermove`'s hit-test result should fire `onHoverChange`: only when the
+ * hovered session actually changes, OR when it is non-null and the pointer moved (every
+ * `pointermove` event inherently means the pointer moved, so "non-null" alone is the gate — this
+ * is what makes the tooltip follow the cursor while it stays over the SAME worker, without firing
+ * on every identical frame while hovering nothing).
+ */
+export function shouldEmitHoverChange(previousSessionKey: string | null, nextSessionKey: string | null): boolean {
+  return nextSessionKey !== previousSessionKey || nextSessionKey !== null;
+}
+
+/** Looks up the hovered worker's own tooltip content from the last rendered `OfficeFloorView`.
+ * `null` for no hover, or for a `sessionKey` no longer present in the floor (the worker left
+ * between the last render and this pointermove). */
+export function resolveHoverTooltip(floor: OfficeFloorView, sessionKey: string | null): AgentTooltipView | null {
+  if (!sessionKey) return null;
+  return floor.workers.find((worker) => worker.sessionKey === sessionKey)?.tooltip ?? null;
+}
+
 export interface PixiOfficeRendererOptions {
   /** Background fill color for the scene canvas. */
   background?: string;
+  /** Fires on every hover change (see `shouldEmitHoverChange`) with the hovered worker's tooltip
+   * content (or `null` once nothing is hovered) and the pointer's canvas-relative position, so the
+   * caller (`ui/main.ts`) can position and fill a DOM tooltip overlay outside the canvas. */
+  onHoverChange?: (tooltip: AgentTooltipView | null, pointer: ScreenPoint) => void;
 }
 
 export class PixiOfficeRenderer implements OfficeRenderer {
+  /** The most recently rendered floor plan — needed to hit-test hover against, since PixiJS
+   * itself holds no queryable state once `updateStage` has torn the previous frame down. */
+  private lastFloorView: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
+  private lastFit: ViewportFit = { scale: 1, x: 0, y: 0 };
+  private lastHoverSessionKey: string | null = null;
   /** The static scenery, built ONCE and re-attached every frame. `stage.removeChildren()` only
    * detaches children, it never destroys them, so the same Container can be re-added forever —
    * turning 560 rect draw-ops per frame into 560 once. See `renderOfficeScene`'s `background`. */
   private readonly background: Container = renderOfficeBackground();
 
-  private constructor(private readonly app: Application) {}
+  private constructor(
+    private readonly app: Application,
+    private readonly onHoverChange?: (tooltip: AgentTooltipView | null, pointer: ScreenPoint) => void,
+  ) {}
 
   /** Creates a real PixiJS `Application`, mounts its `<canvas>` into `container`, and returns a
    * renderer wired to it. Needs a real browser DOM; not covered by an automated test. */
@@ -87,23 +124,50 @@ export class PixiOfficeRenderer implements OfficeRenderer {
     });
     container.appendChild(app.canvas);
 
-    const renderer = new PixiOfficeRenderer(app);
+    const renderer = new PixiOfficeRenderer(app, options.onHoverChange);
     renderer.fitStage();
     // `resizeTo` keeps the CANVAS matched to the container, but nothing rescales the fixed floor
     // plan drawn onto it — so re-fit the stage on every resize the renderer reports.
     app.renderer.on('resize', () => renderer.fitStage());
+
+    // Hover tooltip: real DOM listeners on the canvas (see file header for why NOT PixiJS
+    // interactivity). `pointerleave` clears the hover the same way a pointermove landing outside
+    // every desk's box would, so leaving the canvas entirely still hides the tooltip.
+    if (options.onHoverChange) {
+      app.canvas.addEventListener('pointermove', (event: PointerEvent) => {
+        const rect = app.canvas.getBoundingClientRect();
+        renderer.handlePointerMove({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+      });
+      app.canvas.addEventListener('pointerleave', () => renderer.handlePointerLeave());
+    }
 
     return renderer;
   }
 
   /** Rescales and recentres the stage so the whole floor plan fits the current canvas. */
   private fitStage(): void {
-    const { scale, x, y } = fitToViewport(this.app.renderer.width, this.app.renderer.height);
-    this.app.stage.scale.set(scale);
-    this.app.stage.position.set(x, y);
+    this.lastFit = fitToViewport(this.app.renderer.width, this.app.renderer.height);
+    this.app.stage.scale.set(this.lastFit.scale);
+    this.app.stage.position.set(this.lastFit.x, this.lastFit.y);
+  }
+
+  private handlePointerMove(screenPoint: ScreenPoint): void {
+    const scenePoint: ScenePoint = screenToScene(screenPoint, this.lastFit);
+    const sessionKey = findWorkerAtScenePoint(this.lastFloorView.desks, scenePoint);
+    if (!shouldEmitHoverChange(this.lastHoverSessionKey, sessionKey)) return;
+
+    this.lastHoverSessionKey = sessionKey;
+    this.onHoverChange?.(resolveHoverTooltip(this.lastFloorView, sessionKey), screenPoint);
+  }
+
+  private handlePointerLeave(): void {
+    if (this.lastHoverSessionKey === null) return;
+    this.lastHoverSessionKey = null;
+    this.onHoverChange?.(null, { x: 0, y: 0 });
   }
 
   render(viewModel: OfficeViewModel): void {
+    this.lastFloorView = buildOfficeFloorView(viewModel);
     updateStage(this.app.stage, viewModel, this.background);
   }
 }

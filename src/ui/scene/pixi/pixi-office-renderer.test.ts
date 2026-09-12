@@ -1,7 +1,9 @@
 import { Container } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
-import { fitToViewport, updateStage, type StageLike } from './pixi-office-renderer';
+import { fitToViewport, resolveHoverTooltip, shouldEmitHoverChange, updateStage, type StageLike } from './pixi-office-renderer';
 import type { OfficeViewModel } from '../../state/office-view-model';
+import type { OfficeFloorView } from '../../components/organisms/office-floor';
+import { buildAgentTooltip } from '../../components/atoms/agent-tooltip';
 import { renderOfficeBackground } from './office-scene-renderer';
 
 // browser-entrypoint work unit: `updateStage` is the testable core of `PixiOfficeRenderer` — the
@@ -147,5 +149,66 @@ describe('fitToViewport — fits the fixed 1920x1080 floor plan into a real view
 
   it('never returns a non-positive scale for a degenerate (zero-sized) viewport', () => {
     expect(fitToViewport(0, 0).scale).toBeGreaterThan(0);
+  });
+});
+
+// Hover tooltip wiring: PixiJS interactivity is destroyed by `updateStage`'s full scene-graph
+// rebuild every frame (file header above), so hover is driven by `pointermove`/`pointerleave`
+// DOM listeners on the canvas (untestable-in-vitest, attached inside `mount`) that call these
+// pure decision helpers — mirroring the `updateStage`/`mount` split for the same reason.
+describe('shouldEmitHoverChange — decides whether a pointermove should fire onHoverChange', () => {
+  it('emits when the hovered session changes from null to a worker', () => {
+    expect(shouldEmitHoverChange(null, 'claude-code:s1')).toBe(true);
+  });
+
+  it('emits when the hovered session changes from one worker to another', () => {
+    expect(shouldEmitHoverChange('claude-code:s1', 'claude-code:s2')).toBe(true);
+  });
+
+  it('emits when the hovered session changes from a worker back to null', () => {
+    expect(shouldEmitHoverChange('claude-code:s1', null)).toBe(true);
+  });
+
+  // The pointer following behaviour: even with the SAME worker hovered, a pointermove event
+  // means the pointer moved, so the tooltip must keep following the cursor.
+  it('emits when the same worker stays hovered (so the tooltip follows the cursor)', () => {
+    expect(shouldEmitHoverChange('claude-code:s1', 'claude-code:s1')).toBe(true);
+  });
+
+  // The whole point of this gate: do not fire on every identical frame while hovering nothing.
+  it('does NOT emit when nothing was hovered before and nothing is hovered now', () => {
+    expect(shouldEmitHoverChange(null, null)).toBe(false);
+  });
+});
+
+describe('resolveHoverTooltip — looks up the hovered worker\'s tooltip from the last rendered floor', () => {
+  const tooltip = buildAgentTooltip({ harnessName: 'Claude Code' });
+  const floor: OfficeFloorView = {
+    desks: [{ sessionKey: 'claude-code:s1', x: 760, y: 540, width: 160, height: 40 }],
+    workers: [
+      {
+        sessionKey: 'claude-code:s1',
+        x: 760,
+        y: 540,
+        lane: 'root',
+        badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
+        caption: 'my-session',
+        tooltip,
+      },
+    ],
+    overflowCount: 0,
+    archiveCount: 0,
+  };
+
+  it('returns null when no session is hovered', () => {
+    expect(resolveHoverTooltip(floor, null)).toBeNull();
+  });
+
+  it("returns the hovered worker's own tooltip view", () => {
+    expect(resolveHoverTooltip(floor, 'claude-code:s1')).toEqual(tooltip);
+  });
+
+  it('returns null for a sessionKey not present in the floor view (e.g. it left mid-frame)', () => {
+    expect(resolveHoverTooltip(floor, 'claude-code:missing')).toBeNull();
   });
 });

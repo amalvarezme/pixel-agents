@@ -16,6 +16,8 @@ import { PixiOfficeRenderer } from './scene/pixi/pixi-office-renderer';
 import { EventSourceStreamConnection } from '../adapters/driving/browser/event-source-stream-connection';
 import { FetchLaunchClient } from '../adapters/driving/browser/fetch-launch-client';
 import { buildLaunchControlView } from './components/organisms/launch-control';
+import { computeTooltipPlacement, type ScreenPoint } from './scene/layout/hover-hit-test';
+import type { AgentTooltipView } from './components/atoms/agent-tooltip';
 
 /**
  * tasks.md 26.2: renders one button per supported launch target and wires it to
@@ -36,11 +38,54 @@ function renderLaunchControl(container: OfficeContainer): void {
   }
 }
 
+/**
+ * tasks.md hover tooltip: thin, untested DOM glue — `buildAgentTooltip`/`buildWorkerView` (pure)
+ * already decided the tooltip CONTENT, and `computeTooltipPlacement` (pure, `hover-hit-test.ts`)
+ * already decided WHERE it goes; this function only fills and positions the `#agent-tooltip`
+ * element, verified by loading the page (README), same as `renderLaunchControl` above.
+ */
+function renderAgentTooltip(): (tooltip: AgentTooltipView | null, pointer: ScreenPoint) => void {
+  const element = document.getElementById('agent-tooltip');
+  if (!element) return () => {};
+
+  return (tooltip, pointer) => {
+    if (!tooltip) {
+      element.hidden = true;
+      return;
+    }
+
+    element.replaceChildren(
+      ...tooltip.rows.map((row) => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'agent-tooltip-row';
+
+        const labelEl = document.createElement('span');
+        labelEl.className = 'agent-tooltip-label';
+        labelEl.textContent = row.label;
+
+        const valueEl = document.createElement('span');
+        valueEl.className = 'agent-tooltip-value';
+        valueEl.textContent = row.value;
+
+        rowEl.append(labelEl, valueEl);
+        return rowEl;
+      }),
+    );
+    element.hidden = false;
+
+    const panel = element.getBoundingClientRect();
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const placement = computeTooltipPlacement(pointer, { width: panel.width, height: panel.height }, viewport);
+    element.style.left = `${placement.x}px`;
+    element.style.top = `${placement.y}px`;
+  };
+}
+
 async function main(): Promise<void> {
   const mountPoint = document.getElementById('office');
   if (!mountPoint) throw new Error('main.ts: missing #office mount point in index.html');
 
-  const renderer = await PixiOfficeRenderer.mount(mountPoint);
+  const renderer = await PixiOfficeRenderer.mount(mountPoint, { onHoverChange: renderAgentTooltip() });
   const stage = new OfficeStage(renderer);
 
   const connectionFactory = new EventSourceStreamConnection({

@@ -9,11 +9,36 @@
       #office { width: 100%; height: 100vh; }
       #launch-control { position: absolute; top: 12px; left: 12px; display: flex; gap: 8px; z-index: 1; }
       #launch-control button { font: inherit; padding: 4px 10px; cursor: pointer; }
+
+      /* Agent hover tooltip (ui/scene/layout/hover-hit-test.ts + ui/main.ts): a DOM overlay, not
+         PixiJS content — see pixi-office-renderer.ts's file header for why hover cannot live on
+         the canvas's own scene graph. Positioned/filled entirely from JS; hidden by default. */
+      #agent-tooltip {
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 2;
+        pointer-events: none;
+        max-width: 260px;
+        background: #1e1e28;
+        border: 1px solid #33333f;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #e6e6ef;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      }
+      #agent-tooltip[hidden] { display: none; }
+      #agent-tooltip .agent-tooltip-row { display: flex; gap: 6px; }
+      #agent-tooltip .agent-tooltip-row + .agent-tooltip-row { margin-top: 2px; }
+      #agent-tooltip .agent-tooltip-label { flex: 0 0 auto; min-width: 42px; color: #9aa0a6; font-weight: 600; }
+      #agent-tooltip .agent-tooltip-value { word-break: break-word; }
     </style>
   </head>
   <body>
     <div id="office"></div>
     <div id="launch-control"></div>
+    <div id="agent-tooltip" hidden></div>
     <script type="module" src="/src/ui/main.ts"></script>
   </body>
 </html>
