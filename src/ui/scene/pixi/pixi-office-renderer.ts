@@ -59,20 +59,40 @@ export function fitToViewport(viewportWidth: number, viewportHeight: number): Vi
   };
 }
 
+/** What the previous frame's discarded children have to offer for this module to release them.
+ * Optional because a test's fake stage returns plain objects, and because PixiJS's own
+ * `removeChildren` is typed as returning display objects rather than this narrower shape. */
+export interface DiscardableChild {
+  destroy?: (options?: { children?: boolean }) => void;
+}
+
 export interface StageLike {
-  removeChildren(): unknown[];
+  removeChildren(): DiscardableChild[];
   addChild(child: Container): void;
 }
 
-/** Replaces the stage's entire previous frame with a freshly rendered one. Testable core of
- * `PixiOfficeRenderer.render` — see the file header for why it is split out this way. */
+/**
+ * Replaces the stage's entire previous frame with a freshly rendered one. Testable core of
+ * `PixiOfficeRenderer.render` — see the file header for why it is split out this way.
+ *
+ * The previous frame is DESTROYED, not merely detached. `removeChildren` only unparents, and a
+ * rebuilt-every-frame scene graph allocates a `Text` per caption — and a PixiJS `Text` owns a
+ * canvas-backed texture that nothing but `destroy()` ever frees. At 60fps with a dozen agents that
+ * is hundreds of orphaned GPU textures a second.
+ *
+ * Order matters and is the whole trick: the new scene is built FIRST, which REPARENTS the shared
+ * background container (and anything else carried between frames) out of the old scene, so
+ * destroying what is left cannot take a still-live object with it. Textures are left alone —
+ * `destroy()` frees the display objects, never the atlas or artwork they were drawn from.
+ */
 export function updateStage(
   stage: StageLike,
   viewModel: OfficeViewModel,
   options: RenderOfficeSceneOptions = {},
 ): void {
-  stage.removeChildren();
+  const previous = stage.removeChildren();
   stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0, options));
+  for (const child of previous) child.destroy?.({ children: true });
 }
 
 /**

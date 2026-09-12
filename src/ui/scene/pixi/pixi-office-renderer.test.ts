@@ -1,6 +1,13 @@
 import { Container } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
-import { fitToViewport, resolveHoverTooltip, shouldEmitHoverChange, updateStage, type StageLike } from './pixi-office-renderer';
+import {
+  fitToViewport,
+  resolveHoverTooltip,
+  shouldEmitHoverChange,
+  updateStage,
+  type DiscardableChild,
+  type StageLike,
+} from './pixi-office-renderer';
 import type { OfficeViewModel } from '../../state/office-view-model';
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../world/office-map';
@@ -17,16 +24,66 @@ import { renderOfficeBackground } from './office-scene-renderer';
 class RecordingStage implements StageLike {
   removedCalls = 0;
   addedChildren: Container[] = [];
+  /** What the stage hands back to be released — the previous frame, in production. */
+  pendingChildren: DiscardableChild[] = [];
 
-  removeChildren(): unknown[] {
+  removeChildren(): DiscardableChild[] {
     this.removedCalls++;
-    return [];
+    const removed = this.pendingChildren;
+    this.pendingChildren = [];
+    return removed;
   }
+
+  onAdd?: () => void;
 
   addChild(child: Container): void {
     this.addedChildren.push(child);
+    this.onAdd?.();
   }
 }
+
+describe('updateStage — releases the frame it replaces', () => {
+  /**
+   * `removeChildren` only unparents. A scene graph rebuilt every frame allocates a `Text` per
+   * caption, and a PixiJS `Text` owns a canvas-backed texture that nothing but `destroy()` frees —
+   * so a monitor left open for an afternoon would accumulate hundreds of thousands of them.
+   */
+  it('destroys every child of the previous frame, with its own children', () => {
+    const stage = new RecordingStage();
+    const destroyed: { children?: boolean }[] = [];
+    stage.pendingChildren = [{ destroy: (options) => destroyed.push(options ?? {}) }];
+
+    updateStage(stage, { workers: [], overflowCount: 0 });
+
+    expect(destroyed).toEqual([{ children: true }]);
+  });
+
+  /**
+   * Order is the whole trick: the replacement scene is built BEFORE the old one is released, so a
+   * container carried between frames (the shared background) has already been reparented out of
+   * the old scene and cannot be destroyed with it.
+   */
+  it('builds the replacement before releasing what it replaces', () => {
+    const order: string[] = [];
+    const stage = new RecordingStage();
+    stage.onAdd = () => order.push('added');
+    stage.pendingChildren = [{ destroy: () => order.push('destroyed') }];
+    const background = renderOfficeBackground();
+
+    updateStage(stage, { workers: [], overflowCount: 0 }, { background });
+
+    expect(order).toEqual(['added', 'destroyed']);
+    // And the carried-over background survived the release, still attached to the new scene.
+    expect(stage.addedChildren[0]!.children[0]).toBe(background);
+  });
+
+  it('tolerates a frame whose children cannot be released', () => {
+    const stage = new RecordingStage();
+    stage.pendingChildren = [{}];
+
+    expect(() => updateStage(stage, { workers: [], overflowCount: 0 })).not.toThrow();
+  });
+});
 
 describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOfficeRenderer', () => {
   // `renderOfficeScene` always appends one archive-counter child (blocker B.2, tasks.md 21.2), so
