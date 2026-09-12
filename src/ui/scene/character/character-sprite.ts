@@ -289,3 +289,28 @@ export function characterPortraitUrl(id: CharacterId, assetRoot = '/characters')
 export function characterMetaUrl(id: CharacterId, assetRoot = '/characters'): string {
   return `${assetRoot}/${id}/${id}.json`;
 }
+
+/**
+ * The exterior Sentinel (guide section 11). Kept apart from `CharacterId` on purpose: it is never
+ * an agent, never enters the room's navigation, and its sheet has a different frame size and a
+ * FLAT (non-directional) clip table, so nothing that resolves a character can accidentally resolve
+ * it instead.
+ */
+export interface SentinelSpriteMeta {
+  image: string;
+  frameWidth: number;
+  frameHeight: number;
+  sheetWidth: number;
+  sheetHeight: number;
+  origin: { x: number; y: number };
+  defaultScale: number;
+  animations: Record<string, SpriteClipMeta>;
+}
+
+export function sentinelMetaUrl(assetRoot = '/characters'): string {
+  return `${assetRoot}/sentinel/sentinel.json`;
+}
+
+export function sentinelSheetUrl(assetRoot = '/characters'): string {
+  return `${assetRoot}/sentinel/sentinel_spritesheet.png`;
+}

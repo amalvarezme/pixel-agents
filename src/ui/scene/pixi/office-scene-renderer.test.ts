@@ -107,6 +107,39 @@ describe('renderOfficeScene — the room, its people, and the layer order betwee
 
     expect(scene.children.some((child) => child instanceof Sprite)).toBe(false);
   });
+
+  /**
+   * Guide section 11: the Sentinel is OUTSIDE. It is drawn before the agents and clipped to the
+   * window mask, so it can never appear to be in the room or to be one of them.
+   */
+  describe('the exterior Sentinel', () => {
+    const sentinelLayer = (marker: Container) => ({
+      asset: { render: () => marker },
+      windowMask: Texture.EMPTY,
+    });
+
+    it('draws it between the room and its occupants', () => {
+      const marker = new Container();
+      const scene = renderOfficeScene(floorOf([worker()]), 0, { sentinel: sentinelLayer(marker) });
+
+      expect(scene.children.indexOf(marker)).toBe(1);
+      expect(scene.children.indexOf(marker)).toBeLessThan(scene.children.length - 2);
+    });
+
+    it('draws nothing at all when its asset has not loaded', () => {
+      const scene = renderOfficeScene(floorOf([worker()]));
+
+      expect(scene.children).toHaveLength(3); // background + one worker + the archive counter
+    });
+
+    it('draws nothing when the asset declines to render this frame', () => {
+      const scene = renderOfficeScene(floorOf([worker()]), 0, {
+        sentinel: { asset: { render: () => null }, windowMask: Texture.EMPTY },
+      });
+
+      expect(scene.children).toHaveLength(3);
+    });
+  });
 });
 
 describe('renderOfficeBackground', () => {

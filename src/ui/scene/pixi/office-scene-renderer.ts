@@ -8,9 +8,10 @@
  * the whole reason the room reads as a room:
  *
  *   1. `background.png`
- *   2. agents, sorted by the y of their FEET
- *   3. `foreground.png`
- *   4. UI (captions, carried documents, the archive counter)
+ *   2. the exterior Sentinel, clipped by `window_mask.png`
+ *   3. agents, sorted by the y of their FEET
+ *   4. `foreground.png`
+ *   5. UI (captions, carried documents, the archive counter)
  *
  * Sorting by feet (section 12: "No ordenar por el centro del sprite ni por su esquina superior
  * izquierda") is what lets a character walking along the front of the room pass in front of the
@@ -232,6 +233,13 @@ function renderArchiveCounter(archiveCount: number): Container {
   return counter;
 }
 
+/** The exterior Sentinel and the mask that confines it to the windows — supplied together,
+ * because one without the other would put it inside the room (guide section 11). */
+export interface SentinelLayer {
+  asset: { render(now: number, windowMask: Texture): Container | null };
+  windowMask: Texture;
+}
+
 export interface RenderOfficeSceneOptions {
   /**
    * The room's own artwork, loaded once by `pixi-office-renderer.ts`. Both layers are optional:
@@ -246,6 +254,8 @@ export interface RenderOfficeSceneOptions {
   /** Loaded Pixel Office sprite pack. Absent in every Node test and until `mount`'s async load
    * resolves; the scene then draws the procedural figure instead. */
   atlas?: CharacterAtlas;
+  /** Absent until the Sentinel's own sheet and the window mask have both loaded. */
+  sentinel?: SentinelLayer;
 }
 
 export function renderOfficeScene(
@@ -255,6 +265,13 @@ export function renderOfficeScene(
 ): Container {
   const scene = new Container();
   scene.addChild(options.background ?? renderOfficeBackground());
+
+  // Behind the agents and clipped to the glass: the Sentinel is OUTSIDE, and it never takes part
+  // in anything the office does (guide section 11).
+  if (options.sentinel) {
+    const sentinel = options.sentinel.asset.render(now, options.sentinel.windowMask);
+    if (sentinel) scene.addChild(sentinel);
+  }
 
   // Guide section 12: sort by the FEET. A character lower in the room is nearer the viewer and
   // draws in front of everyone behind it.
