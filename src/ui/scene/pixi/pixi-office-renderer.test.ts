@@ -49,8 +49,8 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
     const stage = new RecordingStage();
     const viewModel: OfficeViewModel = { workers: [], overflowCount: 0 };
 
-    updateStage(stage, viewModel, background);
-    updateStage(stage, viewModel, background);
+    updateStage(stage, viewModel, { background });
+    updateStage(stage, viewModel, { background });
 
     // The newest frame owns it; PixiJS reparented it out of the previous frame's scene (a
     // Container has exactly one parent), which is precisely what the per-frame teardown wants.

@@ -28,7 +28,8 @@ import type { OfficeRenderer } from '../OfficeStage';
 import type { OfficeViewModel } from '../../state/office-view-model';
 import { buildOfficeFloorView, type OfficeFloorView } from '../../components/organisms/office-floor';
 import { FLOOR_HEIGHT, FLOOR_WIDTH } from '../layout/office-layout';
-import { renderOfficeBackground, renderOfficeScene } from './office-scene-renderer';
+import { renderOfficeBackground, renderOfficeScene, type RenderOfficeSceneOptions } from './office-scene-renderer';
+import { CharacterAtlas } from './sprite-character-renderer';
 import type { AgentTooltipView } from '../../components/atoms/agent-tooltip';
 import { findWorkerAtScenePoint, screenToScene, type ScenePoint, type ScreenPoint, type ViewportFit } from '../layout/hover-hit-test';
 
@@ -64,9 +65,13 @@ export interface StageLike {
 
 /** Replaces the stage's entire previous frame with a freshly rendered one. Testable core of
  * `PixiOfficeRenderer.render` — see the file header for why it is split out this way. */
-export function updateStage(stage: StageLike, viewModel: OfficeViewModel, background?: Container): void {
+export function updateStage(
+  stage: StageLike,
+  viewModel: OfficeViewModel,
+  options: RenderOfficeSceneOptions = {},
+): void {
   stage.removeChildren();
-  stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0, background));
+  stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0, options));
 }
 
 /**
@@ -107,6 +112,10 @@ export class PixiOfficeRenderer implements OfficeRenderer {
    * detaches children, it never destroys them, so the same Container can be re-added forever —
    * turning 560 rect draw-ops per frame into 560 once. See `renderOfficeScene`'s `background`. */
   private readonly background: Container = renderOfficeBackground();
+  /** The Pixel Office sprite pack, loaded once in `mount`. Stays `undefined` until that async load
+   * resolves, and forever if it fails — the scene draws the procedural figure in the meantime, so
+   * the office is never blank while textures are in flight. */
+  private atlas?: CharacterAtlas;
 
   private constructor(
     private readonly app: Application,
@@ -141,6 +150,13 @@ export class PixiOfficeRenderer implements OfficeRenderer {
       app.canvas.addEventListener('pointerleave', () => renderer.handlePointerLeave());
     }
 
+    // Fire-and-forget: the first frames render with the procedural figure and switch to sprites the
+    // moment the pack is decoded. Awaiting it here would hold the whole office back on a network
+    // round trip for art the app can live without.
+    void CharacterAtlas.load().then((atlas) => {
+      if (atlas) renderer.atlas = atlas;
+    });
+
     return renderer;
   }
 
@@ -168,6 +184,6 @@ export class PixiOfficeRenderer implements OfficeRenderer {
 
   render(viewModel: OfficeViewModel): void {
     this.lastFloorView = buildOfficeFloorView(viewModel);
-    updateStage(this.app.stage, viewModel, this.background);
+    updateStage(this.app.stage, viewModel, { background: this.background, ...(this.atlas ? { atlas: this.atlas } : {}) });
   }
 }

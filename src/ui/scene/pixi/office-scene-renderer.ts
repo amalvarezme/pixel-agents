@@ -4,8 +4,9 @@
  * from an already-computed `OfficeFloorView` (pure layout math + atomic-design molecules) — this
  * file contains zero position/size/color decisions of its own.
  *
- * Draws desks, captions, the archive-trip document indicator + highlight (blocker B.2, tasks.md
- * 21.2), and the archive counter. Still no ticker of its own — `ui/scene/animation/
+ * Draws desks, characters (the Pixel Office sprite pack when an atlas is loaded, the procedural
+ * figure otherwise), captions, the archive-trip document indicator + highlight (blocker B.2,
+ * tasks.md 21.2), and the archive counter. Still no ticker of its own — `ui/scene/animation/
  * trip-animation.ts` already resolved every position/highlight decision into the `OfficeFloorView`
  * this module receives; this file only draws a static snapshot of it, once per call, exactly as
  * it did before slice 4.
@@ -21,6 +22,7 @@ import { buildCharacterPose } from '../character/character-pose';
 import { buildDeskProps, buildOfficeScenery } from '../scenery/office-scenery';
 import { renderCharacter } from './character-renderer';
 import { renderSceneryLayers, renderSceneryShapes } from './scenery-renderer';
+import { IDLE_CHARACTER_ALPHA, renderSpriteCharacter, type CharacterAtlas } from './sprite-character-renderer';
 
 const CAPTION_OFFSET_Y = 24;
 const CAPTION_STYLE = { fontSize: 14, fill: 0xffffff } as const;
@@ -52,23 +54,33 @@ const CHARACTER_DESK_CLEARANCE = 6;
 /** Adds the carried-document sprite + optional highlight ring + optional ×N batch badge directly
  * onto `group` (the worker's own desk group, so they move with it) for a worker currently mid
  * archive-trip (blocker B.2: "a document indicator appears ... a brief highlight fires"). */
-function addArchiveTripIndicator(group: Container, archiveTrip: { carryCount: number; highlight: boolean }, deskHeight: number): void {
-  const documentY = -deskHeight / 2 - DOCUMENT_OFFSET_Y;
+function addArchiveTripIndicator(
+  group: Container,
+  archiveTrip: { carryCount: number; highlight: boolean },
+  deskHeight: number,
+  carriedOffset: { x: number; y: number },
+): void {
+  // Offset by however far the character has walked: the document is in ITS hands, not left behind
+  // hovering over an empty desk.
+  const documentX = carriedOffset.x;
+  const documentY = carriedOffset.y - deskHeight / 2 - DOCUMENT_OFFSET_Y;
 
   const document = new Graphics()
     .rect(-DOCUMENT_SIZE / 2, -DOCUMENT_SIZE / 2, DOCUMENT_SIZE, DOCUMENT_SIZE)
     .fill(DOCUMENT_COLOR);
+  document.x = documentX;
   document.y = documentY;
   group.addChild(document);
 
   if (archiveTrip.highlight) {
-    const ring = new Graphics().circle(0, documentY, DOCUMENT_SIZE).stroke({ width: 3, color: HIGHLIGHT_RING_COLOR });
+    const ring = new Graphics().circle(documentX, documentY, DOCUMENT_SIZE).stroke({ width: 3, color: HIGHLIGHT_RING_COLOR });
     group.addChild(ring);
   }
 
   if (archiveTrip.carryCount > 1) {
     const badge = new Text({ text: `×${archiveTrip.carryCount}`, style: BATCH_BADGE_STYLE });
     badge.anchor.set(0.5);
+    badge.x = documentX;
     badge.y = documentY;
     group.addChild(badge);
   }
@@ -80,32 +92,55 @@ function isWorkerWalking(worker: { archiveTrip?: { highlight: boolean } }): bool
   return Boolean(worker.archiveTrip) && !worker.archiveTrip!.highlight;
 }
 
-/** Builds and draws the pixel-art character standing at `desk`, picking its animation
- * state/frame from data the scene already has (blocker/tasks.md: "idle/working/walking, driven
- * by data the scene already has"), its SIZE from `agentProfile.role` (an orchestrator is drawn
- * larger, the SAME character design as its subagents — `character-pose.ts`'s `ROLE_SCALE`), its
- * COLOUR from the worker's `projectPath` (every worker under one project shares a torso colour,
- * `resolveProjectCharacterColor`), its model accent badge from `agentProfile`, and which way it
- * faces from the currently active archive trip leg, if any (`character-facing.ts`). */
+interface RenderableWorker {
+  activity?: 'working' | 'idle';
+  archiveTrip?: { highlight: boolean; facing?: 'left' | 'right' };
+  agentProfile?: { role: 'orchestrator' | 'subagent'; model?: string; requestedModel?: string };
+  projectPath?: string;
+}
+
+/**
+ * Builds the character for one worker, preferring the Pixel Office sprite pack and falling back to
+ * the procedural figure when no atlas is loaded.
+ *
+ * Either way the same data decides everything: the animation comes from the worker's `activity`
+ * and its archive trip, the SIZE from `agentProfile.role` (an orchestrator is drawn larger than
+ * its subagents, same character), the IDENTITY from `projectPath` (every worker under one project
+ * is the same character — `resolveCharacterId`, matching the procedural path's shared body colour),
+ * and the facing from the active trip leg (`character-facing.ts`).
+ */
 function renderWorkerCharacter(
-  worker: {
-    activity?: 'working' | 'idle';
-    archiveTrip?: { highlight: boolean; facing?: 'left' | 'right' };
-    agentProfile?: { role: 'orchestrator' | 'subagent'; model?: string; requestedModel?: string };
-    projectPath?: string;
-  },
+  worker: RenderableWorker,
   deskHeight: number,
   now: number,
+  atlas?: CharacterAtlas,
 ): Container {
   const animationState = selectCharacterAnimationState({ activity: worker.activity, isWalking: isWorkerWalking(worker) });
-  const frame = selectAnimationFrame(animationState, now);
   const role = worker.agentProfile?.role ?? 'subagent';
+  const facing = worker.archiveTrip?.facing ?? 'right';
+  const atArchive = Boolean(worker.archiveTrip?.highlight);
+
+  if (atlas) {
+    const sprite = renderSpriteCharacter(
+      atlas,
+      { projectPath: worker.projectPath, role, state: animationState, atArchive, facing, now },
+      // A desk-bearing clip pins its own built-in table line to the desk's TOP edge; a desk-free
+      // clip (walking, celebrating) stands on this container's own origin, which is exactly the
+      // archive path position the caller has already moved it to.
+      { deskSurfaceY: -deskHeight / 2, floorY: 0 },
+    );
+    if (sprite) return sprite;
+  }
+
+  // Procedural fallback (`character-pose.ts`): drawn whenever the sprite pack is unavailable, and
+  // the only path any Node test ever takes, since loading real textures needs a browser.
+  const frame = selectAnimationFrame(animationState, now);
   const accentColor = resolveModelAccentColor(worker.agentProfile?.model ?? worker.agentProfile?.requestedModel);
   const bodyColor = resolveProjectCharacterColor(worker.projectPath);
-  const facing = worker.archiveTrip?.facing ?? 'right';
 
   const character = renderCharacter(buildCharacterPose({ role, state: animationState, frame, accentColor, bodyColor, facing }));
   character.y = -(deskHeight / 2 + CHARACTER_DESK_CLEARANCE);
+  if (animationState === 'idle') character.alpha = IDLE_CHARACTER_ALPHA;
   return character;
 }
 
@@ -123,23 +158,43 @@ function addDeskFurniture(group: Container, desk: { width: number; height: numbe
   group.addChild(accent);
 }
 
-function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number): Container {
+/**
+ * One worker's whole workstation: the desk (fixed at its layout position), the character (offset
+ * within the group by however far an archive trip has carried it), the caption, and the carried
+ * document.
+ *
+ * The group sits at the DESK's position, not the worker's. Anything that walks does so as a local
+ * offset inside the group, which is what keeps the furniture still while its occupant crosses the
+ * office — `office-floor.ts` supplies the two positions separately for exactly this reason.
+ */
+function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number, atlas?: CharacterAtlas): Container {
   const desk = floor.desks.find((d) => d.sessionKey === sessionKey);
   const worker = floor.workers.find((w) => w.sessionKey === sessionKey);
   const group = new Container();
   if (!desk || !worker) return group;
 
-  group.x = worker.x;
-  group.y = worker.y;
+  group.x = desk.x;
+  group.y = desk.y;
 
-  addDeskFurniture(group, desk, worker.badge.color);
+  const character = renderWorkerCharacter(worker, desk.height, now, atlas);
+  character.x += worker.x - desk.x;
+  character.y += worker.y - desk.y;
 
-  group.addChild(renderWorkerCharacter(worker, desk.height, now));
-
-  // Desk props (monitor/keyboard/mouse/mug) are added AFTER the character container so they draw
-  // in front of it — the monitor occludes the figure standing behind the desk, the way a real
-  // workstation would.
-  group.addChild(renderSceneryShapes(buildDeskProps(desk)));
+  if (atlas) {
+    // The pack draws a desk INTO its `typing`/`sit` frames, pinned to this desk's own top edge, so
+    // the sprite already supplies the laptop. Drawing our monitor/keyboard/mouse on top would put
+    // two workstations on one desk — and the desk surface goes on AFTER the character so its lower
+    // body is hidden behind it, which is what makes the figure read as sitting at the desk.
+    group.addChild(character);
+    addDeskFurniture(group, desk, worker.badge.color);
+  } else {
+    addDeskFurniture(group, desk, worker.badge.color);
+    group.addChild(character);
+    // Desk props (monitor/keyboard/mouse/mug) are added AFTER the character container so they draw
+    // in front of it — the monitor occludes the figure standing behind the desk, the way a real
+    // workstation would.
+    group.addChild(renderSceneryShapes(buildDeskProps(desk)));
+  }
 
   const caption = new Text({ text: worker.caption, style: CAPTION_STYLE });
   caption.anchor.set(0.5, 0);
@@ -147,7 +202,7 @@ function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number
   group.addChild(caption);
 
   if (worker.archiveTrip) {
-    addArchiveTripIndicator(group, worker.archiveTrip, desk.height);
+    addArchiveTripIndicator(group, worker.archiveTrip, desk.height, { x: worker.x - desk.x, y: worker.y - desk.y });
   }
 
   return group;
@@ -185,12 +240,31 @@ function renderArchiveCounter(archiveCount: number): Container {
  * background was 3. A caller that renders repeatedly builds it ONCE and passes the same Container
  * back in every frame. Omitting it keeps the previous self-contained behaviour, which is what the
  * tests rely on so that two scenes built in one test each own a distinct background. */
-export function renderOfficeScene(floor: OfficeFloorView, now: number = 0, background?: Container): Container {
+export interface RenderOfficeSceneOptions {
+  background?: Container;
+  /** Loaded Pixel Office sprite pack. Absent in every Node test and until `mount`'s async load
+   * resolves; the scene then draws the procedural figure instead. */
+  atlas?: CharacterAtlas;
+}
+
+export function renderOfficeScene(
+  floor: OfficeFloorView,
+  now: number = 0,
+  options: RenderOfficeSceneOptions = {},
+): Container {
   const scene = new Container();
-  scene.addChild(background ?? renderOfficeBackground());
-  for (const worker of floor.workers) {
-    scene.addChild(renderDeskGroup(floor, worker.sessionKey, now));
+  scene.addChild(options.background ?? renderOfficeBackground());
+
+  // Y-sorting (character pack guide section 18): a workstation lower on the floor plan draws in
+  // front of one further back, so a character crossing the office passes behind the desks above it
+  // and in front of the desks below. Sorted by the CHARACTER's current position, not the desk's,
+  // because that is the thing that moves; desks never overlap each other (the layout packs them
+  // into separate rows), so carrying a desk along in z-order changes nothing visible.
+  const ordered = [...floor.workers].sort((a, b) => a.y - b.y);
+  for (const worker of ordered) {
+    scene.addChild(renderDeskGroup(floor, worker.sessionKey, now, options.atlas));
   }
+
   scene.addChild(renderArchiveCounter(floor.archiveCount));
   return scene;
 }

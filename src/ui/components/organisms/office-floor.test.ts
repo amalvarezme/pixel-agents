@@ -44,3 +44,40 @@ describe('buildOfficeFloorView (organism) — the full renderable scene descript
     expect(floor.archiveCount).toBe(0);
   });
 });
+
+/**
+ * Regression: `applyTripOverlay` overwrites `x`/`y` with the archive-trip's moving position, and
+ * the desk used to be built from those same two fields — so every memory_write sent the whole
+ * workstation walking to the cabinet with the character riding on top of it.
+ */
+describe('buildOfficeFloorView desk position', () => {
+  it('keeps the desk at its layout position while the character is mid-trip', () => {
+    const floor = buildOfficeFloorView({
+      workers: [
+        {
+          sessionKey: 'claude-code:s1',
+          harness: 'claude-code',
+          label: 's1',
+          x: 1500,
+          y: 900,
+          deskX: 400,
+          deskY: 300,
+          lane: 'root',
+        },
+      ],
+      overflowCount: 0,
+    });
+
+    expect(floor.desks[0]).toMatchObject({ x: 400, y: 300 });
+    expect(floor.workers[0]).toMatchObject({ x: 1500, y: 900 });
+  });
+
+  it('falls back to the worker position for a view model that never set a desk position', () => {
+    const floor = buildOfficeFloorView({
+      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 's1', x: 400, y: 300, lane: 'root' }],
+      overflowCount: 0,
+    });
+
+    expect(floor.desks[0]).toMatchObject({ x: 400, y: 300 });
+  });
+});
