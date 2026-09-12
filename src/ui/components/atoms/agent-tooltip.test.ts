@@ -204,3 +204,29 @@ describe('resolveProjectSegment (pure helper, no node:path — runs in the brows
     expect(resolveProjectSegment('/a\\b/c')).toBe('c');
   });
 });
+
+/**
+ * Character pack guide section 20: portraits belong in panels, profiles and tooltips, never as a
+ * sprite inside the scene. The face shown here must be the same character the floor draws, which
+ * is why both resolve it from `projectPath` through `resolveCharacterId`.
+ */
+describe('buildAgentTooltip portrait', () => {
+  it('points at the portrait of the character the scene draws for that project', () => {
+    const view = buildAgentTooltip({ harnessName: 'Claude Code', projectPath: '/Users/me/pixel-agents' });
+
+    expect(view.portraitUrl).toMatch(/^\/characters\/(alex|marcus|sophia|elena)\/\1_portrait\.png$/);
+  });
+
+  it('gives every worker of one project the same portrait, orchestrator and subagent alike', () => {
+    const orchestrator = buildAgentTooltip({ harnessName: 'Claude Code', role: 'orchestrator', projectPath: '/a/p' });
+    const subagent = buildAgentTooltip({ harnessName: 'Claude Code', role: 'subagent', projectPath: '/a/p' });
+
+    expect(orchestrator.portraitUrl).toBe(subagent.portraitUrl);
+  });
+
+  it('still resolves a portrait for a worker whose harness reports no project', () => {
+    const view = buildAgentTooltip({ harnessName: 'Antigravity' });
+
+    expect(view.portraitUrl).toContain('_portrait.png');
+  });
+});

@@ -180,3 +180,53 @@ describe('buildOfficeViewModel — worker activity', () => {
     expect(vm.workers[0]!.activity).toBe('working');
   });
 });
+
+/**
+ * The floor has only `MAX_PACKED_WORKERS` desks, and `workers` is capped at that — everything past
+ * it used to survive only as a bare `overflowCount`, with no record of WHICH sessions were
+ * dropped. Any consumer reporting on who is active (the project roster panel) has to see all of
+ * them, which is what `roster` is for.
+ */
+describe('buildOfficeViewModel roster', () => {
+  function stateWith(count: number, projectPath?: string) {
+    let state = createOfficeState();
+    for (let i = 0; i < count; i++) {
+      state = applyEventToOfficeState(state, {
+        id: i + 1,
+        kind: 'session_start',
+        harness: 'claude-code',
+        sessionKey: `claude-code:s${i}`,
+        at: 0,
+        ...(projectPath ? { projectPath } : {}),
+      });
+    }
+    return state;
+  }
+
+  it('lists every worker, including the ones with no desk', () => {
+    const viewModel = buildOfficeViewModel(stateWith(12));
+
+    expect(viewModel.workers).toHaveLength(8);
+    expect(viewModel.overflowCount).toBe(4);
+    expect(viewModel.roster).toHaveLength(12);
+  });
+
+  it('carries the fields the roster panel groups and counts by', () => {
+    const viewModel = buildOfficeViewModel(stateWith(1, '/Users/me/pixel-agents'));
+
+    expect(viewModel.roster?.[0]).toMatchObject({
+      sessionKey: 'claude-code:s0',
+      harness: 'claude-code',
+      projectPath: '/Users/me/pixel-agents',
+      activity: 'working',
+    });
+  });
+
+  it('matches the worker list exactly when nothing overflows', () => {
+    const viewModel = buildOfficeViewModel(stateWith(3));
+
+    expect(viewModel.roster?.map((entry) => entry.sessionKey)).toEqual(
+      viewModel.workers.map((worker) => worker.sessionKey),
+    );
+  });
+});

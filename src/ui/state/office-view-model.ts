@@ -72,8 +72,29 @@ export interface WorkerViewModel {
   archiveTrip?: ArchiveTripView;
 }
 
+/**
+ * One worker's identity WITHOUT any scene position — the full census the floor cannot show.
+ *
+ * `workers` below is capped at `MAX_PACKED_WORKERS` (8 desks) and everything past that is reduced
+ * to `overflowCount`, so a consumer that only reads `workers` silently under-reports a busy
+ * machine: with 17 live sessions it sees 8 and has no way to know. Anything reporting on WHO is
+ * active — the project roster panel — reads this instead.
+ */
+export interface OfficeRosterEntry {
+  sessionKey: string;
+  harness: HarnessId;
+  projectPath?: string;
+  activity?: WorkerActivity;
+  role?: AgentProfile['role'];
+}
+
 export interface OfficeViewModel {
+  /** Only the workers that got one of the office's limited desks. */
   workers: WorkerViewModel[];
+  /** EVERY worker, desk or no desk — see `OfficeRosterEntry`. Optional only so a hand-built view
+   * model in a test never has to restate its workers twice (the same concession `deskX`/`deskY`
+   * make above); `buildOfficeViewModel` always sets it. */
+  roster?: OfficeRosterEntry[];
   overflowCount: number;
   /** Cumulative count of trips that have reached the archive cabinet (blocker B.2: "a per-archive
    * counter increments"). Set by the render half's `applyTripOverlay`; `undefined`/`0` from
@@ -95,6 +116,14 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
   }));
   const layout = computeOfficeLayout(layoutInputs);
   const deskBySessionKey = new Map(layout.desks.map((d) => [d.sessionKey, d]));
+
+  const roster: OfficeRosterEntry[] = workers.map((w) => ({
+    sessionKey: w.sessionKey,
+    harness: w.harness,
+    ...(w.projectPath !== undefined ? { projectPath: w.projectPath } : {}),
+    activity: w.activity,
+    ...(w.agentProfile?.role ? { role: w.agentProfile.role } : {}),
+  }));
 
   const viewModelWorkers: WorkerViewModel[] = [];
   for (const worker of workers) {
@@ -118,5 +147,5 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
     });
   }
 
-  return { workers: viewModelWorkers, overflowCount: layout.overflowCount };
+  return { workers: viewModelWorkers, roster, overflowCount: layout.overflowCount };
 }
