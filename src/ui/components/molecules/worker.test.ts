@@ -21,7 +21,7 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     expect(view.sessionKey).toBe('claude-code:s1');
     expect(view.x).toBe(960);
     expect(view.y).toBe(540);
-    expect(view.badge).toEqual({ text: 'Claude', color: '#d97757' });
+    expect(view.badge).toEqual({ text: 'Claude', name: 'Claude Code', color: '#d97757' });
     expect(view.caption).toBe('my-session');
     expect(view.lane).toBe('root');
   });
@@ -104,5 +104,65 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
 
     expect(view.activity).toBeUndefined();
     expect(view.agentProfile).toBeUndefined();
+  });
+
+  // Hover tooltip: the DOM overlay (ui/scene/layout/hover-hit-test.ts + agent-tooltip.ts) needs
+  // more than the pre-truncated `caption` — this molecule is where harness, label, tool pair, and
+  // agentProfile are all available at once to build the untruncated four-row tooltip content.
+  describe('tooltip', () => {
+    it('always builds exactly four rows: Agent, Role, Model, Task', () => {
+      const view = buildWorkerView(workerViewModel());
+
+      expect(view.tooltip.rows.map((r) => r.label)).toEqual(['Agent', 'Role', 'Model', 'Task']);
+    });
+
+    it("uses the harness badge's FULL product name for the Agent row, not the short badge text", () => {
+      const view = buildWorkerView(workerViewModel({ harness: 'claude-code' }));
+
+      expect(view.tooltip.rows.find((r) => r.label === 'Agent')?.value).toBe('Claude Code');
+    });
+
+    it('reflects the agentProfile role/agentType/model/task in the tooltip', () => {
+      const view = buildWorkerView(
+        workerViewModel({
+          agentProfile: { role: 'subagent', agentType: 'sdd-apply', model: 'claude-sonnet-5', task: 'Implement the hover tooltip' },
+        }),
+      );
+      const rows = Object.fromEntries(view.tooltip.rows.map((r) => [r.label, r.value]));
+
+      expect(rows.Role).toBe('Subagent (sdd-apply)');
+      expect(rows.Model).toBe('claude-sonnet-5');
+      expect(rows.Task).toBe('Implement the hover tooltip');
+    });
+
+    it('falls back to the live tool caption for the Task row when no agentProfile task is set', () => {
+      const withTool = buildWorkerView(workerViewModel({ toolLabel: 'Read', toolDetail: 'design.md' }));
+      expect(withTool.tooltip.rows.find((r) => r.label === 'Task')?.value).toBe('Read: design.md');
+    });
+
+    // Defect fix: the Task row used to fall back to the worker's `label`, but `office.ts` resolves
+    // `label` to the SESSION KEY when a harness reports none — so this printed a raw
+    // `claude-code:<uuid>` as if it were the agent's task. A session identity is not a task.
+    it('never shows the session label as the Task when no task and no tool caption exist', () => {
+      const withLabelOnly = buildWorkerView(workerViewModel({ label: 'claude-code:b0b92d0a-dd22' }));
+
+      expect(withLabelOnly.tooltip.rows.find((r) => r.label === 'Task')?.value).toBe('No task reported');
+    });
+
+    it('shows "Unknown" for Role and Model when the worker has no agentProfile', () => {
+      const view = buildWorkerView(workerViewModel());
+      const rows = Object.fromEntries(view.tooltip.rows.map((r) => [r.label, r.value]));
+
+      expect(rows.Role).toBe('Unknown');
+      expect(rows.Model).toBe('Unknown');
+    });
+
+    // Adversarial twin: requestedModel alone must render as an explicit request, never as if it
+    // were the resolved running model, all the way through this molecule.
+    it('marks a requestedModel-only profile as a request, never as the running model', () => {
+      const view = buildWorkerView(workerViewModel({ agentProfile: { role: 'subagent', requestedModel: 'opus' } }));
+
+      expect(view.tooltip.rows.find((r) => r.label === 'Model')?.value).toBe('unknown (requested: opus)');
+    });
   });
 });

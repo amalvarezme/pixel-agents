@@ -2,6 +2,18 @@ import { Container, Graphics, Text } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 import { renderOfficeBackground, renderOfficeScene } from './office-scene-renderer';
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
+import type { AgentTooltipView } from '../../components/atoms/agent-tooltip';
+
+// This file only exercises the PixiJS DRAWING of a worker, never tooltip CONTENT (that is
+// `agent-tooltip.test.ts`'s job) — a fixed placeholder is enough to satisfy `WorkerView.tooltip`.
+const TEST_TOOLTIP: AgentTooltipView = {
+  rows: [
+    { label: 'Agent', value: 'Claude Code' },
+    { label: 'Role', value: 'Unknown' },
+    { label: 'Model', value: 'Unknown' },
+    { label: 'Task', value: 'one' },
+  ],
+};
 
 describe('renderOfficeScene (tasks.md 10.3) — the only module that imports PixiJS', () => {
   it('renders the office background plus the archive counter for an empty floor', () => {
@@ -22,8 +34,9 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
           x: 760,
           y: 540,
           lane: 'root',
-          badge: { text: 'Claude', color: '#d97757' },
+          badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
           caption: 'my-session',
+          tooltip: TEST_TOOLTIP,
         },
       ],
       overflowCount: 0,
@@ -53,8 +66,8 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
         { sessionKey: 'claude-code:s2', x: 300, y: 100, width: 160, height: 160 },
       ],
       workers: [
-        { sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' },
-        { sessionKey: 'claude-code:s2', x: 300, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'two' },
+        { sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' }, caption: 'one', tooltip: TEST_TOOLTIP },
+        { sessionKey: 'claude-code:s2', x: 300, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' }, caption: 'two', tooltip: TEST_TOOLTIP },
       ],
       overflowCount: 0,
       archiveCount: 0,
@@ -80,8 +93,9 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
             x: 100,
             y: 100,
             lane: 'root',
-            badge: { text: 'Claude', color: '#d97757' },
+            badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
             caption: 'one',
+            tooltip: TEST_TOOLTIP,
             ...(archiveTrip ? { archiveTrip } : {}),
           },
         ],
@@ -141,7 +155,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
     it('renders the background as the very first child, before any desk group', () => {
       const floor: OfficeFloorView = {
         desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 160 }],
-        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' }, caption: 'one', tooltip: TEST_TOOLTIP }],
         overflowCount: 0,
         archiveCount: 0,
       };
@@ -160,7 +174,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
     it('renders the identical background shape count for an empty floor', () => {
       const populated = renderOfficeScene({
         desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 160 }],
-        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' }, caption: 'one', tooltip: TEST_TOOLTIP }],
         overflowCount: 0,
         archiveCount: 0,
       });
@@ -186,8 +200,9 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
             x: 100,
             y: 100,
             lane: 'root',
-            badge: { text: 'Claude', color: '#d97757' },
+            badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
             caption: 'one',
+            tooltip: TEST_TOOLTIP,
             ...(agentProfile ? { agentProfile } : {}),
           },
         ],
@@ -229,7 +244,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
     function floorWithBadgeColor(color: string): OfficeFloorView {
       return {
         desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 40 }],
-        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color }, caption: 'one' }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color }, caption: 'one', tooltip: TEST_TOOLTIP }],
         overflowCount: 0,
         archiveCount: 0,
       };
@@ -272,7 +287,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
     function floorWithDeskSize(width: number, height: number): OfficeFloorView {
       return {
         desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width, height }],
-        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' }, caption: 'one', tooltip: TEST_TOOLTIP }],
         overflowCount: 0,
         archiveCount: 0,
       };
@@ -306,7 +321,7 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
     function floorWithOneDesk(): OfficeFloorView {
       return {
         desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 40 }],
-        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' }, caption: 'one', tooltip: TEST_TOOLTIP }],
         overflowCount: 0,
         archiveCount: 0,
       };

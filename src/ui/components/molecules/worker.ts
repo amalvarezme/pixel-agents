@@ -9,6 +9,7 @@ import type { WorkerActivity } from '../../../domain/office/office';
 import type { AgentProfile } from '../../../domain/agents/agent-profile';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
+import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip';
 
 /** Archive-trip drawing data (blocker B.2, tasks.md 21.2) — carried through unchanged from
  * `WorkerViewModel.archiveTrip`; presence alone means "draw a carried document". */
@@ -24,6 +25,10 @@ export interface WorkerView {
   lane: DeskLane;
   badge: HarnessBadge;
   caption: string;
+  /** Untruncated hover-tooltip content (`ui/scene/layout/hover-hit-test.ts` drives the DOM
+   * overlay that displays it) — unlike `caption`, this is never bounded by the desk-spacing
+   * caption budget, since a DOM tooltip does not need to avoid colliding with neighbours. */
+  tooltip: AgentTooltipView;
   /** Carried straight through from `WorkerViewModel.activity` — the pixi renderer uses it to pick
    * the drawn idle/working animation state (`ui/scene/character/animation-state.ts`). */
   activity?: WorkerActivity;
@@ -34,17 +39,29 @@ export interface WorkerView {
 }
 
 export function buildWorkerView(worker: WorkerViewModel): WorkerView {
+  const badge = buildHarnessBadge(worker.harness);
+
   return {
     sessionKey: worker.sessionKey,
     x: worker.x,
     y: worker.y,
     lane: worker.lane,
-    badge: buildHarnessBadge(worker.harness),
+    badge,
     caption: buildCaption(
       worker.label,
       worker.toolLabel ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : undefined,
       worker.agentProfile,
     ),
+    tooltip: buildAgentTooltip({
+      harnessName: badge.name,
+      role: worker.agentProfile?.role,
+      agentType: worker.agentProfile?.agentType,
+      model: worker.agentProfile?.model,
+      requestedModel: worker.agentProfile?.requestedModel,
+      task: worker.agentProfile?.task,
+      toolLabel: worker.toolLabel,
+      toolDetail: worker.toolDetail,
+    }),
     ...(worker.activity !== undefined ? { activity: worker.activity } : {}),
     ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
     ...(worker.archiveTrip
