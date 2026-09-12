@@ -1,108 +1,164 @@
 {
-  "name": "marcus",
+  "schemaVersion": 2,
+  "id": "marcus",
   "displayName": "Marcus",
   "role": "IT / DevOps Engineer",
-  "image": "marcus_spritesheet.png",
+  "image": "marcus_spritesheet_v2.png",
   "frameWidth": 32,
   "frameHeight": 32,
   "sheetWidth": 128,
-  "sheetHeight": 256,
+  "sheetHeight": 512,
+  "origin": {
+    "x": 16,
+    "y": 30
+  },
+  "hitbox": {
+    "offsetX": -7,
+    "offsetY": -8,
+    "width": 14,
+    "height": 8
+  },
+  "defaultScale": 3,
+  "defaultDirection": "down",
+  "sideFaces": "right",
   "animations": {
     "idle": {
-      "row": 0,
-      "frames": 4,
-      "fps": 4,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "down": {
+        "row": 0,
+        "frames": 4,
+        "fps": 4,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "up": {
+        "row": 1,
+        "frames": 4,
+        "fps": 4,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "side": {
+        "row": 2,
+        "frames": 4,
+        "fps": 4,
+        "loop": true,
+        "mirrorForLeft": true
+      }
     },
     "walk": {
-      "row": 1,
-      "frames": 4,
-      "fps": 9,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "down": {
+        "row": 3,
+        "frames": 4,
+        "fps": 9,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "up": {
+        "row": 4,
+        "frames": 4,
+        "fps": 9,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "side": {
+        "row": 5,
+        "frames": 4,
+        "fps": 9,
+        "loop": true,
+        "mirrorForLeft": true
+      }
     },
     "work": {
-      "row": 2,
-      "frames": 4,
-      "fps": 6,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "up": {
+        "row": 6,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": false
+      }
     },
     "typing": {
-      "row": 3,
-      "frames": 4,
-      "fps": 8,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "up": {
+        "row": 7,
+        "frames": 4,
+        "fps": 8,
+        "loop": true,
+        "mirrorForLeft": false
+      }
     },
     "talk": {
-      "row": 4,
-      "frames": 4,
-      "fps": 5,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "down": {
+        "row": 8,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "up": {
+        "row": 9,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "side": {
+        "row": 10,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": true
+      }
     },
     "point": {
-      "row": 5,
-      "frames": 4,
-      "fps": 5,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "down": {
+        "row": 11,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "up": {
+        "row": 12,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": false
+      },
+      "side": {
+        "row": 13,
+        "frames": 4,
+        "fps": 5,
+        "loop": true,
+        "mirrorForLeft": true
+      }
     },
     "celebrate": {
-      "row": 6,
-      "frames": 4,
-      "fps": 7,
-      "loop": false,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "down": {
+        "row": 14,
+        "frames": 4,
+        "fps": 7,
+        "loop": false,
+        "mirrorForLeft": false
+      }
     },
     "sit": {
-      "row": 7,
-      "frames": 4,
-      "fps": 4,
-      "loop": true,
-      "frameIndexes": [
-        0,
-        1,
-        2,
-        3
-      ]
+      "down": {
+        "row": 15,
+        "frames": 4,
+        "fps": 4,
+        "loop": true,
+        "mirrorForLeft": false
+      }
     }
-  }
+  },
+  "fallbackDirections": {
+    "work": "up",
+    "typing": "up",
+    "celebrate": "down",
+    "sit": "down"
+  },
+  "runtimeNotes": [
+    "Furniture-free v2 sprites. Desks, laptops and chairs belong to the environment.",
+    "Render left direction by horizontally mirroring side frames."
+  ]
 }

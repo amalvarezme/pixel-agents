@@ -23,6 +23,7 @@ import { buildDeskProps, buildOfficeScenery } from '../scenery/office-scenery';
 import { renderCharacter } from './character-renderer';
 import { renderSceneryLayers, renderSceneryShapes } from './scenery-renderer';
 import { IDLE_CHARACTER_ALPHA, renderSpriteCharacter, type CharacterAtlas } from './sprite-character-renderer';
+import type { CharacterDirection } from '../character/character-sprite';
 
 const CAPTION_OFFSET_Y = 24;
 const CAPTION_STYLE = { fontSize: 14, fill: 0xffffff } as const;
@@ -94,7 +95,7 @@ function isWorkerWalking(worker: { archiveTrip?: { highlight: boolean } }): bool
 
 interface RenderableWorker {
   activity?: 'working' | 'idle';
-  archiveTrip?: { highlight: boolean; facing?: 'left' | 'right' };
+  archiveTrip?: { highlight: boolean; direction?: CharacterDirection };
   agentProfile?: { role: 'orchestrator' | 'subagent'; model?: string; requestedModel?: string };
   projectPath?: string;
 }
@@ -107,7 +108,7 @@ interface RenderableWorker {
  * and its archive trip, the SIZE from `agentProfile.role` (an orchestrator is drawn larger than
  * its subagents, same character), the IDENTITY from `projectPath` (every worker under one project
  * is the same character — `resolveCharacterId`, matching the procedural path's shared body colour),
- * and the facing from the active trip leg (`character-facing.ts`).
+ * and the direction from the active trip leg (`character-facing.ts`).
  */
 function renderWorkerCharacter(
   worker: RenderableWorker,
@@ -117,19 +118,24 @@ function renderWorkerCharacter(
 ): Container {
   const animationState = selectCharacterAnimationState({ activity: worker.activity, isWalking: isWorkerWalking(worker) });
   const role = worker.agentProfile?.role ?? 'subagent';
-  const facing = worker.archiveTrip?.facing ?? 'right';
+  const direction = worker.archiveTrip?.direction ?? 'down';
   const atArchive = Boolean(worker.archiveTrip?.highlight);
 
   if (atlas) {
-    const sprite = renderSpriteCharacter(
-      atlas,
-      { projectPath: worker.projectPath, role, state: animationState, atArchive, facing, now },
-      // A desk-bearing clip pins its own built-in table line to the desk's TOP edge; a desk-free
-      // clip (walking, celebrating) stands on this container's own origin, which is exactly the
-      // archive path position the caller has already moved it to.
-      { deskSurfaceY: -deskHeight / 2, floorY: 0 },
-    );
-    if (sprite) return sprite;
+    const sprite = renderSpriteCharacter(atlas, {
+      projectPath: worker.projectPath,
+      role,
+      state: animationState,
+      atArchive,
+      direction,
+      now,
+    });
+    if (sprite) {
+      // v2 sprites are body-only and stand on their feet, so the figure goes where any person
+      // would: on the floor just behind the desk's back edge, with the desk drawn in front of it.
+      sprite.y = -(deskHeight / 2 + CHARACTER_DESK_CLEARANCE);
+      return sprite;
+    }
   }
 
   // Procedural fallback (`character-pose.ts`): drawn whenever the sprite pack is unavailable, and
@@ -138,7 +144,10 @@ function renderWorkerCharacter(
   const accentColor = resolveModelAccentColor(worker.agentProfile?.model ?? worker.agentProfile?.requestedModel);
   const bodyColor = resolveProjectCharacterColor(worker.projectPath);
 
-  const character = renderCharacter(buildCharacterPose({ role, state: animationState, frame, accentColor, bodyColor, facing }));
+  const character = renderCharacter(
+    // The procedural figure is drawn only two ways; the pack's four-way heading collapses onto it.
+    buildCharacterPose({ role, state: animationState, frame, accentColor, bodyColor, facing: direction === 'left' ? 'left' : 'right' }),
+  );
   character.y = -(deskHeight / 2 + CHARACTER_DESK_CLEARANCE);
   if (animationState === 'idle') character.alpha = IDLE_CHARACTER_ALPHA;
   return character;
@@ -180,21 +189,12 @@ function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number
   character.x += worker.x - desk.x;
   character.y += worker.y - desk.y;
 
-  if (atlas) {
-    // The pack draws a desk INTO its `typing`/`sit` frames, pinned to this desk's own top edge, so
-    // the sprite already supplies the laptop. Drawing our monitor/keyboard/mouse on top would put
-    // two workstations on one desk — and the desk surface goes on AFTER the character so its lower
-    // body is hidden behind it, which is what makes the figure read as sitting at the desk.
-    group.addChild(character);
-    addDeskFurniture(group, desk, worker.badge.color);
-  } else {
-    addDeskFurniture(group, desk, worker.badge.color);
-    group.addChild(character);
-    // Desk props (monitor/keyboard/mouse/mug) are added AFTER the character container so they draw
-    // in front of it — the monitor occludes the figure standing behind the desk, the way a real
-    // workstation would.
-    group.addChild(renderSceneryShapes(buildDeskProps(desk)));
-  }
+  // The desk goes down first, then the character standing behind it, then the desk's own props —
+  // so the monitor occludes the figure the way a real workstation would. v2 sprites carry no
+  // furniture of their own (guide section 5), so both paths draw the same office furniture.
+  addDeskFurniture(group, desk, worker.badge.color);
+  group.addChild(character);
+  group.addChild(renderSceneryShapes(buildDeskProps(desk)));
 
   const caption = new Text({ text: worker.caption, style: CAPTION_STYLE });
   caption.anchor.set(0.5, 0);

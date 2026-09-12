@@ -115,24 +115,25 @@ Mounting a real PixiJS canvas is the one thing no automated test covers; it need
 
 ## Characters
 
-Agents are drawn with the **Pixel Office** sprite pack (`public/characters/`, four 32x32
-characters on 4x8 sheets; the pack's own guide is kept verbatim under `docs/characters/`).
+Agents are drawn with the **Pixel Office v2** sprite pack (`public/characters/`, four 32x32
+characters on 4x16 directional sheets; the pack's own docs are kept verbatim under
+`docs/pixel-office/`).
 
 - **Who** a worker is comes from its project: `resolveCharacterId` hashes `projectPath` into the
   four characters, so an orchestrator and every subagent under one project are the same person.
 - **Role** is size only: `ROLE_SPRITE_SCALE` draws an orchestrator at 5x and a subagent at 3x —
   whole numbers, because a fractional scale destroys pixel-perfect rendering.
-- **State** picks the clip: `typing` at the desk while working, `sit` once the session goes quiet
-  (dimmed), `walk` while crossing to the archive, `celebrate` on arrival. Timing comes from each
-  character's own JSON, never from a table in our code.
-- The pack draws a desk INTO its `typing`/`sit`/`work` frames, so those clips are pinned by that
-  built-in table line (row 21 of 32, measured from the shipped PNGs) onto the scene's own desk
-  surface — otherwise every worker would have two desks.
+- **State** picks the clip and the direction it is drawn in: `typing` facing the laptop (`up`)
+  while working, `idle` turned toward the room (`down`) once the session goes quiet (dimmed),
+  `walk` in whichever of the four directions it is actually heading, `point` at the Persistent
+  Memory Archive on arrival. Timing comes from each character's own JSON, never from a table in
+  our code.
+- v2 sprites are **body-only**: desks, laptops and chairs belong to the scene, never to a
+  character's frames. Every clip anchors the same way — the character's declared `origin` is the
+  centre of its feet, and that point is what the scene positions.
+- `left` is a runtime mirror of the `side` clip about that same origin, never a second set of art.
 - If the pack fails to load, the scene falls back to the procedural figure in
   `ui/scene/character/character-pose.ts`. Nothing blocks on the textures.
-
-`public/characters/demo.html` is the pack's own standalone player — open it at
-`/characters/demo.html` to step through every clip without the office around it.
 
 ## Architecture
 

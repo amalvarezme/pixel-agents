@@ -19,7 +19,8 @@
  */
 import type { OfficeViewModel, WorkerViewModel } from '../../state/office-view-model';
 import type { ScenePoint } from '../layout/archive-path';
-import { resolveCharacterFacing, type CharacterFacing } from '../character/character-facing';
+import { resolveMoveDirection } from '../character/character-facing';
+import type { CharacterDirection } from '../character/character-sprite';
 
 export type TripPhase = 'walking-out' | 'at-archive' | 'walking-back';
 
@@ -165,21 +166,31 @@ export interface TripRenderOverlay {
   highlight: boolean;
   /** True for the whole trip — the carried document sprite is visible throughout. */
   showDocument: boolean;
-  /** Which way the character should face for this leg of the trip (`character-facing.ts`):
-   * `'walking-out'` heads from the desk toward the archive, `'walking-back'` reverses that same
-   * leg — read from the trip's own fixed path endpoints, never from `now`/position alone (a
-   * worker's CURRENT position cannot tell outbound from inbound on its own: both legs pass
-   * through the same stretch of floor). */
-  facing: CharacterFacing;
+  /** Which way the character is heading right now (`character-facing.ts`'s `resolveMoveDirection`),
+   * in the pack's four-way vocabulary. Read from the path itself around the CURRENT position, not
+   * from the trip's endpoints: a route through the office is a dogleg, so a character can be
+   * walking down one leg and left along the next, and the drawn clip has to follow that rather
+   * than the straight line between the two ends. */
+  direction: CharacterDirection;
 }
 
-/** The trip's own direction: the desk end of its path, and the archive end. Read from the fixed
- * path endpoints (set once when the trip starts, `advanceTripAnimations`), never from a moving
- * position — that is what makes outbound vs inbound reliably distinguishable. */
-function tripFacing(trip: ActiveTrip): CharacterFacing {
-  const deskX = trip.path[0]?.x ?? 0;
-  const archiveX = trip.path[trip.path.length - 1]?.x ?? deskX;
-  return trip.phase === 'walking-back' ? resolveCharacterFacing(archiveX, deskX) : resolveCharacterFacing(deskX, archiveX);
+/**
+ * How far along the path to sample when reading the direction of travel. Small enough that the
+ * sample stays on the current leg of the dogleg, large enough to survive floating-point noise.
+ */
+const DIRECTION_SAMPLE = 0.01;
+
+/**
+ * The direction the character is travelling at path position `travel` (0 = desk, 1 = archive),
+ * taken from two points straddling it so the answer follows the CURRENT leg of the route.
+ *
+ * `outbound` is what distinguishes the two legs: a worker's position alone cannot, since both legs
+ * cross the same stretch of floor — walking back is the same samples read the other way round.
+ */
+function tripDirection(trip: ActiveTrip, travel: number, outbound: boolean): CharacterDirection {
+  const before = interpolatePath(trip.path, Math.max(0, travel - DIRECTION_SAMPLE));
+  const after = interpolatePath(trip.path, Math.min(1, travel + DIRECTION_SAMPLE));
+  return outbound ? resolveMoveDirection(before, after) : resolveMoveDirection(after, before);
 }
 
 /** The current rendered position/highlight for `sessionKey`'s active trip, or `null` if it has
@@ -188,17 +199,31 @@ export function getTripOverlay(state: TripAnimatorState, sessionKey: string, now
   const trip = state.active.get(sessionKey);
   if (!trip) return null;
 
-  const facing = tripFacing(trip);
-
   if (trip.phase === 'at-archive') {
     const destination = trip.path[trip.path.length - 1]!;
-    return { x: destination.x, y: destination.y, highlight: true, showDocument: true, facing };
+    // Dwelling at the archive: the pose is `point` at the cabinet regardless of direction
+    // (`selectSpritePose`), but the last heading keeps the procedural fallback figure consistent.
+    return {
+      x: destination.x,
+      y: destination.y,
+      highlight: true,
+      showDocument: true,
+      direction: tripDirection(trip, 1, true),
+    };
   }
 
   const elapsed = now - trip.phaseStartedAt;
   const progress = Math.min(1, elapsed / WALK_DURATION_MS);
-  const position = interpolatePath(trip.path, trip.phase === 'walking-out' ? progress : 1 - progress);
-  return { x: position.x, y: position.y, highlight: false, showDocument: true, facing };
+  const outbound = trip.phase === 'walking-out';
+  const travel = outbound ? progress : 1 - progress;
+  const position = interpolatePath(trip.path, travel);
+  return {
+    x: position.x,
+    y: position.y,
+    highlight: false,
+    showDocument: true,
+    direction: tripDirection(trip, travel, outbound),
+  };
 }
 
 /**
@@ -213,7 +238,12 @@ export function applyTripOverlay(viewModel: OfficeViewModel, state: TripAnimator
       ...worker,
       x: overlay.x,
       y: overlay.y,
-      archiveTrip: { ...worker.archiveTrip, highlight: overlay.highlight, showDocument: overlay.showDocument, facing: overlay.facing },
+      archiveTrip: {
+        ...worker.archiveTrip,
+        highlight: overlay.highlight,
+        showDocument: overlay.showDocument,
+        direction: overlay.direction,
+      },
     };
   });
 
