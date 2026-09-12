@@ -61,6 +61,7 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
       task: worker.agentProfile?.task,
       toolLabel: worker.toolLabel,
       toolDetail: worker.toolDetail,
+      projectPath: worker.projectPath,
     }),
     ...(worker.activity !== undefined ? { activity: worker.activity } : {}),
     ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),

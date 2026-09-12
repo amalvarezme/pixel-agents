@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAgentTooltip, type AgentTooltipSource } from './agent-tooltip';
+import { buildAgentTooltip, resolveProjectSegment, type AgentTooltipSource } from './agent-tooltip';
 
 function source(overrides: Partial<AgentTooltipSource> = {}): AgentTooltipSource {
   return { harnessName: 'Claude Code', ...overrides };
@@ -11,11 +11,32 @@ function rowMap(source: AgentTooltipSource): Record<string, string> {
 }
 
 describe('buildAgentTooltip (atom) — pure DOM-tooltip content builder, no DOM, no PixiJS', () => {
-  it('always produces exactly four rows, in order: Agent, Role, Model, Task', () => {
+  it('always produces exactly five rows, in order: Project, Agent, Role, Model, Task', () => {
     const tooltip = buildAgentTooltip(source());
 
-    expect(tooltip.rows).toHaveLength(4);
-    expect(tooltip.rows.map((r) => r.label)).toEqual(['Agent', 'Role', 'Model', 'Task']);
+    expect(tooltip.rows).toHaveLength(5);
+    expect(tooltip.rows.map((r) => r.label)).toEqual(['Project', 'Agent', 'Role', 'Model', 'Task']);
+  });
+
+  describe('Project row', () => {
+    it('renders the final path segment of projectPath, not the full path', () => {
+      expect(rowMap(source({ projectPath: '/Users/andresalvarez/Documents/pixel-agents' })).Project).toBe(
+        'pixel-agents',
+      );
+    });
+
+    it('is "Unknown" when projectPath is absent', () => {
+      expect(rowMap(source()).Project).toBe('Unknown');
+    });
+
+    it('is "Unknown" when projectPath is blank', () => {
+      expect(rowMap(source({ projectPath: '   ' })).Project).toBe('Unknown');
+    });
+
+    it('is the FIRST row, before Agent', () => {
+      const tooltip = buildAgentTooltip(source({ projectPath: '/a/b/pixel-agents' }));
+      expect(tooltip.rows[0]).toEqual({ label: 'Project', value: 'pixel-agents' });
+    });
   });
 
   describe('Agent row', () => {
@@ -132,3 +153,54 @@ describe('buildAgentTooltip (atom) — pure DOM-tooltip content builder, no DOM,
   });
 });
 
+describe('resolveProjectSegment (pure helper, no node:path — runs in the browser)', () => {
+  it('renders the final segment of a POSIX absolute path', () => {
+    expect(resolveProjectSegment('/Users/andresalvarez/Documents/pixel-agents')).toBe('pixel-agents');
+  });
+
+  it('handles a trailing slash', () => {
+    expect(resolveProjectSegment('/a/b/')).toBe('b');
+  });
+
+  it('is "Unknown" for the filesystem root — there is no project name', () => {
+    expect(resolveProjectSegment('/')).toBe('Unknown');
+  });
+
+  it('returns a single bare segment unchanged', () => {
+    expect(resolveProjectSegment('pixel-agents')).toBe('pixel-agents');
+  });
+
+  it('is "Unknown" for an empty string', () => {
+    expect(resolveProjectSegment('')).toBe('Unknown');
+  });
+
+  it('is "Unknown" for a blank (whitespace-only) string', () => {
+    expect(resolveProjectSegment('   ')).toBe('Unknown');
+  });
+
+  it('is "Unknown" when projectPath is absent (undefined)', () => {
+    expect(resolveProjectSegment(undefined)).toBe('Unknown');
+  });
+
+  it('handles a Windows-style path', () => {
+    expect(resolveProjectSegment('C:\\dev\\my-app')).toBe('my-app');
+  });
+
+  // Adversarial twin: a Windows-style path with a trailing backslash must not yield an empty
+  // segment either — same rule as the POSIX trailing-slash case above.
+  it('handles a Windows-style path with a trailing backslash', () => {
+    expect(resolveProjectSegment('C:\\dev\\my-app\\')).toBe('my-app');
+  });
+
+  // Adversarial twin: consecutive duplicate separators must collapse, never producing an empty
+  // "ghost" segment that wins over the real last one.
+  it('collapses consecutive duplicate separators', () => {
+    expect(resolveProjectSegment('/a/b//')).toBe('b');
+  });
+
+  // Adversarial twin: mixed POSIX/Windows separators in the same path must still resolve to the
+  // true final segment.
+  it('handles mixed / and \\ separators in the same path', () => {
+    expect(resolveProjectSegment('/a\\b/c')).toBe('c');
+  });
+});

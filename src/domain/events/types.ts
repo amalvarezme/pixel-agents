@@ -58,6 +58,8 @@ export interface AgentEventBase {
    * Launcher-only fields (design.md "The Launcher"). Populated exclusively by
    * `createSelfOriginatedEvent` for `launch_requested`/`launch_started`, and by the launcher
    * adapter's own `status(launch_failed)` construction — never by any ingestion adapter.
+   * See `projectPath` below for the distinct, ingestion-adapter-populated equivalent — the two
+   * must never be merged or treated as interchangeable.
    */
   launchId?: string;
   binaryPath?: string;
@@ -73,6 +75,19 @@ export interface AgentEventBase {
    * simply never sets this field.
    */
   agentProfile?: AgentProfile;
+  /**
+   * The absolute working directory an INGESTION adapter observed for this session, sourced
+   * per-harness by each adapter's own resolver (Claude Code/Codex: a `cwd` field read off the
+   * session's own log; OpenCode: the `session.directory` column) — exactly like `agentProfile`
+   * above, never a harness special case. Antigravity's transcript carries no cwd signal at all,
+   * so it simply never sets this field.
+   *
+   * DISTINCT from `cwd` above: `cwd` is launcher-only (populated exclusively by
+   * `createSelfOriginatedEvent` for `launch_requested`/`launch_started`, never by an ingestion
+   * adapter — see that field's own doc comment). `projectPath` is the mirror-image field for
+   * ingestion adapters and must never be conflated with, or merged into, `cwd`.
+   */
+  projectPath?: string;
 }
 
 export interface MemoryWriteEvent extends AgentEventBase {

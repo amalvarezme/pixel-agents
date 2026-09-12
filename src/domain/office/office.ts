@@ -47,6 +47,11 @@ export interface Worker {
   /** Agent profile tracking: what this worker IS, what MODEL it runs, and what TASK it was given
    * (`domain/agents/agent-profile.ts`). `undefined` for a harness that reports none of it. */
   agentProfile?: AgentProfile;
+  /** The associated project's working directory, sourced from `AgentEventBase.projectPath`
+   * (an ingestion adapter's own cwd resolver) — `undefined` for a harness that reports none of
+   * it (Antigravity). Merge-not-replace, exactly like `toolLabel`/`toolDetail`: a later event
+   * that does not carry a project must never erase an already-known one. */
+  projectPath?: string;
 }
 
 /**
@@ -143,6 +148,7 @@ function upsertWorker(
     parentSessionKey: patch.parentSessionKey !== undefined ? patch.parentSessionKey : (existing?.parentSessionKey ?? null),
     toolLabel: patch.toolLabel ?? existing?.toolLabel,
     toolDetail: patch.toolDetail ?? existing?.toolDetail,
+    projectPath: patch.projectPath ?? existing?.projectPath,
     // Merged, never replaced wholesale: a later partial profile (e.g. just the orchestrator's
     // newly-discovered model) must enrich the existing one, not erase agentType/model/task
     // already known from an earlier profile event (spec: "a missing model stays absent rather
@@ -196,6 +202,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         activity: 'working',
         ...(pendingEdge?.correlationId !== undefined ? { parentSessionKey: pendingEdge.correlationId } : {}),
         ...(mergedProfile ? { agentProfile: mergedProfile } : {}),
+        ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
       });
       if (!pendingEdge) return worker;
       const pendingParentEdges = new Map(worker.pendingParentEdges);
@@ -216,6 +223,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
           label: event.label,
           ...(event.correlationId !== undefined ? { parentSessionKey: event.correlationId } : {}),
           ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
+          ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
         });
       }
       // The child was never discovered (yet, or ever) — record the edge, but do NOT create a
@@ -237,7 +245,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
       return applyMemoryWriteToOfficeState(pruned, event.sessionKey, event.at);
 
     default:
-      if (!event.label && !event.toolLabel && !event.agentProfile) return pruned;
+      if (!event.label && !event.toolLabel && !event.agentProfile && !event.projectPath) return pruned;
       if (!pruned.workers.has(event.sessionKey)) return pruned;
       return upsertWorker(pruned, event.sessionKey, {
         harness: event.harness,
@@ -245,6 +253,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         toolLabel: event.toolLabel,
         toolDetail: event.toolDetail,
         ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
+        ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
       });
   }
 }

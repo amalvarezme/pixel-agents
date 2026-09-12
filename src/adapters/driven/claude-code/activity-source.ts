@@ -154,6 +154,10 @@ export class ClaudeCodeActivitySource implements ActivitySource {
         // classifier, before any correlation or launch-join ever runs — "the orchestrator is
         // distinguishable from its subagents" starts here, at the very first event.
         agentProfile: { role: isSubagent ? 'subagent' : 'orchestrator' },
+        // Associated-project tracking: `resolveClaudeCodeSessionCwd` already resolved this
+        // session's cwd during discovery (discover.ts); `null` means no `cwd` record was found
+        // within the probe bound, which must never render as a guessed project.
+        ...(claudeCodeSession.cwd !== null ? { projectPath: claudeCodeSession.cwd } : {}),
       }),
       checkpoint: bootstrapCheckpoint,
     });

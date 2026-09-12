@@ -92,7 +92,8 @@ export class CodexActivitySource implements ActivitySource {
   }
 
   open(session: SessionRef, from: Checkpoint | null): ActivityStream {
-    const filePath = (session as CodexSessionRef).filePath;
+    const codexSession = session as CodexSessionRef;
+    const filePath = codexSession.filePath;
     const sessionKey = session.sessionKey;
     const initialCheckpoint: ByteOffsetCheckpoint | null = from && from.kind === 'byte-offset' ? from : null;
     const queue = createAsyncQueue<ActivityStreamItem>();
@@ -119,6 +120,10 @@ export class CodexActivitySource implements ActivitySource {
         // never the moment open() happens to run — falls back to now() only for a fake/scripted
         // SessionRef that never set it.
         at: session.lastActivityAt ?? this.now(),
+        // Associated-project tracking: `resolveCodexSessionCwd` already resolved this session's
+        // cwd during discovery (discover.ts); `null` means no `session_meta.payload.cwd` record
+        // was found within the probe bound, which must never render as a guessed project.
+        ...(codexSession.cwd !== null ? { projectPath: codexSession.cwd } : {}),
       }),
       checkpoint: bootstrapCheckpoint,
     });

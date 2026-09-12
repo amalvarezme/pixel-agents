@@ -232,6 +232,45 @@ describe('CodexActivitySource', () => {
     await source.close();
   });
 
+  // Associated-project tracking: `resolveCodexSessionCwd` (discover.ts) already resolves the
+  // session's cwd at discovery time from `session_meta.payload.cwd`; this proves it actually
+  // lands on the synthetic `session_start` event, not just on the discovered `SessionRef`.
+  it('stamps the synthetic session_start with projectPath from the session\'s resolved cwd', async () => {
+    const sessionMetaLine = JSON.stringify({ type: 'session_meta', payload: { cwd: '/Users/andresalvarez/Documents/pixel-agents' } });
+    const { root: harnessRoot } = await makeRolloutFile(sessionMetaLine);
+    const source = new CodexActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    expect(sessionRef?.cwd).toBe('/Users/andresalvarez/Documents/pixel-agents');
+
+    const stream = source.open(sessionRef!, null);
+    const first = await stream.events[Symbol.asyncIterator]().next();
+
+    expect(first.value?.event.kind).toBe('session_start');
+    expect(first.value?.event.projectPath).toBe('/Users/andresalvarez/Documents/pixel-agents');
+
+    stream.stop();
+    await source.close();
+  });
+
+  // Adversarial twin: a rollout file with no session_meta cwd record must leave projectPath
+  // unset, never guessed.
+  it('leaves projectPath unset on session_start when no cwd record was found', async () => {
+    const { root: harnessRoot } = await makeRolloutFile('{}');
+    const source = new CodexActivitySource(harnessRoot);
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const { value: sessionRef } = await iterator.next();
+    const stream = source.open(sessionRef!, null);
+    const first = await stream.events[Symbol.asyncIterator]().next();
+
+    expect(first.value?.event.projectPath).toBeUndefined();
+
+    stream.stop();
+    await source.close();
+  });
+
   it('discover + open + close never writes anything under the harness root (Global No-Write Invariant, composition level)', async () => {
     const { root: harnessRoot, filePath } = await makeRolloutFile('{"type":"session_meta"}');
     const source = new CodexActivitySource(harnessRoot);

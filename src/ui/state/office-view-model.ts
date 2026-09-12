@@ -40,6 +40,9 @@ export interface WorkerViewModel {
   /** Agent profile tracking: what this worker IS, what MODEL it runs, and what TASK it was
    * given — carried straight through from `Worker.agentProfile`. */
   agentProfile?: AgentProfile;
+  /** The associated project's working directory, carried straight through from
+   * `Worker.projectPath` — `undefined` for a harness that reports none of it (Antigravity). */
+  projectPath?: string;
   /** Carried straight through from `Worker.activity` — selects the drawn idle/working animation
    * state (`ui/scene/character/animation-state.ts`). Optional here (unlike the always-present
    * domain field) so a hand-built view model never needs to specify it; the render layer degrades
@@ -87,6 +90,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       activity: worker.activity,
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
       ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
+      ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
       ...(held ? { archiveTrip: { path: computeArchivePath({ x: desk.x, y: desk.y }), carryCount: held.count } } : {}),
     });
   }
