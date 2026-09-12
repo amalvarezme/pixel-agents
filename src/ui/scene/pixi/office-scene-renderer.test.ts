@@ -1,6 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
-import { renderOfficeScene } from './office-scene-renderer';
+import { renderOfficeBackground, renderOfficeScene } from './office-scene-renderer';
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
 
 describe('renderOfficeScene (tasks.md 10.3) — the only module that imports PixiJS', () => {
@@ -297,6 +297,80 @@ describe('renderOfficeScene (tasks.md 10.3) — the only module that imports Pix
       const tallAnchorY = ((tallDeskScene.children[1] as Container).children[2] as Container).y;
 
       expect(tallAnchorY).toBeLessThan(shortAnchorY);
+    });
+  });
+
+  // Desk props (monitor/keyboard/mouse/mug, `scenery/office-scenery.ts`'s `buildDeskProps`) must
+  // draw AFTER the character so the monitor occludes the figure standing behind the desk.
+  describe('desk props (monitor, keyboard, mouse, mug)', () => {
+    function floorWithOneDesk(): OfficeFloorView {
+      return {
+        desks: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, width: 160, height: 40 }],
+        workers: [{ sessionKey: 'claude-code:s1', x: 100, y: 100, lane: 'root', badge: { text: 'Claude', color: '#d97757' }, caption: 'one' }],
+        overflowCount: 0,
+        archiveCount: 0,
+      };
+    }
+
+    it('keeps the character container at index 2 and adds desk-prop graphics at index 3 or later', () => {
+      const scene = renderOfficeScene(floorWithOneDesk());
+      const deskGroup = scene.children[1] as Container;
+
+      expect(deskGroup.children[2]).toBeInstanceOf(Container); // the character, unchanged
+
+      const propsChild = deskGroup.children[3];
+      expect(propsChild).toBeDefined();
+      expect(propsChild).toBeInstanceOf(Graphics);
+    });
+
+    // Adversarial twin: an empty floor draws no desk group at all, so it must not draw any desk
+    // props either — proves the props are per-desk, not some always-present global fixture.
+    it('draws no desk-prop graphics at all for an empty floor', () => {
+      const scene = renderOfficeScene({ desks: [], workers: [], overflowCount: 0, archiveCount: 0 });
+      expect(scene.children).toHaveLength(2); // background + archive counter only
+    });
+  });
+
+  // Performance: the scenery is static and takes no input, yet `updateStage` rebuilds the whole
+  // scene graph every animation frame. Rebuilding it inline costs 560 rect draw-ops per frame to
+  // redraw pixels identical to the last frame's. A caller that renders repeatedly passes ONE
+  // background Container back in on every frame instead.
+  describe('reusable static background', () => {
+    it('attaches the caller-provided background instance instead of building a new one', () => {
+      const background = renderOfficeBackground();
+      const floor: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
+
+      const scene = renderOfficeScene(floor, 0, background);
+
+      expect(scene.children[0]).toBe(background);
+    });
+
+    // PixiJS gotcha this pins deliberately: a Container has exactly ONE parent, so re-rendering
+    // REPARENTS the shared background into the newest scene and detaches it from the previous one.
+    // That is exactly what production wants — `updateStage` discards the old scene every frame and
+    // only the newest one is ever on the stage — but it means the previous scene must NOT be
+    // expected to still hold it.
+    it('reuses the SAME instance across repeated renders, rebuilding nothing', () => {
+      const background = renderOfficeBackground();
+      const floor: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
+
+      const first = renderOfficeScene(floor, 0, background);
+      const second = renderOfficeScene(floor, 16, background);
+
+      expect(second.children[0]).toBe(background);
+      expect(first.children).not.toContain(background);
+    });
+
+    // Adversarial twin: with no background passed, each scene must still own a DISTINCT one — the
+    // existing tests build two scenes in one test and read both backgrounds, which a shared
+    // instance would break (a Container can only have one parent).
+    it('builds a separate background per scene when none is provided', () => {
+      const floor: OfficeFloorView = { desks: [], workers: [], overflowCount: 0, archiveCount: 0 };
+
+      const first = renderOfficeScene(floor);
+      const second = renderOfficeScene(floor);
+
+      expect(second.children[0]).not.toBe(first.children[0]);
     });
   });
 

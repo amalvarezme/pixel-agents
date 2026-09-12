@@ -2,6 +2,7 @@ import { Container } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 import { fitToViewport, updateStage, type StageLike } from './pixi-office-renderer';
 import type { OfficeViewModel } from '../../state/office-view-model';
+import { renderOfficeBackground } from './office-scene-renderer';
 
 // browser-entrypoint work unit: `updateStage` is the testable core of `PixiOfficeRenderer` — the
 // part that decides WHAT the stage should contain on every update. Mounting a real `Application`
@@ -39,6 +40,33 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
     expect(stage.addedChildren).toHaveLength(1);
     expect(stage.addedChildren[0]).toBeInstanceOf(Container);
     expect(stage.addedChildren[0]!.children).toHaveLength(2);
+  });
+
+  it('forwards a caller-provided background so repeated frames reuse one instance', () => {
+    const background = renderOfficeBackground();
+    const stage = new RecordingStage();
+    const viewModel: OfficeViewModel = { workers: [], overflowCount: 0 };
+
+    updateStage(stage, viewModel, background);
+    updateStage(stage, viewModel, background);
+
+    // The newest frame owns it; PixiJS reparented it out of the previous frame's scene (a
+    // Container has exactly one parent), which is precisely what the per-frame teardown wants.
+    expect(stage.addedChildren[1]!.children[0]).toBe(background);
+    expect(stage.addedChildren[0]!.children).not.toContain(background);
+  });
+
+  // Adversarial twin: omitting it must still produce a working background, per frame.
+  it('still builds its own background when the caller provides none', () => {
+    const stage = new RecordingStage();
+    const viewModel: OfficeViewModel = { workers: [], overflowCount: 0 };
+
+    updateStage(stage, viewModel);
+    updateStage(stage, viewModel);
+
+    const [first, second] = stage.addedChildren;
+    expect(first!.children[0]).toBeInstanceOf(Container);
+    expect(second!.children[0]).not.toBe(first!.children[0]);
   });
 
   it('renders one desk group per worker in the view model, plus the background and archive counter', () => {
