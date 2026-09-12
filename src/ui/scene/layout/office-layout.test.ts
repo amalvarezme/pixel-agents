@@ -63,15 +63,16 @@ describe('office layout — seating agents at the room\'s real workstations', ()
   });
 
   /**
-   * A seat is a POSE position, not a walkable cell: the map's anchors stand each agent against its
-   * own desk so the foreground layer hides its legs and it reads as working there, which means the
-   * anchor itself is inside that desk's collision rectangle. What must hold is that an agent can
-   * still GET there — the route's interior is clear and the last step is the anchor itself.
+   * Every seat is open floor in front of its desk, never inside the furniture: that is what an
+   * `interactionAnchor` means (guide section 8), and a seat the pathfinder considered blocked
+   * would be a seat no agent could walk back to after an archive trip.
    */
-  it('leaves every seat reachable, even though a seat stands against its own desk', () => {
+  it('seats every agent on open floor, and leaves every seat reachable', () => {
     const layout = computeOfficeLayout(Array.from({ length: MAX_SEATED_WORKERS }, (_, i) => worker(`claude-code:s${i}`)));
 
     for (const seat of layout.seats) {
+      expect(officeNavigation.isBlocked({ x: seat.x, y: seat.y })).toBe(false);
+
       const path = officeNavigation.findPath({ x: 960, y: 660 }, { x: seat.x, y: seat.y });
       expect(path.length).toBeGreaterThan(1);
       expect(path[path.length - 1]).toEqual({ x: seat.x, y: seat.y });

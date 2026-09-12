@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildWorkerView } from './worker';
 import { resolveCharacterScale } from '../../scene/character/character-sprite';
+import { WORKSTATIONS } from '../../scene/world/office-map';
 import { CAPTION_MAX_CHARS, truncateCaption } from '../atoms/caption';
 import type { WorkerViewModel } from '../../state/office-view-model';
 
@@ -117,6 +118,24 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
   });
 
   // Adversarial twin: a worker with no projectPath must not gain one out of nowhere.
+  /**
+   * Which side of `foreground.png` the renderer must draw this character on. Resolved here, beside
+   * the scale it depends on, so the scene never has to work it out mid-render.
+   */
+  it('puts an agent at its own workstation in front of the furniture', () => {
+    const station = WORKSTATIONS[0]!.interactionAnchor;
+
+    const view = buildWorkerView(workerViewModel({ x: station.x, y: station.y }));
+
+    expect(view.behindForeground).toBe(false);
+  });
+
+  it('puts an agent standing behind a desk behind the furniture', () => {
+    const view = buildWorkerView(workerViewModel({ x: 600, y: 640 }));
+
+    expect(view.behindForeground).toBe(true);
+  });
+
   it('has no projectPath when the worker has none', () => {
     const view = buildWorkerView(workerViewModel());
 

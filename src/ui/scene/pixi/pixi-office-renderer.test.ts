@@ -248,6 +248,7 @@ describe('resolveHoverTooltip — looks up the hovered worker\'s tooltip from th
         x: 760,
         y: 540,
         scale: 3,
+        behindForeground: false,
         badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
         caption: 'my-session',
         tooltip,
