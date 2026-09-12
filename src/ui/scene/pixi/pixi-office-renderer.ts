@@ -18,7 +18,7 @@ import type { OfficeRenderer } from '../OfficeStage';
 import type { OfficeViewModel } from '../../state/office-view-model';
 import { buildOfficeFloorView } from '../../components/organisms/office-floor';
 import { FLOOR_HEIGHT, FLOOR_WIDTH } from '../layout/office-layout';
-import { renderOfficeScene } from './office-scene-renderer';
+import { renderOfficeBackground, renderOfficeScene } from './office-scene-renderer';
 
 export interface ViewportFit {
   /** Uniform scale applied to the stage so the whole floor plan fits the viewport. */
@@ -58,9 +58,9 @@ export interface StageLike {
 
 /** Replaces the stage's entire previous frame with a freshly rendered one. Testable core of
  * `PixiOfficeRenderer.render` — see the file header for why it is split out this way. */
-export function updateStage(stage: StageLike, viewModel: OfficeViewModel): void {
+export function updateStage(stage: StageLike, viewModel: OfficeViewModel, background?: Container): void {
   stage.removeChildren();
-  stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0));
+  stage.addChild(renderOfficeScene(buildOfficeFloorView(viewModel), viewModel.now ?? 0, background));
 }
 
 export interface PixiOfficeRendererOptions {
@@ -69,6 +69,11 @@ export interface PixiOfficeRendererOptions {
 }
 
 export class PixiOfficeRenderer implements OfficeRenderer {
+  /** The static scenery, built ONCE and re-attached every frame. `stage.removeChildren()` only
+   * detaches children, it never destroys them, so the same Container can be re-added forever —
+   * turning 560 rect draw-ops per frame into 560 once. See `renderOfficeScene`'s `background`. */
+  private readonly background: Container = renderOfficeBackground();
+
   private constructor(private readonly app: Application) {}
 
   /** Creates a real PixiJS `Application`, mounts its `<canvas>` into `container`, and returns a
@@ -99,6 +104,6 @@ export class PixiOfficeRenderer implements OfficeRenderer {
   }
 
   render(viewModel: OfficeViewModel): void {
-    updateStage(this.app.stage, viewModel);
+    updateStage(this.app.stage, viewModel, this.background);
   }
 }

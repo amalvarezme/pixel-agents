@@ -13,12 +13,13 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
 import { ARCHIVE_DESTINATION } from '../layout/archive-path';
-import { FLOOR_HEIGHT, FLOOR_WIDTH } from '../layout/office-layout';
 import { selectCharacterAnimationState } from '../character/animation-state';
 import { selectAnimationFrame } from '../character/animation-clock';
 import { resolveModelAccentColor } from '../character/model-accent';
 import { buildCharacterPose } from '../character/character-pose';
+import { buildDeskProps, buildOfficeScenery } from '../scenery/office-scenery';
 import { renderCharacter } from './character-renderer';
+import { renderSceneryLayers, renderSceneryShapes } from './scenery-renderer';
 
 const CAPTION_OFFSET_Y = 24;
 const CAPTION_STYLE = { fontSize: 14, fill: 0xffffff } as const;
@@ -31,15 +32,6 @@ const BATCH_BADGE_STYLE = { fontSize: 12, fill: 0xffd166 } as const;
 
 const ARCHIVE_COUNTER_OFFSET_Y = 90;
 const ARCHIVE_COUNTER_STYLE = { fontSize: 16, fill: 0xffd166 } as const;
-
-/** "readable, not busy" — a plain floor + a shallow back wall band + the fixed archive cabinet,
- * all derived from constants the layout math already exports. Zero position/decision logic of
- * its own, same as the rest of this file. */
-const FLOOR_COLOR = 0x24242e;
-const WALL_COLOR = 0x1a1a22;
-const WALL_HEIGHT = 220;
-const ARCHIVE_CABINET_SIZE = 100;
-const ARCHIVE_CABINET_COLOR = 0x4a4a5c;
 
 /**
  * Defect fix: filling the whole desk with the fully-saturated harness colour made a 160-unit
@@ -134,6 +126,11 @@ function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number
 
   group.addChild(renderWorkerCharacter(worker, desk.height, now));
 
+  // Desk props (monitor/keyboard/mouse/mug) are added AFTER the character container so they draw
+  // in front of it — the monitor occludes the figure standing behind the desk, the way a real
+  // workstation would.
+  group.addChild(renderSceneryShapes(buildDeskProps(desk)));
+
   const caption = new Text({ text: worker.caption, style: CAPTION_STYLE });
   caption.anchor.set(0.5, 0);
   caption.y = desk.height / 2 + CAPTION_OFFSET_Y;
@@ -149,26 +146,8 @@ function renderDeskGroup(floor: OfficeFloorView, sessionKey: string, now: number
 /** "An office background — floor, a back wall, desks the workers sit at, and the archive area" —
  * always exactly the same static elements, drawn once, behind every desk group. Zero
  * position/size/color decisions beyond the already-exported layout constants. */
-function renderOfficeBackground(): Container {
-  const group = new Container();
-
-  const floor = new Graphics().rect(0, 0, FLOOR_WIDTH, FLOOR_HEIGHT).fill(FLOOR_COLOR);
-  group.addChild(floor);
-
-  const wall = new Graphics().rect(0, 0, FLOOR_WIDTH, WALL_HEIGHT).fill(WALL_COLOR);
-  group.addChild(wall);
-
-  const cabinet = new Graphics()
-    .rect(
-      ARCHIVE_DESTINATION.x - ARCHIVE_CABINET_SIZE / 2,
-      ARCHIVE_DESTINATION.y - ARCHIVE_CABINET_SIZE / 2,
-      ARCHIVE_CABINET_SIZE,
-      ARCHIVE_CABINET_SIZE,
-    )
-    .fill(ARCHIVE_CABINET_COLOR);
-  group.addChild(cabinet);
-
-  return group;
+export function renderOfficeBackground(): Container {
+  return renderSceneryLayers(buildOfficeScenery());
 }
 
 /** The fixed cabinet's cumulative trip counter (blocker B.2: "a per-archive counter
@@ -187,10 +166,18 @@ function renderArchiveCounter(archiveCount: number): Container {
 
 /** Builds a static PixiJS scene graph for the current office floor. No ticker of its own — `now`
  * only selects which pre-computed animation FRAME to draw (idle bob / typing / walk cycle); every
- * position/highlight decision itself still comes from `OfficeFloorView`, exactly as before. */
-export function renderOfficeScene(floor: OfficeFloorView, now: number = 0): Container {
+ * position/highlight decision itself still comes from `OfficeFloorView`, exactly as before.
+ *
+ * `background` exists purely for performance. The scenery (`scene/scenery/office-scenery.ts`) is
+ * STATIC — it takes no input and never changes — yet `updateStage` tears the whole scene graph
+ * down and rebuilds it every animation frame. Rebuilding it inline costs 560 rect draw-ops per
+ * frame (~33,600/second at 60fps) to redraw pixels identical to the previous frame's; the old flat
+ * background was 3. A caller that renders repeatedly builds it ONCE and passes the same Container
+ * back in every frame. Omitting it keeps the previous self-contained behaviour, which is what the
+ * tests rely on so that two scenes built in one test each own a distinct background. */
+export function renderOfficeScene(floor: OfficeFloorView, now: number = 0, background?: Container): Container {
   const scene = new Container();
-  scene.addChild(renderOfficeBackground());
+  scene.addChild(background ?? renderOfficeBackground());
   for (const worker of floor.workers) {
     scene.addChild(renderDeskGroup(floor, worker.sessionKey, now));
   }
