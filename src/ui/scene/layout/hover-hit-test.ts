@@ -1,7 +1,7 @@
 /**
  * Pure hit-test + tooltip placement math for the DOM hover-tooltip overlay. No DOM, no PixiJS
  * (dependency-cruiser's `pixi-only-in-scene-pixi` rule forbids importing pixi.js outside
- * `ui/scene/pixi/`) — `character-pose.ts` is safe to import here because it is itself pixi-free.
+ * `ui/scene/pixi/`).
  *
  * WHY a DOM overlay driven by a pure hit-test at all: `updateStage` (`ui/scene/pixi/
  * pixi-office-renderer.ts`) calls `stage.removeChildren()` and rebuilds the entire PixiJS scene
@@ -9,13 +9,11 @@
  * `requestAnimationFrame`), so any hover state or event listener attached to a PixiJS display
  * object would be destroyed ~60x/second. Hover therefore lives entirely outside the scene graph:
  * `pixi-office-renderer.ts` listens for `pointermove`/`pointerleave` on the `<canvas>` element
- * itself (which is NOT rebuilt every frame) and hit-tests against this module's pure floor-plan
- * math, using the last `OfficeFloorView` it rendered.
+ * itself (which is NOT rebuilt every frame) and hit-tests against this module's pure math, using
+ * the last `OfficeFloorView` it rendered.
  */
-import type { DeskView } from '../../components/molecules/desk';
-import { buildCharacterPose } from '../character/character-pose';
-import type { AgentRole } from '../../../domain/agents/agent-profile';
-import type { CharacterAnimationState } from '../character/animation-state';
+import { CHARACTER_BODY_HALF_WIDTH, CHARACTER_BODY_HEIGHT } from '../character/character-sprite';
+import type { WorkerView } from '../../components/molecules/worker';
 
 export interface ScreenPoint {
   x: number;
@@ -51,44 +49,6 @@ export function screenToScene(point: ScreenPoint, fit: ViewportFit): ScenePoint 
   return { x: (point.x - fit.x) / fit.scale, y: (point.y - fit.y) / fit.scale };
 }
 
-/** Mirrors `ui/scene/pixi/office-scene-renderer.ts`'s own `CHARACTER_DESK_CLEARANCE` (the gap
- * kept between the character's feet and the desk's back edge). Duplicated rather than imported:
- * that file is the one place allowed to import pixi.js, and importing it here — even for a single
- * constant — would drag pixi.js into this pixi-free module's dependency graph. */
-const CHARACTER_DESK_CLEARANCE = 6;
-
-/**
- * The character's own topmost drawn edge (a negative scene-unit offset above its origin/feet),
- * derived from the ACTUAL pose data in `character-pose.ts` rather than a guessed magic number.
- * Swept over the FULL role x state x frame space — not just one pose — because role now also
- * SCALES the figure (`ROLE_SCALE` in `character-pose.ts`): a large orchestrator reaches further
- * above its feet than a subagent does, so the worst case must come from actually measuring every
- * combination rather than assuming which single pose is tallest.
- */
-function computeCharacterTopReach(): number {
-  const roles: AgentRole[] = ['orchestrator', 'subagent'];
-  const states: CharacterAnimationState[] = ['idle', 'working', 'walking'];
-  let minY = Infinity;
-
-  for (const role of roles) {
-    for (const state of states) {
-      // Frames 0-3 cover every state's own cycle length without duplicating
-      // `animation-clock.ts`'s frame counts here: idle/working wrap at 2 via `% 2`, walking uses
-      // its full 4-frame cycle.
-      for (let frame = 0; frame < 4; frame++) {
-        const shapes = buildCharacterPose({ role, state, frame, accentColor: 0, bodyColor: 0 });
-        for (const shape of shapes) {
-          minY = Math.min(minY, shape.y - shape.height / 2);
-        }
-      }
-    }
-  }
-
-  return minY;
-}
-
-const CHARACTER_TOP_REACH = computeCharacterTopReach();
-
 export interface HoverBox {
   x: number;
   y: number;
@@ -97,20 +57,19 @@ export interface HoverBox {
 }
 
 /**
- * The hover box for one desk: the desk slab plus the character standing behind it
- * (`renderWorkerCharacter` in `office-scene-renderer.ts` positions the character's feet at
- * `-(deskHeight / 2 + CHARACTER_DESK_CLEARANCE)` relative to the desk centre, matched here).
- * Horizontally it is just the desk's own width — the character (~70 scene units across at its
- * widest, a scaled-up orchestrator's cape) never draws wider than even the smallest desk (120
- * units).
+ * The box around one character, in scene units: its drawn body, sized by the same scale the
+ * renderer draws it at (`WorkerView.scale`) and anchored on the same point (its feet).
+ *
+ * Hovering targets the PERSON, which is now the only thing the scene places — the desks belong to
+ * the background artwork and are not owned by any one worker, so a desk-shaped hover box would
+ * claim floor that is not this agent's. The body's own measured pixel bounds come from
+ * `character-sprite.ts`, so a repacked sheet moves the hit-test with the art.
  */
-export function workerHoverBox(desk: DeskView): HoverBox {
-  const halfHeight = desk.height / 2;
-  const characterOriginY = desk.y - halfHeight - CHARACTER_DESK_CLEARANCE;
-  const top = characterOriginY + CHARACTER_TOP_REACH;
-  const bottom = desk.y + halfHeight;
+export function workerHoverBox(worker: Pick<WorkerView, 'x' | 'y' | 'scale'>): HoverBox {
+  const halfWidth = CHARACTER_BODY_HALF_WIDTH * worker.scale;
+  const height = CHARACTER_BODY_HEIGHT * worker.scale;
 
-  return { x: desk.x - desk.width / 2, y: top, width: desk.width, height: bottom - top };
+  return { x: worker.x - halfWidth, y: worker.y - height, width: halfWidth * 2, height };
 }
 
 function containsPoint(box: HoverBox, point: ScenePoint): boolean {
@@ -120,14 +79,24 @@ function containsPoint(box: HoverBox, point: ScenePoint): boolean {
 }
 
 /**
- * Topmost/nearest match, or `null`. Overlaps resolve deterministically: later desks in the array
- * win, matching draw order (`office-scene-renderer.ts` draws desks in array order, so a later
- * desk is drawn on top and should win the hit-test the same way).
+ * The worker under `point`, or `null`.
+ *
+ * Overlaps resolve by DEPTH, the same rule the renderer draws by (`office-scene-renderer.ts`
+ * y-sorts by foot position): the character standing further forward is drawn in front, so it also
+ * wins the hover. Ties keep the later worker, matching array draw order.
  */
-export function findWorkerAtScenePoint(desks: DeskView[], point: ScenePoint): string | null {
+export function findWorkerAtScenePoint(
+  workers: Pick<WorkerView, 'sessionKey' | 'x' | 'y' | 'scale'>[],
+  point: ScenePoint,
+): string | null {
   let match: string | null = null;
-  for (const desk of desks) {
-    if (containsPoint(workerHoverBox(desk), point)) match = desk.sessionKey;
+  let matchY = -Infinity;
+  for (const worker of workers) {
+    if (!containsPoint(workerHoverBox(worker), point)) continue;
+    if (worker.y >= matchY) {
+      match = worker.sessionKey;
+      matchY = worker.y;
+    }
   }
   return match;
 }

@@ -22,6 +22,7 @@
  * cannot silently drift away from the assumptions the renderer makes.
  */
 import type { AgentRole } from '../../../domain/agents/agent-profile';
+import { depthScaleFor } from '../world/office-map';
 import type { CharacterAnimationState } from './animation-state';
 
 export const CHARACTER_IDS = ['alex', 'marcus', 'sophia', 'elena'] as const;
@@ -77,15 +78,53 @@ export interface CharacterSpriteMeta {
 }
 
 /**
- * Scale factor per role, applied on top of whatever the scene's own depth scale is. Whole numbers
- * only — guide section 6 is explicit that anything else destroys pixel-perfect rendering.
+ * How much BIGGER an orchestrator is drawn than a subagent standing in the same place. A whole
+ * number added to the map's depth scale, never a ratio multiplied into it: guide section 6 is
+ * explicit that a fractional scale destroys pixel-perfect rendering, and the map's own bands are
+ * already whole numbers.
  *
- * The orchestrator is drawn larger than the subagents of the SAME character, which is how role
- * stays readable at a glance without changing who the character is. v2 sprites are body-only, so
- * unlike v1 the WHOLE figure is visible: the drawn height is the full `32 * scale`, not the 21
- * rows that used to clear a built-in desk.
+ * One step is enough to read: at the room's depth scales that is a third again as tall, on a
+ * figure whose whole body is visible (v2 sprites carry no desk of their own).
  */
-export const ROLE_SPRITE_SCALE: Record<AgentRole, number> = { orchestrator: 5, subagent: 3 };
+export const ROLE_SCALE_BONUS: Record<AgentRole, number> = { orchestrator: 1, subagent: 0 };
+
+/**
+ * One whole step added to every character, on top of the map's perspective band.
+ *
+ * The map's bands are written for a scene you look AT; this one is a monitor you glance at. At the
+ * shipped band values a back-row agent is 64px tall in a 1672x941 room full of detailed furniture
+ * and reads as part of the artwork rather than as a person — the same "readable at a glance"
+ * defect commit e7bb2ca had to fix once already for the procedural figure. A whole step keeps the
+ * art pixel-perfect (guide section 6) and keeps the room's own depth ordering intact, because it
+ * is added to every band equally.
+ */
+const READABILITY_BONUS = 1;
+
+/**
+ * The scale one character is drawn at: perspective from where its feet are (the map's
+ * `depth.scaleBands`), plus the readability step, plus its role's whole-number bonus.
+ *
+ * Both readings land on the same figure on purpose. Depth alone would make a subagent at the front
+ * of the room bigger than its orchestrator at the back, which is true of perspective and useless
+ * as information; role alone would make a character at the back the same size as one at the front,
+ * which would break the room's depth. Adding them keeps perspective intact and still leaves the
+ * orchestrator the larger of any two agents standing together.
+ */
+export function resolveCharacterScale(footY: number, role: AgentRole): number {
+  return depthScaleFor(footY) + READABILITY_BONUS + ROLE_SCALE_BONUS[role];
+}
+
+/**
+ * The character's drawn footprint at `scale`, as offsets from its origin (the centre of its feet)
+ * — what a hover hit-test needs and the only place the body's measured pixel bounds live.
+ *
+ * Measured from the shipped sheets rather than assumed: every clip of every character draws its
+ * body inside columns 7..24 and rows 1..30 of the 32px frame, with the origin at column 16,
+ * row 30. The `point` clips reach further right (an extended arm), deliberately ignored here — a
+ * hover target should be the person, not the gesture.
+ */
+export const CHARACTER_BODY_HALF_WIDTH = 9;
+export const CHARACTER_BODY_HEIGHT = 30;
 
 export interface ResolvedSpriteClip {
   clip: SpriteClipMeta;

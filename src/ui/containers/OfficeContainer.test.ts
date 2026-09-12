@@ -7,6 +7,7 @@ import { createEventFromLogRecord } from '../../domain/events/factories';
 import { resolveWorkerLabel, type ClaudeCodeRecord } from '../../adapters/driven/claude-code/parse';
 import type { StreamConnection, StreamConnectionFactory, StreamMessage } from './OfficeContainer';
 import { DOCK_DURATION_MS, WALK_DURATION_MS } from '../scene/animation/trip-animation';
+import { PERSISTENT_MEMORY } from '../scene/world/office-map';
 
 class RecordingRenderer implements OfficeRenderer {
   updates: OfficeViewModel[] = [];
@@ -81,11 +82,13 @@ describe('OfficeContainer (tasks.md 10.4) — owns the SSE subscription and clie
     connection.emit({ kind: 'event', event: sessionStart(2, 'claude-code:child1') });
     connection.emit({ kind: 'event', event: parentEvent(3, 'claude-code:child1', 'claude-code:parent1') });
 
+    // The room's desks are the artist's, not ours, so a subagent no longer gets its own lane —
+    // but it must still get its own workstation, never share its parent's.
     const parentWorker = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:parent1');
     const childWorker = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:child1');
-    expect(parentWorker?.lane).toBe('root');
-    expect(childWorker?.lane).toBe('child');
-    expect(childWorker?.y).not.toBe(parentWorker?.y);
+    expect(parentWorker?.stationId).toBeDefined();
+    expect(childWorker?.stationId).not.toBe(parentWorker?.stationId);
+    expect({ x: childWorker?.x, y: childWorker?.y }).not.toEqual({ x: parentWorker?.x, y: parentWorker?.y });
   });
 
   it('a snapshot frame replaces the projected state wholesale', () => {
@@ -278,8 +281,8 @@ describe('OfficeContainer — archive-trip animation (blocker B.2, tasks.md 21.2
     container.tick(WALK_DURATION_MS);
 
     const atArchive = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
-    expect(atArchive.x).toBe(1720);
-    expect(atArchive.y).toBe(540);
+    expect(atArchive.x).toBe(PERSISTENT_MEMORY.anchor.x);
+    expect(atArchive.y).toBe(PERSISTENT_MEMORY.anchor.y);
     expect(atArchive.archiveTrip?.highlight).toBe(true);
     expect(renderer.latest.archiveCount).toBe(1);
 

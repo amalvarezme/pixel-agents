@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildWorkerView } from './worker';
+import { resolveCharacterScale } from '../../scene/character/character-sprite';
+import { CAPTION_MAX_CHARS, truncateCaption } from '../atoms/caption';
 import type { WorkerViewModel } from '../../state/office-view-model';
 
 function workerViewModel(overrides: Partial<WorkerViewModel> = {}): WorkerViewModel {
@@ -9,7 +11,6 @@ function workerViewModel(overrides: Partial<WorkerViewModel> = {}): WorkerViewMo
     label: 'my-session',
     x: 960,
     y: 540,
-    lane: 'root',
     ...overrides,
   };
 }
@@ -23,13 +24,14 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     expect(view.y).toBe(540);
     expect(view.badge).toEqual({ text: 'Claude', name: 'Claude Code', color: '#d97757' });
     expect(view.caption).toBe('my-session');
-    expect(view.lane).toBe('root');
+    // The scale the renderer will draw it at, resolved once here (perspective + role bonus).
+    expect(view.scale).toBe(resolveCharacterScale(540, 'subagent'));
   });
 
   it('falls back to the empty-label placeholder caption when the label is blank', () => {
     const view = buildWorkerView(workerViewModel({ label: '' }));
 
-    expect(view.caption).toBe('(unnamed worker)');
+    expect(view.caption).toBe(truncateCaption('(unnamed worker)', CAPTION_MAX_CHARS));
   });
 
   // Task 21.5: renders the normalized toolLabel/toolDetail caption when present, in preference
@@ -42,7 +44,7 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
         workerViewModel({ harness, label: 'my-session', toolLabel: 'Read', toolDetail: 'design.md' }),
       );
 
-      expect(view.caption).toBe('Read: design.md');
+      expect(view.caption).toBe(truncateCaption('Read: design.md', CAPTION_MAX_CHARS));
     },
   );
 
@@ -59,7 +61,7 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     const view = buildWorkerView(
       workerViewModel({ toolLabel: 'Read', toolDetail: 'design.md', agentProfile: { role: 'subagent', agentType: 'sdd-apply' } }),
     );
-    expect(view.caption).toBe('Read: design.md');
+    expect(view.caption).toBe(truncateCaption('Read: design.md', CAPTION_MAX_CHARS));
   });
 
   // Blocker B.2 (tasks.md 21.2): carries the archive-trip drawing data through unchanged, so
@@ -183,6 +185,7 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
 
     it('falls back to the live tool caption for the Task row when no agentProfile task is set', () => {
       const withTool = buildWorkerView(workerViewModel({ toolLabel: 'Read', toolDetail: 'design.md' }));
+      // The TOOLTIP is never truncated — only the on-floor caption is bounded by seat spacing.
       expect(withTool.tooltip.rows.find((r) => r.label === 'Task')?.value).toBe('Read: design.md');
     });
 

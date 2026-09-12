@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { fitToViewport, resolveHoverTooltip, shouldEmitHoverChange, updateStage, type StageLike } from './pixi-office-renderer';
 import type { OfficeViewModel } from '../../state/office-view-model';
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
+import { WORLD_HEIGHT, WORLD_WIDTH } from '../world/office-map';
 import { buildAgentTooltip } from '../../components/atoms/agent-tooltip';
 import { renderOfficeBackground } from './office-scene-renderer';
 
@@ -74,7 +75,7 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
   it('renders one desk group per worker in the view model, plus the background and archive counter', () => {
     const stage = new RecordingStage();
     const viewModel: OfficeViewModel = {
-      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'my-session', x: 760, y: 540, lane: 'root' }],
+      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'my-session', x: 760, y: 540 }],
       overflowCount: 0,
     };
 
@@ -86,7 +87,7 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
   it('clears the PREVIOUS frame before adding the new one, on every call', () => {
     const stage = new RecordingStage();
     const first: OfficeViewModel = {
-      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'one', x: 100, y: 100, lane: 'root' }],
+      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'one', x: 100, y: 100 }],
       overflowCount: 0,
     };
     const second: OfficeViewModel = { workers: [], overflowCount: 0 };
@@ -106,7 +107,7 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
   it("accepts the view model's `now` and still renders the full frame", () => {
     const stage = new RecordingStage();
     const viewModel: OfficeViewModel = {
-      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'one', x: 100, y: 100, lane: 'root', activity: 'working' }],
+      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'one', x: 100, y: 100, activity: 'working' }],
       overflowCount: 0,
       now: 220,
     };
@@ -117,34 +118,34 @@ describe('updateStage (tasks.md 10.3 extension) — the testable core of PixiOff
   });
 });
 
-// browser-entrypoint work unit, follow-up: the layout math (`office-layout.ts`) emits scene units
-// in a FIXED 1920x1080 floor plan, but a real browser viewport is almost never exactly that. Before
-// this, `PixiOfficeRenderer.mount` passed `resizeTo: container` and never reconciled the two, so
-// the floor was drawn 1:1 in CSS pixels: on a smaller window the desks landed off-centre and most
-// of the floor was clipped (observed in Chrome against a live SSE stream). `fitToViewport` is the
-// pure "contain-fit" math that reconciles them, so the part that decides WHERE the floor sits is
-// tested even though mounting a real canvas is not.
-describe('fitToViewport — fits the fixed 1920x1080 floor plan into a real viewport', () => {
-  it('scales 1:1 and centres nothing when the viewport already matches the floor plan', () => {
-    expect(fitToViewport(1920, 1080)).toEqual({ scale: 1, x: 0, y: 0 });
+// browser-entrypoint work unit, follow-up: every coordinate in the scene is an image pixel of the
+// room's fixed WORLD_WIDTH x WORLD_HEIGHT artwork, but a real browser viewport is almost never
+// exactly that. Before this, `PixiOfficeRenderer.mount` passed `resizeTo: container` and never
+// reconciled the two, so the room was drawn 1:1 in CSS pixels: on a smaller window it landed
+// off-centre and most of it was clipped (observed in Chrome against a live SSE stream).
+// `fitToViewport` is the pure "contain-fit" math that reconciles them, so the part that decides
+// WHERE the room sits is tested even though mounting a real canvas is not.
+describe('fitToViewport — fits the room into a real viewport', () => {
+  it('scales 1:1 and centres nothing when the viewport already matches the room', () => {
+    expect(fitToViewport(WORLD_WIDTH, WORLD_HEIGHT)).toEqual({ scale: 1, x: 0, y: 0 });
   });
 
-  it('scales down to fit and letterboxes when the viewport is NARROWER than the floor plan', () => {
-    // 1000x1080: width is the binding constraint (1000/1920 < 1080/1080), so the slack is vertical.
-    const fit = fitToViewport(1000, 1080);
+  it('scales down to fit and letterboxes when the viewport is NARROWER than the room', () => {
+    // Width is the binding constraint here, so the slack is vertical.
+    const narrowWidth = WORLD_WIDTH / 2;
+    const fit = fitToViewport(narrowWidth, WORLD_HEIGHT);
 
-    expect(fit.scale).toBeCloseTo(1000 / 1920);
+    expect(fit.scale).toBeCloseTo(narrowWidth / WORLD_WIDTH);
     expect(fit.x).toBeCloseTo(0); // width binds, so no horizontal slack (bar float rounding)
-    expect(fit.y).toBeCloseTo((1080 - 1080 * (1000 / 1920)) / 2);
+    expect(fit.y).toBeCloseTo((WORLD_HEIGHT - WORLD_HEIGHT * (narrowWidth / WORLD_WIDTH)) / 2);
   });
 
-  it('letterboxes when the viewport is TALLER than the floor plan aspect ratio', () => {
-    // 1920x2160: width binds at 1, so the scaled floor is 1920x1080 inside 2160 of height.
-    const fit = fitToViewport(1920, 2160);
+  it('letterboxes when the viewport is TALLER than the room\'s aspect ratio', () => {
+    const fit = fitToViewport(WORLD_WIDTH, WORLD_HEIGHT * 2);
 
     expect(fit.scale).toBe(1);
     expect(fit.x).toBe(0);
-    expect(fit.y).toBe((2160 - 1080) / 2);
+    expect(fit.y).toBe(WORLD_HEIGHT / 2);
   });
 
   it('never returns a non-positive scale for a degenerate (zero-sized) viewport', () => {
@@ -184,13 +185,12 @@ describe('shouldEmitHoverChange — decides whether a pointermove should fire on
 describe('resolveHoverTooltip — looks up the hovered worker\'s tooltip from the last rendered floor', () => {
   const tooltip = buildAgentTooltip({ harnessName: 'Claude Code' });
   const floor: OfficeFloorView = {
-    desks: [{ sessionKey: 'claude-code:s1', x: 760, y: 540, width: 160, height: 40 }],
     workers: [
       {
         sessionKey: 'claude-code:s1',
         x: 760,
         y: 540,
-        lane: 'root',
+        scale: 3,
         badge: { text: 'Claude', name: 'Claude Code', color: '#d97757' },
         caption: 'my-session',
         tooltip,

@@ -1,14 +1,16 @@
 /**
  * Office floor organism (tasks.md 10.5): the complete, drawable scene description that
- * `ui/scene/pixi/` turns into actual PixiJS sprites. Assembles the `desk` and `worker` molecules
- * from one `OfficeViewModel` — the container/presentational boundary output.
+ * `ui/scene/pixi/` turns into actual PixiJS sprites. Assembles the `worker` molecules from one
+ * `OfficeViewModel` — the container/presentational boundary output.
+ *
+ * There are no desks in it any more: the room's eleven workstations are painted into the
+ * background artwork (`scene/world/office-map.ts`), so the only thing the scene still has to
+ * place is the people.
  */
 import type { OfficeViewModel } from '../../state/office-view-model';
-import { buildDeskView, type DeskView } from '../molecules/desk';
 import { buildWorkerView, type WorkerView } from '../molecules/worker';
 
 export interface OfficeFloorView {
-  desks: DeskView[];
   workers: WorkerView[];
   overflowCount: number;
   /** Blocker B.2 (tasks.md 21.2): cumulative archive-trip count, drawn near the cabinet. */
@@ -16,13 +18,7 @@ export interface OfficeFloorView {
 }
 
 export function buildOfficeFloorView(viewModel: OfficeViewModel): OfficeFloorView {
-  const ctx = { totalWorkerCount: viewModel.workers.length };
   return {
-    // From `deskX`/`deskY`, never `x`/`y`: the latter carry the archive-trip animation's moving
-    // position, and building the furniture from those made the desk travel to the cabinet too.
-    desks: viewModel.workers.map((w) =>
-      buildDeskView({ sessionKey: w.sessionKey, x: w.deskX ?? w.x, y: w.deskY ?? w.y, lane: w.lane }, ctx),
-    ),
     workers: viewModel.workers.map((w) => buildWorkerView(w)),
     overflowCount: viewModel.overflowCount,
     archiveCount: viewModel.archiveCount ?? 0,

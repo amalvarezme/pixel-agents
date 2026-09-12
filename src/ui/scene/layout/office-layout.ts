@@ -1,93 +1,99 @@
 /**
- * Pure office layout math (tasks.md 10.1, design.md "The Office Scene": coordinate model).
+ * Pure office layout math: which worker sits at which workstation, in the coordinates of the
+ * drawn room (`scene/world/office-map.ts`). Canvas-free and deterministic — no PixiJS, no DOM.
+ * This is the ONLY thing `ui/scene/pixi/` consults to decide where a character stands; PixiJS
+ * never computes a position itself (design.md D3: "PixiJS v8 behind a pure-layout boundary").
  *
- * Fixed logical 1920x1080 floor plan in SCENE UNITS, canvas-free and deterministic — no PixiJS,
- * no DOM, no browser API. This is the ONLY thing `ui/scene/pixi/` consults to decide where to
- * draw a desk; PixiJS never computes a position itself (design.md D3: "PixiJS v8 behind a pure-
- * layout boundary").
+ * What replaced what: the office used to be a procedural 1920x1080 floor plan with a packed row
+ * of up to eight generated desks and a second lane for child agents. The room is now a drawn
+ * 1672x941 illustration with eleven real workstations in it, so there is nothing left to compute
+ * — the desks exist in the artwork, and seating is the act of choosing which of them a worker
+ * occupies (`docs/pixel-office/IMPLEMENTACION_AGENTE_CODIGO.md` section 8).
  *
- * Scope for the minimal slice-1b scene: single-agent centered layout, a multi-agent packed row
- * of at most 8 desks with overflow reported (not scrolled — scrolling is a UI/pixi concern, not
- * layout math), and root/child lane separation driven by `parentSessionKey`
- * (office-scene-renderer spec: "Parent/Child Lane Layout"). Archive/path-waypoint layout for the
- * `memory_write` animation is out of scope here — it lands in slice 4 (design.md: "Slicing").
+ * The parent/child lane went with it. Lanes existed to group an orchestrator with its subagents
+ * when desks were ours to place; a real room's desks are where the artist put them. Role survives
+ * where it still reads — the orchestrator is drawn a whole step larger than its subagents — and
+ * parentage survives in the hover tooltip.
  */
+import { WORKSTATIONS, WORKSTATION_COUNT, type MapPoint } from '../world/office-map';
 
-export const FLOOR_WIDTH = 1920;
-export const FLOOR_HEIGHT = 1080;
-export const MAX_PACKED_WORKERS = 8;
-
-/** Exported so `components/atoms/caption.ts` can derive a caption-width budget from the same
- * single source of truth (G.2: "worker captions overlap horizontally" — the fix keeps desk
- * positions stable and instead bounds caption width to this spacing). */
-export const DESK_SPACING = 200;
-const ROOT_LANE_Y = FLOOR_HEIGHT / 2;
-const CHILD_LANE_OFFSET_Y = 220;
+/** How many agents the office can seat at once; everything past this is overflow. */
+export const MAX_SEATED_WORKERS = WORKSTATION_COUNT;
 
 /**
- * Defect fix: the packed row shares the root lane's y with the archive cabinet (`office-scene-
- * renderer.ts`'s `ARCHIVE_DESTINATION = { x: 1720, y: 540 }`). Centering the row on the full
- * `FLOOR_WIDTH` let a full 8-desk row reach far enough right to overlap the cabinet and its
- * counter. Shifting the row's own centre left of the floor's centre reserves that space, so the
- * archive destination the carry animation walks to stays visible as its own thing regardless of
- * how many workers are packed into the row. Cannot import `ARCHIVE_DESTINATION` directly here —
- * `archive-path.ts` already imports FROM this module, so the reverse import would be circular.
+ * The tightest horizontal gap between two workstations that share a row — measured from the map,
+ * not chosen. `caption.ts` derives its caption width budget from it, so two neighbours' captions
+ * cannot collide (G.2: "worker captions overlap horizontally").
+ *
+ * "Share a row" means their anchors are within one character-height of each other vertically:
+ * captions only collide when they are drawn at the same height.
  */
-const PACKED_ROW_ARCHIVE_CLEARANCE = 160;
-const PACKED_ROW_CENTER_X = FLOOR_WIDTH / 2 - PACKED_ROW_ARCHIVE_CLEARANCE;
+const SAME_ROW_TOLERANCE = 60;
+
+function computeMinSeatSpacing(): number {
+  let min = Infinity;
+  for (let i = 0; i < WORKSTATIONS.length; i++) {
+    for (let j = i + 1; j < WORKSTATIONS.length; j++) {
+      const a = WORKSTATIONS[i]!.interactionAnchor;
+      const b = WORKSTATIONS[j]!.interactionAnchor;
+      if (Math.abs(a.y - b.y) > SAME_ROW_TOLERANCE) continue;
+      min = Math.min(min, Math.abs(a.x - b.x));
+    }
+  }
+  return Number.isFinite(min) ? min : WORKSTATIONS.length;
+}
+
+export const MIN_SEAT_SPACING = computeMinSeatSpacing();
 
 export interface LayoutWorkerInput {
   sessionKey: string;
-  parentSessionKey: string | null;
 }
 
-export type DeskLane = 'root' | 'child';
-
-export interface DeskLayout {
+export interface SeatLayout {
   sessionKey: string;
+  /** The map's own id for the workstation this worker occupies (`ws_01`..`ws_11`). */
+  stationId: string;
+  /** Where the character STANDS: the station's `interactionAnchor`, on the floor in front of the
+   * desk — never the laptop's own position (guide section 8). */
   x: number;
   y: number;
-  lane: DeskLane;
 }
 
 export interface OfficeLayout {
-  desks: DeskLayout[];
-  /** Workers beyond `MAX_PACKED_WORKERS` that did not get a desk slot; the UI presents these as an overflow-scroll affordance. */
+  seats: SeatLayout[];
+  /** Workers beyond `MAX_SEATED_WORKERS` that got no workstation; the project roster panel
+   * reports these by name, the floor only counts them. */
   overflowCount: number;
 }
 
-function computeRowX(index: number, count: number): number {
-  const totalWidth = (count - 1) * DESK_SPACING;
-  const startX = PACKED_ROW_CENTER_X - totalWidth / 2;
-  return startX + index * DESK_SPACING;
-}
+/**
+ * Seats workers at workstations in the map's own `ws_01..ws_11` order, in the order the office
+ * state lists them.
+ *
+ * Deliberately positional rather than hashed: two workers must never be assigned the same desk,
+ * and a hash cannot promise that without a collision-resolution scheme whose result would be just
+ * as arbitrary. The cost is that evicting a worker shifts everyone after it one desk along — the
+ * packed row had exactly the same property, and a session ending is already a visible event.
+ */
+export function computeOfficeLayout(workers: LayoutWorkerInput[]): OfficeLayout {
+  const seated = workers.slice(0, MAX_SEATED_WORKERS);
 
-/** Single-agent layout: one centered desk, no lane subdivision (office-scene-renderer spec). */
-function computeSingleAgentLayout(worker: LayoutWorkerInput): OfficeLayout {
   return {
-    desks: [{ sessionKey: worker.sessionKey, x: FLOOR_WIDTH / 2, y: ROOT_LANE_Y, lane: 'root' }],
-    overflowCount: 0,
+    seats: seated.map((worker, index) => {
+      const station = WORKSTATIONS[index]!;
+      return {
+        sessionKey: worker.sessionKey,
+        stationId: station.id,
+        x: station.interactionAnchor.x,
+        y: station.interactionAnchor.y,
+      };
+    }),
+    overflowCount: Math.max(0, workers.length - MAX_SEATED_WORKERS),
   };
 }
 
-export function computeOfficeLayout(workers: LayoutWorkerInput[]): OfficeLayout {
-  if (workers.length === 0) return { desks: [], overflowCount: 0 };
-  if (workers.length === 1) return computeSingleAgentLayout(workers[0]!);
-
-  const visible = workers.slice(0, MAX_PACKED_WORKERS);
-  const overflowCount = Math.max(0, workers.length - MAX_PACKED_WORKERS);
-  const visibleKeys = new Set(visible.map((w) => w.sessionKey));
-
-  const desks: DeskLayout[] = visible.map((w, index) => {
-    const isChildOfVisibleParent = w.parentSessionKey !== null && visibleKeys.has(w.parentSessionKey);
-    const lane: DeskLane = isChildOfVisibleParent ? 'child' : 'root';
-    return {
-      sessionKey: w.sessionKey,
-      x: computeRowX(index, visible.length),
-      y: lane === 'child' ? ROOT_LANE_Y + CHILD_LANE_OFFSET_Y : ROOT_LANE_Y,
-      lane,
-    };
-  });
-
-  return { desks, overflowCount };
+/** The seat a given worker holds, or `undefined` when it did not get one. */
+export function findSeat(layout: OfficeLayout, sessionKey: string): MapPoint | undefined {
+  const seat = layout.seats.find((candidate) => candidate.sessionKey === sessionKey);
+  return seat ? { x: seat.x, y: seat.y } : undefined;
 }

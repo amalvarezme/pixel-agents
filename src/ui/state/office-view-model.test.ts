@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { applyEventToOfficeState, createOfficeState } from '../../domain/office/office';
 import type { AgentEvent, HarnessId } from '../../domain/events/types';
 import { buildOfficeViewModel } from './office-view-model';
+import { PERSISTENT_MEMORY } from '../scene/world/office-map';
+import { MAX_SEATED_WORKERS } from '../scene/layout/office-layout';
 
 function sessionStart(id: number, sessionKey: string, label?: string): AgentEvent {
   return { id, kind: 'session_start', harness: 'claude-code', sessionKey, at: id, label };
@@ -33,12 +35,14 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
     const vm = buildOfficeViewModel(state);
 
     expect(vm.workers).toHaveLength(1);
-    expect(vm.workers[0]).toMatchObject({ sessionKey: 'claude-code:s1', label: 'my-session', lane: 'root' });
+    expect(vm.workers[0]).toMatchObject({ sessionKey: 'claude-code:s1', label: 'my-session' });
     expect(typeof vm.workers[0]!.x).toBe('number');
     expect(typeof vm.workers[0]!.y).toBe('number');
   });
 
-  it('projects a child worker into the child lane, distinct from its parent', () => {
+  // The room's desks belong to the artwork, so a subagent no longer gets a lane of its own — but
+  // it must still get its own workstation rather than sharing its parent's.
+  it('seats a child worker at its own workstation, never on top of its parent', () => {
     let state = createOfficeState();
     state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:parent1'));
     state = applyEventToOfficeState(state, sessionStart(2, 'claude-code:child1'));
@@ -48,9 +52,9 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
 
     const parentVm = vm.workers.find((w) => w.sessionKey === 'claude-code:parent1');
     const childVm = vm.workers.find((w) => w.sessionKey === 'claude-code:child1');
-    expect(parentVm?.lane).toBe('root');
-    expect(childVm?.lane).toBe('child');
-    expect(childVm?.y).not.toBe(parentVm?.y);
+    expect(parentVm?.stationId).toBeDefined();
+    expect(childVm?.stationId).not.toBe(parentVm?.stationId);
+    expect({ x: childVm?.x, y: childVm?.y }).not.toEqual({ x: parentVm?.x, y: parentVm?.y });
   });
 
   it('renders three unrelated sessions from three different harnesses as distinct, non-overlapping workers (office-scene-renderer spec: Multi-Agent Layout, cross-harness)', () => {
@@ -90,7 +94,7 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
 
     expect(worker.archiveTrip).toBeDefined();
     expect(worker.archiveTrip!.path[0]).toEqual({ x: worker.x, y: worker.y });
-    expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual({ x: 1720, y: 540 });
+    expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual(PERSISTENT_MEMORY.anchor);
     expect(worker.archiveTrip!.carryCount).toBe(1);
   });
 
@@ -104,7 +108,7 @@ describe('buildOfficeViewModel (tasks.md 10.4 client projection)', () => {
     const vm = buildOfficeViewModel(state);
     const worker = vm.workers.find((w) => w.sessionKey === 'antigravity:cli:s1')!;
 
-    expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual({ x: 1720, y: 540 });
+    expect(worker.archiveTrip!.path[worker.archiveTrip!.path.length - 1]).toEqual(PERSISTENT_MEMORY.anchor);
   });
 });
 
@@ -182,10 +186,10 @@ describe('buildOfficeViewModel — worker activity', () => {
 });
 
 /**
- * The floor has only `MAX_PACKED_WORKERS` desks, and `workers` is capped at that — everything past
- * it used to survive only as a bare `overflowCount`, with no record of WHICH sessions were
- * dropped. Any consumer reporting on who is active (the project roster panel) has to see all of
- * them, which is what `roster` is for.
+ * The room has only `MAX_SEATED_WORKERS` workstations, and `workers` is capped at that —
+ * everything past it used to survive only as a bare `overflowCount`, with no record of WHICH
+ * sessions were dropped. Any consumer reporting on who is active (the project roster panel) has to
+ * see all of them, which is what `roster` is for.
  */
 describe('buildOfficeViewModel roster', () => {
   function stateWith(count: number, projectPath?: string) {
@@ -203,12 +207,13 @@ describe('buildOfficeViewModel roster', () => {
     return state;
   }
 
-  it('lists every worker, including the ones with no desk', () => {
-    const viewModel = buildOfficeViewModel(stateWith(12));
+  it('lists every worker, including the ones with no workstation', () => {
+    const total = MAX_SEATED_WORKERS + 4;
+    const viewModel = buildOfficeViewModel(stateWith(total));
 
-    expect(viewModel.workers).toHaveLength(8);
+    expect(viewModel.workers).toHaveLength(MAX_SEATED_WORKERS);
     expect(viewModel.overflowCount).toBe(4);
-    expect(viewModel.roster).toHaveLength(12);
+    expect(viewModel.roster).toHaveLength(total);
   });
 
   it('carries the fields the roster panel groups and counts by', () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { applyEventToOfficeState, createOfficeState } from '../../domain/office/office';
 import type { AgentEvent, HarnessId } from '../../domain/events/types';
 import { buildOfficeViewModel } from './office-view-model';
+import { PERSISTENT_MEMORY } from '../scene/world/office-map';
 
 /**
  * Task 22.2 (automated part): replaying one `memory_write` event per harness — sourced from each
@@ -41,6 +42,6 @@ describe('cross-harness memory_write animation path identity (tasks.md 22.2 auto
     for (const path of paths) {
       expect(path).toEqual(paths[0]);
     }
-    expect(paths[0]![paths[0]!.length - 1]).toEqual({ x: 1720, y: 540 });
+    expect(paths[0]![paths[0]!.length - 1]).toEqual(PERSISTENT_MEMORY.anchor);
   });
 });

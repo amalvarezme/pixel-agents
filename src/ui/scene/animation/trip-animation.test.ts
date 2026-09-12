@@ -17,7 +17,6 @@ function workerWithTrip(overrides: Partial<WorkerViewModel> = {}): WorkerViewMod
     label: 'my-session',
     x: 100,
     y: 100,
-    lane: 'root',
     archiveTrip: { path: [{ x: 100, y: 100 }, { x: 100, y: 1000 }, { x: 1720, y: 1000 }, { x: 1720, y: 540 }], carryCount: 1 },
     ...overrides,
   };
@@ -65,7 +64,7 @@ describe('advanceTripAnimations — fake-clock phase transitions', () => {
   // guard actually reads `worker.archiveTrip`, not "every worker".
   it('does NOT start a trip for a worker with no archiveTrip', () => {
     const state = createTripAnimatorState();
-    const plainWorker: WorkerViewModel = { sessionKey: 'claude-code:idle', harness: 'claude-code', label: 'idle', x: 0, y: 0, lane: 'root' };
+    const plainWorker: WorkerViewModel = { sessionKey: 'claude-code:idle', harness: 'claude-code', label: 'idle', x: 0, y: 0 };
 
     const { state: next } = advanceTripAnimations(state, [plainWorker], 0);
 
@@ -244,7 +243,7 @@ describe('getTripOverlay — the currently-rendered position/highlight for an ac
 describe('applyTripOverlay — overlays animated position/highlight onto an OfficeViewModel', () => {
   it('leaves a worker with no active trip completely unchanged', () => {
     const animatorState = createTripAnimatorState();
-    const viewModel: OfficeViewModel = { workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'x', x: 5, y: 5, lane: 'root' }], overflowCount: 0 };
+    const viewModel: OfficeViewModel = { workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'x', x: 5, y: 5 }], overflowCount: 0 };
 
     const overlaid = applyTripOverlay(viewModel, animatorState, 0);
 

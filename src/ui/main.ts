@@ -101,8 +101,9 @@ function renderProjectRoster(): (viewModel: OfficeViewModel) => void {
   if (!element) return () => {};
 
   return (viewModel) => {
-    // `roster`, never `workers`: the floor draws at most 8 desks and reports the rest only as a
-    // count, so a panel fed from the drawn workers would claim 8 agents on a machine running 17.
+    // `roster`, never `workers`: the room seats only as many agents as it has workstations and
+    // reports the rest as a bare count, so a panel fed from the drawn workers would claim 11
+    // agents on a machine running 17.
     const roster = buildProjectRoster(viewModel.roster ?? []);
     if (roster.rows.length === 0) {
       element.hidden = true;
@@ -111,7 +112,7 @@ function renderProjectRoster(): (viewModel: OfficeViewModel) => void {
 
     const title = document.createElement('div');
     title.className = 'roster-title';
-    const onFloor = viewModel.overflowCount > 0 ? ` · ${viewModel.workers.length} on the floor` : '';
+    const onFloor = viewModel.overflowCount > 0 ? ` · ${viewModel.workers.length} seated` : '';
     title.textContent = `${roster.totalProjects} project${roster.totalProjects === 1 ? '' : 's'} · ${roster.totalAgents} agent${roster.totalAgents === 1 ? '' : 's'}${onFloor}`;
 
     element.replaceChildren(

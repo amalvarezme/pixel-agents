@@ -6,11 +6,18 @@ import {
   workerHoverBox,
   type ViewportFit,
 } from './hover-hit-test';
-import type { DeskView } from '../../components/molecules/desk';
-import { buildCharacterPose } from '../character/character-pose';
+import { CHARACTER_BODY_HALF_WIDTH, CHARACTER_BODY_HEIGHT } from '../character/character-sprite';
 
-function desk(overrides: Partial<DeskView> = {}): DeskView {
-  return { sessionKey: 'claude-code:s1', x: 760, y: 540, width: 160, height: 40, ...overrides };
+interface HoverWorker {
+  sessionKey: string;
+  x: number;
+  y: number;
+  scale: number;
+}
+
+/** A worker standing on the floor at `(x, y)` — the feet, exactly as the renderer places it. */
+function worker(overrides: Partial<HoverWorker> = {}): HoverWorker {
+  return { sessionKey: 'claude-code:s1', x: 760, y: 540, scale: 3, ...overrides };
 }
 
 describe('screenToScene — inverse of fitToViewport (canvas/CSS pixels -> scene units)', () => {
@@ -38,91 +45,70 @@ describe('screenToScene — inverse of fitToViewport (canvas/CSS pixels -> scene
   });
 });
 
-describe('workerHoverBox — the desk slab plus the character standing behind it', () => {
-  it('spans the desk width, centred on the desk x', () => {
-    const box = workerHoverBox(desk());
+describe('workerHoverBox — the character\'s own drawn body', () => {
+  it('is centred on the character and as wide as its drawn body', () => {
+    const box = workerHoverBox(worker({ x: 760, scale: 3 }));
 
-    expect(box.x).toBe(760 - 160 / 2);
-    expect(box.width).toBe(160);
+    expect(box.x).toBe(760 - CHARACTER_BODY_HALF_WIDTH * 3);
+    expect(box.width).toBe(CHARACTER_BODY_HALF_WIDTH * 2 * 3);
   });
 
-  it('reaches its bottom edge at the desk\'s own bottom edge', () => {
-    const d = desk();
-    const box = workerHoverBox(d);
+  it('stands on the character\'s feet and reaches up to the top of its head', () => {
+    // The worker position IS the feet (the pack's `origin`), so the box goes up from there — not
+    // down, and not centred on it.
+    const box = workerHoverBox(worker({ y: 540, scale: 3 }));
 
-    expect(box.y + box.height).toBe(d.y + d.height / 2);
+    expect(box.y + box.height).toBe(540);
+    expect(box.y).toBe(540 - CHARACTER_BODY_HEIGHT * 3);
   });
 
-  // The decisive requirement: the box must extend UPWARD past the desk's own top edge to cover
-  // the character standing behind it, not just the desk slab.
-  it('extends upward past the desk\'s own top edge to cover the standing character', () => {
-    const d = desk();
-    const box = workerHoverBox(d);
-
-    expect(box.y).toBeLessThan(d.y - d.height / 2);
-  });
-
-  it('scales its reach with a larger desk (single-agent office)', () => {
-    const small = workerHoverBox(desk({ width: 120, height: 30 }));
-    const large = workerHoverBox(desk({ width: 240, height: 60 }));
+  it('grows with the scale the renderer actually draws the character at', () => {
+    // Scale carries both the room's perspective and the role bonus, so a big orchestrator at the
+    // front of the room must be hoverable over its whole height, not a subagent-sized slice of it.
+    const small = workerHoverBox(worker({ scale: 2 }));
+    const large = workerHoverBox(worker({ scale: 4 }));
 
     expect(large.height).toBeGreaterThan(small.height);
+    expect(large.width).toBeGreaterThan(small.width);
   });
 
-  // Regression guard: role now SCALES the drawn character (`ROLE_SCALE` in character-pose.ts), so
-  // a large orchestrator reaches further above its feet than a subagent. The hover box must cover
-  // that full reach, not just whatever pose CHARACTER_TOP_REACH happened to be measured from.
-  it("covers a LARGE orchestrator's full height, not just a smaller subagent's", () => {
-    const d = desk();
-    const box = workerHoverBox(d);
-
-    // Mirrors office-scene-renderer.ts's CHARACTER_DESK_CLEARANCE and character anchoring, and
-    // hover-hit-test.ts's own duplicate of that constant.
-    const CHARACTER_DESK_CLEARANCE = 6;
-    const characterOriginY = d.y - d.height / 2 - CHARACTER_DESK_CLEARANCE;
-
-    const orchestratorShapes = buildCharacterPose({ role: 'orchestrator', state: 'idle', frame: 1, accentColor: 0, bodyColor: 0 });
-    const orchestratorTopReach = Math.min(...orchestratorShapes.map((s) => s.y - s.height / 2));
-    const orchestratorTopWorldY = characterOriginY + orchestratorTopReach;
-
-    // The box's own top edge must sit AT OR ABOVE (a smaller/equal y) the orchestrator's actual
-    // topmost drawn pixel — otherwise part of a large orchestrator would render above the hover
-    // box and never register a hover.
-    expect(box.y).toBeLessThanOrEqual(orchestratorTopWorldY);
+  it('never reaches below the floor the character stands on', () => {
+    // Anything below the feet belongs to whoever is standing in FRONT of this character.
+    for (const scale of [2, 3, 4, 5]) {
+      const box = workerHoverBox(worker({ y: 600, scale }));
+      expect(box.y + box.height).toBeLessThanOrEqual(600);
+    }
   });
 });
 
-describe('findWorkerAtScenePoint — topmost/nearest match, or null', () => {
-  const deskA = desk({ sessionKey: 'a', x: 400, y: 540 });
-  const deskB = desk({ sessionKey: 'b', x: 800, y: 540 });
+describe('findWorkerAtScenePoint — the character under the pointer, or null', () => {
+  const a = worker({ sessionKey: 'a', x: 300, y: 500, scale: 3 });
+  const b = worker({ sessionKey: 'b', x: 900, y: 500, scale: 3 });
 
-  it('returns the sessionKey of the desk whose box contains the point', () => {
-    expect(findWorkerAtScenePoint([deskA, deskB], { x: 800, y: 540 })).toBe('b');
+  it('returns the sessionKey of the character the point is over', () => {
+    expect(findWorkerAtScenePoint([a, b], { x: 900, y: 480 })).toBe('b');
   });
 
-  it('returns the sessionKey of a desk when the point is over the character reach above it', () => {
-    const box = workerHoverBox(deskA);
-    const pointNearTop = { x: deskA.x, y: box.y + 1 };
-
-    expect(findWorkerAtScenePoint([deskA, deskB], pointNearTop)).toBe('a');
+  it('hits the body well above the feet, not just the floor position', () => {
+    expect(findWorkerAtScenePoint([a, b], { x: 300, y: 500 - CHARACTER_BODY_HEIGHT * 3 + 5 })).toBe('a');
   });
 
-  it('returns null for a point outside every desk\'s hover box', () => {
-    expect(findWorkerAtScenePoint([deskA, deskB], { x: 0, y: 0 })).toBeNull();
+  it('returns null for a point over empty floor', () => {
+    expect(findWorkerAtScenePoint([a, b], { x: 600, y: 900 })).toBeNull();
   });
 
-  it('returns null for an empty desk list', () => {
-    expect(findWorkerAtScenePoint([], { x: 400, y: 540 })).toBeNull();
+  it('returns null for an empty office', () => {
+    expect(findWorkerAtScenePoint([], { x: 300, y: 500 })).toBeNull();
   });
 
-  // Overlap resolution: later desks in the array win, matching draw order (later drawn = on top).
-  it('resolves an overlap by letting the LATER desk in the array win', () => {
-    const overlappingA = desk({ sessionKey: 'a', x: 500, y: 540, width: 400 });
-    const overlappingB = desk({ sessionKey: 'b', x: 520, y: 540, width: 400 });
-    const overlapPoint = { x: 510, y: 540 };
+  it('resolves an overlap in favour of the character standing in FRONT', () => {
+    // Same rule the renderer draws by (y-sorted): the nearer character is on top, so it is also
+    // the one the pointer is really over. Deliberately listed back-to-front to prove the choice is
+    // made by depth, not by array order.
+    const behind = worker({ sessionKey: 'behind', x: 500, y: 500, scale: 3 });
+    const inFront = worker({ sessionKey: 'in-front', x: 505, y: 560, scale: 3 });
 
-    expect(findWorkerAtScenePoint([overlappingA, overlappingB], overlapPoint)).toBe('b');
-    expect(findWorkerAtScenePoint([overlappingB, overlappingA], overlapPoint)).toBe('a');
+    expect(findWorkerAtScenePoint([inFront, behind], { x: 502, y: 495 })).toBe('in-front');
   });
 });
 

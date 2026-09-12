@@ -102,16 +102,40 @@ real `~/.claude` never replays 173k historical lines on every server start.
 Mounting a real PixiJS canvas is the one thing no automated test covers; it needs a real browser.
 
 1. Start against a fixture root as above (add `REPLAY_FROM_START=true` if the fixture already has
-   content you want rendered) and open the page. Every session already on disk should appear as a
-   desk, and the row should sit centred at any window size — the floor plan is a fixed 1920×1080
-   space contain-fitted to the viewport, so resizing rescales it instead of clipping.
+   content you want rendered) and open the page. Every session already on disk should appear at one
+   of the room's eleven workstations, head and torso above the desk and legs behind it, and the
+   whole room should stay centred at any window size — it is a fixed 1672×941 space contain-fitted
+   to the viewport, so resizing rescales it instead of clipping.
 2. Append a line to a new `.jsonl` under `<fixture-root>/projects/<slug>/` while the page is open.
-   A new desk should appear within a second or two, with no reload.
-3. Append a `tool_use` record naming `mcp__engram__mem_save`. That worker should carry a document
-   to the archive and the counter should increment. Append several at once and the carry should
-   collapse into one `×N` batch.
+   A new agent should appear at the next free workstation within a second or two, with no reload.
+3. Append a `tool_use` record naming `mcp__engram__mem_save`. That worker should walk — around the
+   furniture, never through it — to the Persistent Memory Archive, point at it, and walk back,
+   and the counter should increment. Append several at once and the carry should collapse into one
+   `×N` batch.
 4. Stop the page, let a few saves be ingested, then reload. The counter should come back non-zero —
    that is the snapshot carrying archive state, not a replay.
+
+## The office
+
+The room is the **Pixel Office v2** environment (`public/office/`, a 1672×941 illustration). It is
+not drawn by us: `background.png` is the room, `foreground.png` is the furniture that stands in
+front of its occupants, and `src/ui/scene/world/office-map.json` — a verbatim copy of the pack's
+own map — is the single source of truth for what is where.
+
+- **Eleven workstations.** `office-map.json` names them `ws_01`..`ws_11` with the anchor a
+  character stands on to use each one. Agents are seated in that order; anyone past the eleventh is
+  counted as overflow and listed by name in the roster panel instead.
+- **Layer order** (guide section 4): background → agents sorted by the y of their feet →
+  foreground → UI. Sorting by feet is what lets an agent crossing the room pass in front of the
+  desks behind it; the foreground layer is what hides its legs behind the desk it is working at.
+- **Perspective** comes from the map's own `depth.scaleBands`, plus one whole readability step and
+  one more for an orchestrator. Whole numbers only — a fractional scale destroys pixel-perfect
+  rendering.
+- **Walking is routed, not interpolated.** `office-navigation.ts` is a typed port of the pack's own
+  A*, run over the map's walkable bounds minus its collision rectangles, so an agent carrying a
+  memory write to the Persistent Memory Archive goes around the desks instead of through them.
+- Two anchors in the shipped map needed tuning; the reasons are recorded in the map's own
+  `localAdjustments` field, which is the only place the guide allows that kind of fix.
 
 ## Characters
 
@@ -121,13 +145,14 @@ characters on 4x16 directional sheets; the pack's own docs are kept verbatim und
 
 - **Who** a worker is comes from its project: `resolveCharacterId` hashes `projectPath` into the
   four characters, so an orchestrator and every subagent under one project are the same person.
-- **Role** is size only: `ROLE_SPRITE_SCALE` draws an orchestrator at 5x and a subagent at 3x —
-  whole numbers, because a fractional scale destroys pixel-perfect rendering.
-- **State** picks the clip and the direction it is drawn in: `typing` facing the laptop (`up`)
-  while working, `idle` turned toward the room (`down`) once the session goes quiet (dimmed),
-  `walk` in whichever of the four directions it is actually heading, `point` at the Persistent
-  Memory Archive on arrival. Timing comes from each character's own JSON, never from a table in
-  our code.
+- **Role** is size only: `resolveCharacterScale` draws an orchestrator one whole step larger than
+  a subagent standing in the same place — never a ratio, because a fractional scale destroys
+  pixel-perfect rendering.
+- **State** picks the clip and the direction it is drawn in, all four from the map's own declared
+  facings: `typing` facing the laptop (`up`) while working, `idle` turned toward the room (`down`)
+  once the session goes quiet (dimmed), `walk` in whichever of the four directions it is actually
+  heading, `point` at the Persistent Memory Archive on arrival. Timing comes from each character's
+  own JSON, never from a table in our code.
 - v2 sprites are **body-only**: desks, laptops and chairs belong to the scene, never to a
   character's frames. Every clip anchors the same way — the character's declared `origin` is the
   centre of its feet, and that point is what the scene positions.
