@@ -286,3 +286,118 @@ describe('SessionLifecycleCoordinator liveness evidence', () => {
     expect(publish).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Eviction must be reversible. Discovery emits `session_start` ONCE per file (chokidar `add`
+ * never fires again for a file that already exists), so a session discovered with a stale mtime
+ * is evicted on the very first tick and, before this, could never come back: `observe` dropped
+ * events for an untracked session and `applyEventToOfficeState`'s default branch dropped events
+ * for an unknown worker. Observed live — the only session actually writing to disk was the one
+ * missing from the office floor, while three sessions that had gone quiet stayed on it.
+ */
+describe('SessionLifecycleCoordinator re-admission after a timeout eviction', () => {
+  function evictedCoordinator(sessionKey = 'claude-code:s1', start: AgentEvent = sessionStart(sessionKey, 'claude-code', 0)) {
+    const harness = makeCoordinator();
+    harness.coordinator.observe(start);
+    harness.clock.set(EVICT_TIMEOUT_MS);
+    harness.coordinator.tick();
+    harness.publish.mockClear();
+    return harness;
+  }
+
+  it('republishes a session_start when a timed-out session proves it is alive again', () => {
+    const { coordinator, publish } = evictedCoordinator();
+
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', EVICT_TIMEOUT_MS + 60_000));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: EVICT_TIMEOUT_MS + 60_000,
+    });
+  });
+
+  /**
+   * The office rebuilds the worker from this event alone, so anything the original discovery knew
+   * has to travel on it — a re-admitted worker that lost its `projectPath` would rejoin the floor
+   * as an unattributed agent and the project roster would count it under no project at all.
+   */
+  it('carries the original discovery identity back onto the republished session_start', () => {
+    const discovered: AgentEvent = {
+      ...sessionStart('claude-code:s1', 'claude-code', 0),
+      label: 'my-session',
+      projectPath: '/Users/me/Documents/especializacionIA',
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    };
+    const { coordinator, publish } = evictedCoordinator('claude-code:s1', discovered);
+
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', EVICT_TIMEOUT_MS + 60_000));
+
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      label: 'my-session',
+      projectPath: '/Users/me/Documents/especializacionIA',
+      agentProfile: { role: 'orchestrator', model: 'claude-opus-5' },
+    });
+  });
+
+  it('re-ages the re-admitted session from the event that revived it, so it can be evicted again', () => {
+    const { coordinator, publish, clock } = evictedCoordinator();
+    const revivedAt = EVICT_TIMEOUT_MS + 60_000;
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', revivedAt));
+    publish.mockClear();
+
+    // One tick just short of a FULL fresh window must not evict it again...
+    clock.set(revivedAt + EVICT_TIMEOUT_MS - 1);
+    coordinator.tick();
+    expect(publish.mock.calls.map((call) => call[0]?.kind)).not.toContain('session_end');
+
+    // ...and one tick at the fresh deadline must.
+    clock.set(revivedAt + EVICT_TIMEOUT_MS);
+    coordinator.tick();
+    expect(publish.mock.calls.map((call) => call[0]?.kind)).toContain('session_end');
+  });
+
+  it('does not republish a session_start for a session that is still tracked and working', () => {
+    const { coordinator, publish } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1', 'claude-code', 0));
+    publish.mockClear();
+
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', 1_000));
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Adversarial twin of the `liveness evidence` block above: the same reason a `parent` event
+   * cannot RESCUE a session from eviction is the reason it cannot REVIVE one afterwards — it is
+   * synthesized structure stamped with the current wall clock, not evidence of work.
+   */
+  it('does not let a parent event revive an evicted session', () => {
+    const { coordinator, publish } = evictedCoordinator();
+
+    coordinator.observe({
+      id: 9,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: EVICT_TIMEOUT_MS + 60_000,
+      correlationId: 'claude-code:parent',
+    });
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  /** A harness that explicitly ends a session means it: only a TIMEOUT eviction is reversible. */
+  it('does not revive a session that ended explicitly rather than by timeout', () => {
+    const { coordinator, publish } = makeCoordinator();
+    coordinator.observe(sessionStart('claude-code:s1', 'claude-code', 0));
+    coordinator.observe({ id: 3, kind: 'session_end', harness: 'claude-code', sessionKey: 'claude-code:s1', at: 1_000 });
+    publish.mockClear();
+
+    coordinator.observe(toolStart('claude-code:s1', 'claude-code', 2_000));
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+});

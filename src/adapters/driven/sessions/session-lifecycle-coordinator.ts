@@ -12,6 +12,7 @@
  */
 import { ageSession, recordActivity, startSession, type SessionLifecycleState } from '../../../domain/sessions/session-lifecycle';
 import type { AgentEvent, HarnessId, SessionActivity } from '../../../domain/events/types';
+import type { AgentProfile } from '../../../domain/agents/agent-profile';
 import type { Clock } from '../../../ports/clock.port';
 import type { EventPublisher } from '../../../ports/event-publisher.port';
 
@@ -20,9 +21,23 @@ function defaultAllocateId(): () => number {
   return () => next++;
 }
 
+/**
+ * What the original `session_start` told us about this session, retained for its whole lifetime.
+ * Re-admission (below) rebuilds the office worker from a republished `session_start` and that
+ * event is ALL the office gets, so a re-admitted worker that lost these would rejoin the floor
+ * unattributed — no label, no project, no role — and the project roster would stop counting it
+ * under its project.
+ */
+interface SessionIdentity {
+  label?: string;
+  projectPath?: string;
+  agentProfile?: AgentProfile;
+}
+
 interface TrackedSession {
   harness: HarnessId;
   state: SessionLifecycleState;
+  identity: SessionIdentity;
 }
 
 export class SessionLifecycleCoordinator {
@@ -52,7 +67,15 @@ export class SessionLifecycleCoordinator {
       return;
     }
     if (event.kind === 'session_start') {
-      this.sessions.set(event.sessionKey, { harness: event.harness, state: startSession(event.sessionKey, event.at) });
+      this.sessions.set(event.sessionKey, {
+        harness: event.harness,
+        state: startSession(event.sessionKey, event.at),
+        identity: {
+          ...(event.label !== undefined ? { label: event.label } : {}),
+          ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
+          ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
+        },
+      });
       return;
     }
     // A `parent` event is STRUCTURE (who launched whom, which model resolved), never evidence
@@ -64,6 +87,26 @@ export class SessionLifecycleCoordinator {
     if (event.kind === 'parent') return;
     const tracked = this.sessions.get(event.sessionKey);
     if (!tracked) return; // no session_start seen yet for this key — nothing to age
+    // Re-admission: this session was evicted for going quiet and has just proved otherwise.
+    // Discovery cannot help here — chokidar's `add` fires once per path, so a file that resumes
+    // writing never produces a second `session_start` — and without one the office has no worker
+    // to apply this event to (`applyEventToOfficeState` drops events for an unknown worker), so
+    // the session would stay invisible for as long as the process lives. Republishing the
+    // discovery event is what puts it back on the floor, and it must go out BEFORE the caller
+    // forwards the event that triggered it, which the composition root's `observe`-then-`publish`
+    // ordering already guarantees.
+    if (tracked.state.status === 'ended') {
+      tracked.state = startSession(event.sessionKey, event.at);
+      this.publisher.publish({
+        id: this.allocateId(),
+        kind: 'session_start',
+        harness: tracked.harness,
+        sessionKey: event.sessionKey,
+        at: event.at,
+        ...tracked.identity,
+      });
+      return;
+    }
     const wasIdle = tracked.state.status === 'idle';
     tracked.state = recordActivity(tracked.state, event.at);
     if (wasIdle && tracked.state.status === 'active') this.publishActivity(tracked.harness, event.sessionKey, 'working', event.at);
@@ -88,7 +131,10 @@ export class SessionLifecycleCoordinator {
         if (!wasIdle && tracked.state.status === 'idle') this.publishActivity(tracked.harness, sessionKey, 'idle', now);
         continue;
       }
-      this.sessions.delete(sessionKey);
+      // Kept (as `ended`, which `ageSession` returns early for, so it is never evicted twice)
+      // rather than deleted: forgetting it here is what made eviction irreversible. An explicit
+      // `session_end` from a harness still deletes, in `observe` above — a session someone said
+      // was over is over, while one that merely went quiet may always speak again.
       this.publisher.publish({
         id: this.allocateId(),
         kind: 'session_end',

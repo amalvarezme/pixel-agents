@@ -24,6 +24,18 @@ session is doing to a browser tab.
   four encode MCP tool calls in four incompatible shapes — Antigravity's, for instance, double-JSON-
   encodes its `ServerName`/`ToolName`, so a naive comparison against `engram` is always false.
 
+- **Session aging, in both directions.** Every session is aged on its own last REAL activity —
+  the transcript's timestamp, never the moment the server happened to read it. It dims to `idle`
+  after 10 minutes of silence, stays on the floor, and is evicted after an hour.
+
+  Eviction is reversible, and it has to be: discovery fires once per file (chokidar's `add` never
+  fires again for a file that already exists), so a session discovered with an mtime older than
+  the eviction window is evicted on the very first tick. Without a way back, a session that
+  resumed writing stayed invisible for the life of the process — observed live, with the only
+  session actually writing to disk missing from the floor while three that had gone quiet sat on
+  it. A timed-out session that produces real activity is re-admitted with the identity it was
+  discovered with. An explicit `session_end` from a harness is still final.
+
 - **A real SSE stream** (`GET /stream`) with resume-on-reconnect: `Last-Event-ID`, a ring buffer,
   and a snapshot frame that carries the full office state — workers, archive slots and in-flight
   carries — so a client connecting late reconstructs what it missed rather than starting at zero.
@@ -44,9 +56,6 @@ session is doing to a browser tab.
   Code's equivalent (`adapters/driven/claude-code/correlate.ts`) and the lane rendering are both
   implemented and tested independently, but nothing bridges a real subagent's correlation into a
   `parent` event on the live stream, so Claude Code subagents render as flat, unrelated workers.
-- **Session end / idle-out.** A session that stops writing stays on the floor; the idle/evict
-  timers in `domain/sessions/session-lifecycle.ts` exist and are tested but are not wired into this
-  composition.
 - **Interactive PTY sessions.** `node-pty` is deliberately not a dependency, so the capability
   probe always reports unavailable and an interactive launch surfaces a copyable command line
   instead of silently degrading to a non-TTY process.

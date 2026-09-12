@@ -97,4 +97,73 @@ describe('Session idle-out and eviction (integration, real SseEventHub + HTTP se
     expect(endFrame).toContain('"sessionKey":"claude-code:idle-me"');
     expect(endFrame).toContain('"reason":"timeout"');
   });
+  /**
+   * The other half of the same contract, and the one the office floor actually depends on: an
+   * eviction must be REVERSIBLE. Asserting that the coordinator republishes a `session_start` is
+   * not enough on its own — the defect this closes lived in the seam between two components that
+   * were each correct alone, because `applyEventToOfficeState` drops any event for a worker it
+   * does not have. So this reads the recovered worker back out of a real `snapshot` frame, which
+   * is the exact state a browser renders the floor and the project roster from.
+   */
+  it("restores an evicted worker to the office snapshot once its session proves it is alive again", async () => {
+    const hub = new SseEventHub();
+    const clock = makeFakeClock(0);
+    const lifecycle = new SessionLifecycleCoordinator(hub, clock);
+    const trackedPublisher: EventPublisher = {
+      publish: (event: AgentEvent) => {
+        lifecycle.observe(event);
+        hub.publish(event);
+      },
+    };
+
+    server = createStreamServer(hub);
+    await new Promise<void>((resolve) => server!.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    reader = new SseFrameReader(await fetch(`http://127.0.0.1:${port}/stream`));
+    await reader.readFrames(1);
+
+    // Discovered with a stale mtime — exactly what a session whose transcript has not been touched
+    // for over an hour looks like at server start.
+    trackedPublisher.publish({
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:resumed',
+      at: 0,
+      label: 'resumed-session',
+      projectPath: '/Users/me/Documents/especializacionIA',
+    });
+    await reader.readFrames(1);
+
+    clock.set(EVICT_TIMEOUT_MS);
+    lifecycle.tick();
+    const [endFrame] = await reader.readFrames(1);
+    expect(endFrame).toContain('"kind":"session_end"');
+
+    // The session was never dead — it starts writing again.
+    clock.set(EVICT_TIMEOUT_MS + 60_000);
+    trackedPublisher.publish({
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:resumed',
+      at: EVICT_TIMEOUT_MS + 60_000,
+      toolLabel: 'Bash',
+    });
+
+    // A FRESH client's snapshot is the server's own office projection, folded from the wire.
+    const second = new SseFrameReader(await fetch(`http://127.0.0.1:${port}/stream`));
+    try {
+      const [snapshot] = await second.readFrames(1);
+      expect(snapshot).toContain('event: snapshot');
+      expect(snapshot).toContain('"sessionKey":"claude-code:resumed"');
+      // Back with its identity intact, so the roster still files it under its own project...
+      expect(snapshot).toContain('"projectPath":"/Users/me/Documents/especializacionIA"');
+      // ...and the activity event that revived it applied to the restored worker, which only
+      // works because the republished session_start went out FIRST.
+      expect(snapshot).toContain('"toolLabel":"Bash"');
+    } finally {
+      await second.close();
+    }
+  });
 });
