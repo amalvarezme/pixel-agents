@@ -7,6 +7,7 @@ import type { AgentTooltipView } from '../../components/atoms/agent-tooltip';
 // This file only exercises the PixiJS DRAWING of a worker, never tooltip CONTENT (that is
 // `agent-tooltip.test.ts`'s job) — a fixed placeholder is enough to satisfy `WorkerView.tooltip`.
 const TEST_TOOLTIP: AgentTooltipView = {
+  portraitUrl: '/characters/alex/alex_portrait.png',
   rows: [
     { label: 'Agent', value: 'Claude Code' },
     { label: 'Role', value: 'Unknown' },

@@ -18,6 +18,10 @@ import { FetchLaunchClient } from '../adapters/driving/browser/fetch-launch-clie
 import { buildLaunchControlView } from './components/organisms/launch-control';
 import { computeTooltipPlacement, type ScreenPoint } from './scene/layout/hover-hit-test';
 import type { AgentTooltipView } from './components/atoms/agent-tooltip';
+import { buildProjectRoster } from './components/organisms/project-roster';
+import { characterPortraitUrl } from './scene/character/character-sprite';
+import type { OfficeViewModel } from './state/office-view-model';
+import type { OfficeRenderer } from './scene/OfficeStage';
 
 /**
  * tasks.md 26.2: renders one button per supported launch target and wires it to
@@ -54,7 +58,13 @@ function renderAgentTooltip(): (tooltip: AgentTooltipView | null, pointer: Scree
       return;
     }
 
+    const portrait = document.createElement('img');
+    portrait.className = 'agent-tooltip-portrait';
+    portrait.src = tooltip.portraitUrl;
+    portrait.alt = '';
+
     element.replaceChildren(
+      portrait,
       ...tooltip.rows.map((row) => {
         const rowEl = document.createElement('div');
         rowEl.className = 'agent-tooltip-row';
@@ -81,12 +91,75 @@ function renderAgentTooltip(): (tooltip: AgentTooltipView | null, pointer: Scree
   };
 }
 
+/**
+ * Active-project roster (`components/organisms/project-roster.ts`): thin, untested DOM glue in the
+ * same bucket as `renderLaunchControl` and `renderAgentTooltip` above — the grouping, counting and
+ * ordering are all decided by the pure builder, which has its own tests.
+ */
+function renderProjectRoster(): (viewModel: OfficeViewModel) => void {
+  const element = document.getElementById('project-roster');
+  if (!element) return () => {};
+
+  return (viewModel) => {
+    // `roster`, never `workers`: the floor draws at most 8 desks and reports the rest only as a
+    // count, so a panel fed from the drawn workers would claim 8 agents on a machine running 17.
+    const roster = buildProjectRoster(viewModel.roster ?? []);
+    if (roster.rows.length === 0) {
+      element.hidden = true;
+      return;
+    }
+
+    const title = document.createElement('div');
+    title.className = 'roster-title';
+    const onFloor = viewModel.overflowCount > 0 ? ` · ${viewModel.workers.length} on the floor` : '';
+    title.textContent = `${roster.totalProjects} project${roster.totalProjects === 1 ? '' : 's'} · ${roster.totalAgents} agent${roster.totalAgents === 1 ? '' : 's'}${onFloor}`;
+
+    element.replaceChildren(
+      title,
+      ...roster.rows.map((row) => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'roster-row';
+
+        const face = document.createElement('img');
+        face.className = 'roster-face';
+        face.src = characterPortraitUrl(row.character);
+        face.alt = '';
+
+        const name = document.createElement('span');
+        name.className = 'roster-name';
+        name.textContent = row.project;
+
+        const counts = document.createElement('span');
+        counts.className = 'roster-counts';
+        const working = document.createElement('span');
+        working.className = 'roster-working';
+        working.textContent = String(row.working);
+        counts.append(working, document.createTextNode(` working · ${row.idle} idle`));
+
+        rowEl.append(face, name, counts);
+        return rowEl;
+      }),
+    );
+    element.hidden = false;
+  };
+}
+
 async function main(): Promise<void> {
   const mountPoint = document.getElementById('office');
   if (!mountPoint) throw new Error('main.ts: missing #office mount point in index.html');
 
   const renderer = await PixiOfficeRenderer.mount(mountPoint, { onHoverChange: renderAgentTooltip() });
-  const stage = new OfficeStage(renderer);
+  // One stage, two presentations of the SAME view model: the PixiJS floor and the DOM roster
+  // beside it. Composed here, in the composition root, so neither `OfficeStage` nor the PixiJS
+  // renderer has to learn about the other.
+  const updateRoster = renderProjectRoster();
+  const sceneAndRoster: OfficeRenderer = {
+    render: (viewModel) => {
+      renderer.render(viewModel);
+      updateRoster(viewModel);
+    },
+  };
+  const stage = new OfficeStage(sceneAndRoster);
 
   const connectionFactory = new EventSourceStreamConnection({
     createEventSource: (url) => new EventSource(url),

@@ -19,6 +19,7 @@
  * for the panel. Runs in the BROWSER, so this deliberately never imports `node:path`.
  */
 import type { AgentRole } from '../../../domain/agents/agent-profile';
+import { characterPortraitUrl, resolveCharacterId } from '../../scene/character/character-sprite';
 
 export interface AgentTooltipRow {
   label: string;
@@ -27,6 +28,14 @@ export interface AgentTooltipRow {
 
 export interface AgentTooltipView {
   rows: AgentTooltipRow[];
+  /**
+   * Portrait of the character this worker is drawn as. Character pack guide section 20 reserves
+   * the portraits for panels, profiles and tooltips and explicitly forbids using them as scene
+   * sprites — this is that use. Resolved from `projectPath` through the same
+   * `resolveCharacterId` the scene uses, so the face in the tooltip is always the face on the
+   * floor.
+   */
+  portraitUrl: string;
 }
 
 export interface AgentTooltipSource {
@@ -118,6 +127,7 @@ function buildTaskValue(source: AgentTooltipSource): string {
 
 export function buildAgentTooltip(source: AgentTooltipSource): AgentTooltipView {
   return {
+    portraitUrl: characterPortraitUrl(resolveCharacterId(source.projectPath)),
     rows: [
       { label: 'Project', value: resolveProjectSegment(source.projectPath) },
       { label: 'Agent', value: source.harnessName },
