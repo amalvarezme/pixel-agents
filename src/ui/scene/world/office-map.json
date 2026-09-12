@@ -7,7 +7,7 @@
   },
   "coordinateSystem": "image-pixels, origin top-left",
   "layers": {
-    "background": "background.png",
+    "background": "background2.png",
     "foreground": "foreground.png",
     "windowMask": "window_mask.png",
     "sourceReference": "office_source_reference.png"
@@ -481,6 +481,7 @@
     "renderBeforeAgents": true
   },
   "localAdjustments": [
-    "ws_11.interactionAnchor.x moved from 1225 to 1350: the shipped x sits inside the `file_shelf` collision rectangle, so an agent standing there stood on the shelf and the pathfinder could not route to it. Guide section 7 assigns this kind of fine-tuning to this file rather than to the engine."
+    "ws_11.interactionAnchor.x moved from 1225 to 1350: the shipped x sits inside the `file_shelf` collision rectangle, so an agent standing there stood on the shelf and the pathfinder could not route to it. Guide section 7 assigns this kind of fine-tuning to this file rather than to the engine.",
+    "layers.background switched from background.png to background2.png: the maintainer supplied a repainted room. Only the window changed materially (58% of its pixels differ; the interior floor differs by 6.5% of diffuse tone), so every station anchor and collision rectangle in this file still describes the furniture as drawn."
   ]
 }
