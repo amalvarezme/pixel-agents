@@ -1,29 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { buildCaption, CAPTION_MAX_CHARS, computeMaxCaptionChars, truncateCaption } from './caption';
-import { DESK_SPACING } from '../../scene/layout/office-layout';
+import { MIN_SEAT_SPACING } from '../../scene/layout/office-layout';
 
-describe('buildCaption (atom) — the caption strip text shown under a worker (tasks.md 10.3)', () => {
+// Every assertion about COMPOSITION passes an explicit generous budget: the default is bounded by
+// how close two real workstations are (`MIN_SEAT_SPACING`, 85 units in the shipped room), and
+// truncation itself is covered separately below.
+describe('buildCaption (atom) — the caption strip text shown over a worker (tasks.md 10.3)', () => {
   it('uses the worker label as the caption text', () => {
-    expect(buildCaption('agent-1a2b3c4d')).toBe('agent-1a2b3c4d');
+    expect(buildCaption('agent-1a2b3c4d', undefined, undefined, 100)).toBe('agent-1a2b3c4d');
   });
 
   it('falls back to a placeholder when the label is empty', () => {
-    expect(buildCaption('')).toBe('(unnamed worker)');
+    expect(buildCaption('', undefined, undefined, 100)).toBe('(unnamed worker)');
   });
 
   // Task 21.5: normalized {toolLabel, toolDetail} caption pair on tool_start, sourced per-harness
   // UPSTREAM of this atom (design.md "Captions") — buildCaption itself takes only the already-
   // resolved pair, with NO `harness` parameter at all, so it structurally cannot branch on it.
   it('prefers the normalized toolLabel/toolDetail pair over the plain label when both are present', () => {
-    expect(buildCaption('my-session', { toolLabel: 'Read', toolDetail: 'design.md' })).toBe('Read: design.md');
+    expect(buildCaption('my-session', { toolLabel: 'Read', toolDetail: 'design.md' }, undefined, 100)).toBe('Read: design.md');
   });
 
   it('renders toolLabel alone when no toolDetail was resolved', () => {
-    expect(buildCaption('my-session', { toolLabel: 'CommandExecution' })).toBe('CommandExecution');
+    expect(buildCaption('my-session', { toolLabel: 'CommandExecution' }, undefined, 100)).toBe('CommandExecution');
   });
 
   it('falls back to the plain label when no tool caption is supplied at all', () => {
-    expect(buildCaption('my-session', undefined)).toBe('my-session');
+    expect(buildCaption('my-session', undefined, undefined, 100)).toBe('my-session');
   });
 });
 
@@ -31,8 +34,8 @@ describe('buildCaption (atom) — the caption strip text shown under a worker (t
 // available as the caption detail" — mirrors the existing {toolLabel}: {toolDetail} shape, with
 // no `harness` parameter here either (a profile is data, not a harness special case).
 describe('buildCaption — agent profile', () => {
-  // maxChars raised to 100 in these three: the composed string legitimately exceeds the default
-  // desk-width budget, and truncation itself is already covered generically elsewhere — these
+  // maxChars raised to 100 throughout: a composed profile caption legitimately exceeds the
+  // seat-spacing budget, and truncation itself is already covered generically elsewhere — these
   // assert the FORMATTING, not the (separately-tested) truncation behavior.
   it('renders a subagent profile as "agentType (model): task"', () => {
     const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', model: 'sonnet', task: 'Apply slice 2' }, 100);
@@ -52,19 +55,19 @@ describe('buildCaption — agent profile', () => {
   });
 
   it('falls back to "subagent" identity when a subagent profile has no agentType', () => {
-    const result = buildCaption('my-session', undefined, { role: 'subagent', model: 'sonnet' });
+    const result = buildCaption('my-session', undefined, { role: 'subagent', model: 'sonnet' }, 100);
     expect(result).toBe('subagent (sonnet)');
   });
 
   it('renders the identity alone when the profile has neither model nor task', () => {
-    const result = buildCaption('my-session', undefined, { role: 'orchestrator' });
+    const result = buildCaption('my-session', undefined, { role: 'orchestrator' }, 100);
     expect(result).toBe('orchestrator');
   });
 
   // The live tool caption always wins over the (comparatively static) profile — it reflects what
   // the worker is doing RIGHT NOW.
   it('prefers an active tool caption over the agent profile when both are present', () => {
-    const result = buildCaption('my-session', { toolLabel: 'Read', toolDetail: 'design.md' }, { role: 'subagent', agentType: 'sdd-apply' });
+    const result = buildCaption('my-session', { toolLabel: 'Read', toolDetail: 'design.md' }, { role: 'subagent', agentType: 'sdd-apply' }, 100);
     expect(result).toBe('Read: design.md');
   });
 
@@ -83,15 +86,15 @@ describe('buildCaption — agent profile', () => {
   // Adversarial near-miss: before the resolved model ever arrives, the requested alias is the
   // only signal available and should still be shown rather than nothing at all.
   it('falls back to the requested alias when the resolved model is not known yet', () => {
-    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet' });
+    const result = buildCaption('my-session', undefined, { role: 'subagent', agentType: 'sdd-apply', requestedModel: 'sonnet' }, 100);
     expect(result).toBe('sdd-apply (sonnet)');
   });
 });
 
 // G.2: "worker captions overlap horizontally when several workers sit adjacent on the packed
 // row" — harness-specific captions (e.g. `McpToolCall: engram/mem_save`) are long enough to run
-// into the neighboring desk's caption at `DESK_SPACING`. Fix: truncate to a caption-width budget
-// derived from `DESK_SPACING` with an ellipsis, keeping desk positions themselves untouched. This
+// into the neighboring desk's caption at `MIN_SEAT_SPACING`. Fix: truncate to a caption-width budget
+// derived from `MIN_SEAT_SPACING` with an ellipsis, keeping desk positions themselves untouched. This
 // is a pure, canvas-free function with its own tests — not a magic number buried in the renderer
 // (`office-scene-renderer.ts` never computes real glyph widths; it just draws `worker.caption`).
 describe('computeMaxCaptionChars (pure — derives the caption-width budget from desk spacing)', () => {
@@ -107,8 +110,8 @@ describe('computeMaxCaptionChars (pure — derives the caption-width budget from
     expect(computeMaxCaptionChars(0)).toBe(1);
   });
 
-  it('CAPTION_MAX_CHARS is derived from the real DESK_SPACING, not a hardcoded duplicate', () => {
-    expect(CAPTION_MAX_CHARS).toBe(computeMaxCaptionChars(DESK_SPACING));
+  it('CAPTION_MAX_CHARS is derived from the real MIN_SEAT_SPACING, not a hardcoded duplicate', () => {
+    expect(CAPTION_MAX_CHARS).toBe(computeMaxCaptionChars(MIN_SEAT_SPACING));
   });
 });
 

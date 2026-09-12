@@ -3,11 +3,10 @@
  * resolved layout position into one drawable descriptor. No PixiJS import — `ui/scene/pixi/`
  * consumes this descriptor to draw the actual sprite.
  */
-import type { DeskLane } from '../../scene/layout/office-layout';
 import type { WorkerViewModel } from '../../state/office-view-model';
 import type { WorkerActivity } from '../../../domain/office/office';
 import type { AgentProfile } from '../../../domain/agents/agent-profile';
-import type { CharacterDirection } from '../../scene/character/character-sprite';
+import { resolveCharacterScale, type CharacterDirection } from '../../scene/character/character-sprite';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip';
@@ -24,9 +23,13 @@ export interface WorkerArchiveTripView {
 
 export interface WorkerView {
   sessionKey: string;
+  /** The character's FEET, in the map's image-pixel coordinates. */
   x: number;
   y: number;
-  lane: DeskLane;
+  /** The whole-number scale the character is drawn at — the room's perspective at `y` plus the
+   * role bonus (`resolveCharacterScale`). Resolved here, once, so the renderer and the hover
+   * hit-test can never disagree about how big a figure is. */
+  scale: number;
   badge: HarnessBadge;
   caption: string;
   /** Untruncated hover-tooltip content (`ui/scene/layout/hover-hit-test.ts` drives the DOM
@@ -53,7 +56,7 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     sessionKey: worker.sessionKey,
     x: worker.x,
     y: worker.y,
-    lane: worker.lane,
+    scale: resolveCharacterScale(worker.y, worker.agentProfile?.role ?? 'subagent'),
     badge,
     caption: buildCaption(
       worker.label,

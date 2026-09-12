@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   CHARACTER_IDS,
-  ROLE_SPRITE_SCALE,
+  ROLE_SCALE_BONUS,
   SPRITE_ACTIONS,
   computeSpriteFrameRect,
   resolveCharacterId,
+  resolveCharacterScale,
   resolveSpriteClip,
   selectSpriteFrame,
   selectSpritePose,
@@ -190,15 +191,26 @@ describe('spriteAnchorPoint', () => {
   });
 });
 
-describe('ROLE_SPRITE_SCALE', () => {
+describe('resolveCharacterScale', () => {
   /** Guide section 6: integer scales only — a fractional one destroys pixel-perfect rendering. */
-  it('uses whole-number scales for both roles', () => {
-    expect(Number.isInteger(ROLE_SPRITE_SCALE.orchestrator)).toBe(true);
-    expect(Number.isInteger(ROLE_SPRITE_SCALE.subagent)).toBe(true);
+  it('only ever draws at a whole-number scale, anywhere in the room, for either role', () => {
+    for (let y = 0; y <= 941; y += 20) {
+      expect(Number.isInteger(resolveCharacterScale(y, 'orchestrator'))).toBe(true);
+      expect(Number.isInteger(resolveCharacterScale(y, 'subagent'))).toBe(true);
+    }
   });
 
-  it('draws an orchestrator larger than its subagents', () => {
-    expect(ROLE_SPRITE_SCALE.orchestrator).toBeGreaterThan(ROLE_SPRITE_SCALE.subagent);
+  it('draws an orchestrator larger than a subagent standing in the same place', () => {
+    expect(resolveCharacterScale(700, 'orchestrator')).toBeGreaterThan(resolveCharacterScale(700, 'subagent'));
+  });
+
+  it('keeps the room\'s perspective: the same agent is smaller further back', () => {
+    expect(resolveCharacterScale(500, 'subagent')).toBeLessThan(resolveCharacterScale(800, 'subagent'));
+  });
+
+  it('adds role as a whole step rather than a ratio, so perspective survives it', () => {
+    expect(ROLE_SCALE_BONUS.orchestrator - ROLE_SCALE_BONUS.subagent).toBe(1);
+    expect(resolveCharacterScale(700, 'orchestrator') - resolveCharacterScale(700, 'subagent')).toBe(1);
   });
 });
 

@@ -15,7 +15,7 @@ describe('OfficeStage (tasks.md 10.4) — presentational: receives an OfficeView
     const renderer = new RecordingRenderer();
     const stage = new OfficeStage(renderer);
     const viewModel: OfficeViewModel = {
-      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'l', x: 1, y: 2, lane: 'root' }],
+      workers: [{ sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'l', x: 1, y: 2 }],
       overflowCount: 0,
     };
 

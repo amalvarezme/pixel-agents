@@ -9,14 +9,15 @@
 import type { HarnessId } from '../../domain/events/types';
 import type { AgentProfile } from '../../domain/agents/agent-profile';
 import type { OfficeState, WorkerActivity } from '../../domain/office/office';
-import { computeArchivePath, type ScenePoint } from '../scene/layout/archive-path';
-import { computeOfficeLayout, type DeskLane, type LayoutWorkerInput } from '../scene/layout/office-layout';
+import { computeOfficeLayout, type LayoutWorkerInput } from '../scene/layout/office-layout';
+import { PERSISTENT_MEMORY, type MapPoint } from '../scene/world/office-map';
+import { officeNavigation } from '../scene/world/office-navigation';
 import type { CharacterDirection } from '../scene/character/character-sprite';
 
-/** memory_write archive-trip animation data (tasks.md 21.2-21.4). `path` is harness-agnostic —
- * it is computed from the worker's desk position alone, never from `harness`. */
+/** memory_write archive-trip animation data (tasks.md 21.2-21.4). `path` is harness-agnostic — it
+ * is routed from the worker's own seat to the Persistent Memory Archive, never from `harness`. */
 export interface ArchiveTripView {
-  path: ScenePoint[];
+  path: MapPoint[];
   /** ×N badge count — 1 for a single document, >1 once a batch (carry-queue.ts) is promoted. */
   carryCount: number;
   /** Set by the render half (`ui/scene/animation/trip-animation.ts`'s `applyTripOverlay`) while
@@ -37,25 +38,25 @@ export interface WorkerViewModel {
   sessionKey: string;
   harness: HarnessId;
   label: string;
-  /** Where the CHARACTER currently is. Equal to `deskX`/`deskY` at rest, but overwritten with the
-   * animated position while an archive trip is in flight (`animation/trip-animation.ts`'s
-   * `applyTripOverlay`). */
+  /** Where the CHARACTER currently stands — its FEET, in the map's image-pixel coordinates. Equal
+   * to `seatX`/`seatY` at rest, but overwritten with the animated position while an archive trip
+   * is in flight (`animation/trip-animation.ts`'s `applyTripOverlay`). */
   x: number;
   y: number;
   /**
-   * Where the worker's DESK is — its layout position, fixed for as long as the worker holds that
-   * desk. Separate from `x`/`y` because furniture does not walk: building the desk from the
-   * animated position sent the whole workstation across the office on every archive trip, with the
-   * character standing on it the entire way. `applyTripOverlay` deliberately leaves these two
-   * fields alone, which is what lets the character leave its desk behind.
+   * The workstation this worker occupies: where it stands when it is not walking, and where it
+   * walks back to. Separate from `x`/`y` because the seat is fixed while its occupant moves — the
+   * archive trip overwrites the position but never the seat, which is what lets a character leave
+   * its desk and find it again.
    *
    * Optional only so a hand-built view model in a test never has to restate a position it already
    * gave as `x`/`y` (the same concession `activity` makes below); `buildOfficeViewModel` always
-   * sets both, and `buildOfficeFloorView` falls back to `x`/`y` when they are absent.
+   * sets both.
    */
-  deskX?: number;
-  deskY?: number;
-  lane: DeskLane;
+  seatX?: number;
+  seatY?: number;
+  /** The map's id for that workstation (`ws_01`..`ws_11`), for debugging and hover copy. */
+  stationId?: string;
   /** Normalized tool_start caption pair (design.md "Captions"), resolved upstream per-harness. */
   toolLabel?: string;
   toolDetail?: string;
@@ -76,10 +77,10 @@ export interface WorkerViewModel {
 /**
  * One worker's identity WITHOUT any scene position — the full census the floor cannot show.
  *
- * `workers` below is capped at `MAX_PACKED_WORKERS` (8 desks) and everything past that is reduced
- * to `overflowCount`, so a consumer that only reads `workers` silently under-reports a busy
- * machine: with 17 live sessions it sees 8 and has no way to know. Anything reporting on WHO is
- * active — the project roster panel — reads this instead.
+ * `workers` below is capped at `MAX_SEATED_WORKERS` (the eleven workstations the room actually
+ * has) and everything past that is reduced to `overflowCount`, so a consumer that only reads
+ * `workers` silently under-reports a busy machine: with 17 live sessions it sees 11 and has no way
+ * to know. Anything reporting on WHO is active — the project roster panel — reads this instead.
  */
 export interface OfficeRosterEntry {
   sessionKey: string;
@@ -90,7 +91,7 @@ export interface OfficeRosterEntry {
 }
 
 export interface OfficeViewModel {
-  /** Only the workers that got one of the office's limited desks. */
+  /** Only the workers that got one of the office's eleven workstations. */
   workers: WorkerViewModel[];
   /** EVERY worker, desk or no desk — see `OfficeRosterEntry`. Optional only so a hand-built view
    * model in a test never has to restate its workers twice (the same concession `deskX`/`deskY`
@@ -111,12 +112,9 @@ export interface OfficeViewModel {
 /** Projects the current `OfficeState` into a renderable `OfficeViewModel`. Pure — no I/O. */
 export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
   const workers = [...state.workers.values()];
-  const layoutInputs: LayoutWorkerInput[] = workers.map((w) => ({
-    sessionKey: w.sessionKey,
-    parentSessionKey: w.parentSessionKey,
-  }));
+  const layoutInputs: LayoutWorkerInput[] = workers.map((w) => ({ sessionKey: w.sessionKey }));
   const layout = computeOfficeLayout(layoutInputs);
-  const deskBySessionKey = new Map(layout.desks.map((d) => [d.sessionKey, d]));
+  const seatBySessionKey = new Map(layout.seats.map((seat) => [seat.sessionKey, seat]));
 
   const roster: OfficeRosterEntry[] = workers.map((w) => ({
     sessionKey: w.sessionKey,
@@ -128,23 +126,32 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
 
   const viewModelWorkers: WorkerViewModel[] = [];
   for (const worker of workers) {
-    const desk = deskBySessionKey.get(worker.sessionKey);
-    if (!desk) continue; // beyond MAX_PACKED_WORKERS — counted in overflowCount instead
+    const seat = seatBySessionKey.get(worker.sessionKey);
+    if (!seat) continue; // beyond MAX_SEATED_WORKERS — counted in overflowCount instead
     const held = state.carryQueues.get(worker.sessionKey)?.held;
     viewModelWorkers.push({
       sessionKey: worker.sessionKey,
       harness: worker.harness,
       label: worker.label,
-      x: desk.x,
-      y: desk.y,
-      deskX: desk.x,
-      deskY: desk.y,
-      lane: desk.lane,
+      x: seat.x,
+      y: seat.y,
+      seatX: seat.x,
+      seatY: seat.y,
+      stationId: seat.stationId,
       activity: worker.activity,
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
       ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
       ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
-      ...(held ? { archiveTrip: { path: computeArchivePath({ x: desk.x, y: desk.y }), carryCount: held.count } } : {}),
+      // Routed around the furniture rather than straight at the cabinet (guide section 7): the
+      // room between a desk and the archive wall is full of desks, a sofa and the memory core.
+      ...(held
+        ? {
+            archiveTrip: {
+              path: officeNavigation.findPath({ x: seat.x, y: seat.y }, PERSISTENT_MEMORY.anchor),
+              carryCount: held.count,
+            },
+          }
+        : {}),
     });
   }
 

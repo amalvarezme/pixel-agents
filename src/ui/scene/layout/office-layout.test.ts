@@ -1,92 +1,109 @@
 import { describe, expect, it } from 'vitest';
-import {
-  computeOfficeLayout,
-  FLOOR_HEIGHT,
-  FLOOR_WIDTH,
-  MAX_PACKED_WORKERS,
-  type LayoutWorkerInput,
-} from './office-layout';
+import { computeOfficeLayout, findSeat, MAX_SEATED_WORKERS, MIN_SEAT_SPACING, type LayoutWorkerInput } from './office-layout';
+import { WORKSTATIONS, WORLD_HEIGHT, WORLD_WIDTH } from '../world/office-map';
+import { officeNavigation } from '../world/office-navigation';
 
-function worker(sessionKey: string, parentSessionKey: string | null = null): LayoutWorkerInput {
-  return { sessionKey, parentSessionKey };
+function worker(sessionKey: string): LayoutWorkerInput {
+  return { sessionKey };
 }
 
-describe('office layout math (office-scene-renderer spec: Single-Agent Layout, Multi-Agent Layout)', () => {
+describe('office layout — seating agents at the room\'s real workstations', () => {
   it('is canvas-free: no PixiJS import anywhere in this module', async () => {
     const source = await import('node:fs/promises').then((fs) => fs.readFile(new URL('./office-layout.ts', import.meta.url), 'utf8'));
     expect(source).not.toMatch(/pixi\.js/);
   });
 
-  it('produces no desks and no overflow for an empty office', () => {
-    const layout = computeOfficeLayout([]);
-    expect(layout.desks).toEqual([]);
-    expect(layout.overflowCount).toBe(0);
+  it('seats nobody and overflows nobody for an empty office', () => {
+    expect(computeOfficeLayout([])).toEqual({ seats: [], overflowCount: 0 });
   });
 
-  it('centers the single active session with no lane subdivision (Single-Agent Layout)', () => {
+  it('seats a lone agent at a real workstation, not at an invented position', () => {
     const layout = computeOfficeLayout([worker('claude-code:s1')]);
 
-    expect(layout.desks).toHaveLength(1);
-    const [desk] = layout.desks;
-    expect(desk!.sessionKey).toBe('claude-code:s1');
-    expect(desk!.x).toBe(FLOOR_WIDTH / 2);
-    expect(desk!.lane).toBe('root');
-    expect(desk!.y).toBeGreaterThan(0);
-    expect(desk!.y).toBeLessThan(FLOOR_HEIGHT);
+    expect(layout.seats).toHaveLength(1);
+    const seat = layout.seats[0]!;
+    expect(seat.sessionKey).toBe('claude-code:s1');
+    expect(WORKSTATIONS.some((station) => station.id === seat.stationId)).toBe(true);
+    expect({ x: seat.x, y: seat.y }).toEqual(
+      WORKSTATIONS.find((station) => station.id === seat.stationId)!.interactionAnchor,
+    );
   });
 
-  it('renders multiple unrelated sessions as distinct, non-overlapping desks (Multi-Agent Layout)', () => {
-    const layout = computeOfficeLayout([worker('claude-code:s1'), worker('claude-code:s2'), worker('claude-code:s3')]);
+  it('gives every agent its own workstation — never two on one desk', () => {
+    const layout = computeOfficeLayout(Array.from({ length: MAX_SEATED_WORKERS }, (_, i) => worker(`claude-code:s${i}`)));
 
-    expect(layout.desks).toHaveLength(3);
-    const xs = layout.desks.map((d) => d.x);
-    expect(new Set(xs).size).toBe(3); // every desk gets a unique x position — no overlap
+    expect(new Set(layout.seats.map((seat) => seat.stationId)).size).toBe(MAX_SEATED_WORKERS);
+    expect(new Set(layout.seats.map((seat) => `${seat.x},${seat.y}`)).size).toBe(MAX_SEATED_WORKERS);
   });
 
-  it('packs at most 8 desks in a row and reports the rest as overflow', () => {
-    const workers = Array.from({ length: 10 }, (_, i) => worker(`claude-code:s${i}`));
+  it('seats as many agents as the room has workstations and reports the rest as overflow', () => {
+    const layout = computeOfficeLayout(Array.from({ length: MAX_SEATED_WORKERS + 3 }, (_, i) => worker(`claude-code:s${i}`)));
 
-    const layout = computeOfficeLayout(workers);
-
-    expect(layout.desks).toHaveLength(MAX_PACKED_WORKERS);
-    expect(layout.overflowCount).toBe(2);
+    expect(layout.seats).toHaveLength(MAX_SEATED_WORKERS);
+    expect(layout.overflowCount).toBe(3);
   });
 
-  // Defect fix: the packed row and the archive cabinet share the SAME root-lane y (540) —
-  // ARCHIVE_DESTINATION = { x: 1720, y: 540 }, `office-scene-renderer.ts`. A full 8-desk row
-  // centered on the floor reached far enough right to overlap the cabinet and its counter,
-  // making the archive destination the carry animation walks to invisible as its own thing.
-  it('keeps the packed row clear of the archive destination even at the maximum packed count', () => {
-    const workers = Array.from({ length: MAX_PACKED_WORKERS }, (_, i) => worker(`claude-code:s${i}`));
+  it('seats the same crew in the same places every time it is asked', () => {
+    // The floor is redrawn ~60 times a second: seating that varied between two identical calls
+    // would make every agent jitter between desks.
+    const crew = [worker('claude-code:a'), worker('claude-code:b'), worker('claude-code:c')];
 
-    const layout = computeOfficeLayout(workers);
-
-    const rightmostDeskX = Math.max(...layout.desks.map((d) => d.x));
-    // 1720 is ARCHIVE_DESTINATION.x; 150 covers half the desk width plus half the cabinet width
-    // plus a visible margin, so the two never touch even accounting for their drawn size.
-    expect(rightmostDeskX).toBeLessThan(1720 - 150);
+    expect(computeOfficeLayout(crew)).toEqual(computeOfficeLayout(crew));
   });
 
-  // Adversarial twin: proves the row shifts as a WHOLE (every desk clears the boundary), not just
-  // the specific 8-worker case above landing under the threshold by coincidence.
-  it('never places any packed-row desk past the archive clearance boundary, at any count', () => {
-    const workers = Array.from({ length: 4 }, (_, i) => worker(`claude-code:s${i}`));
+  it('keeps every agent inside the room', () => {
+    const layout = computeOfficeLayout(Array.from({ length: MAX_SEATED_WORKERS }, (_, i) => worker(`claude-code:s${i}`)));
 
-    const layout = computeOfficeLayout(workers);
-
-    for (const desk of layout.desks) {
-      expect(desk.x).toBeLessThan(1720 - 150);
+    for (const seat of layout.seats) {
+      expect(seat.x).toBeGreaterThan(0);
+      expect(seat.x).toBeLessThan(WORLD_WIDTH);
+      expect(seat.y).toBeGreaterThan(0);
+      expect(seat.y).toBeLessThan(WORLD_HEIGHT);
     }
   });
 
-  it('places a child worker in a visually distinct lane from its parent', () => {
-    const layout = computeOfficeLayout([worker('claude-code:parent1'), worker('claude-code:child1', 'claude-code:parent1')]);
+  /**
+   * A seat is a POSE position, not a walkable cell: the map's anchors stand each agent against its
+   * own desk so the foreground layer hides its legs and it reads as working there, which means the
+   * anchor itself is inside that desk's collision rectangle. What must hold is that an agent can
+   * still GET there — the route's interior is clear and the last step is the anchor itself.
+   */
+  it('leaves every seat reachable, even though a seat stands against its own desk', () => {
+    const layout = computeOfficeLayout(Array.from({ length: MAX_SEATED_WORKERS }, (_, i) => worker(`claude-code:s${i}`)));
 
-    const parentDesk = layout.desks.find((d) => d.sessionKey === 'claude-code:parent1');
-    const childDesk = layout.desks.find((d) => d.sessionKey === 'claude-code:child1');
+    for (const seat of layout.seats) {
+      const path = officeNavigation.findPath({ x: 960, y: 660 }, { x: seat.x, y: seat.y });
+      expect(path.length).toBeGreaterThan(1);
+      expect(path[path.length - 1]).toEqual({ x: seat.x, y: seat.y });
+      for (const point of path.slice(1, -1)) {
+        expect(officeNavigation.isBlocked(point)).toBe(false);
+      }
+    }
+  });
 
-    expect(parentDesk?.lane).toBe('root');
-    expect(childDesk?.lane).toBe('child');
-    expect(childDesk?.y).not.toBe(parentDesk?.y);
+  it('finds the seat a given worker holds, and nothing for one that got none', () => {
+    const layout = computeOfficeLayout([worker('claude-code:s1')]);
+
+    expect(findSeat(layout, 'claude-code:s1')).toEqual({ x: layout.seats[0]!.x, y: layout.seats[0]!.y });
+    expect(findSeat(layout, 'claude-code:nobody')).toBeUndefined();
+  });
+});
+
+describe('MIN_SEAT_SPACING', () => {
+  it('is measured off the map, as the tightest gap between two workstations in one row', () => {
+    // `caption.ts` budgets caption width from this, so it has to be the real worst case rather
+    // than an average: two neighbours 85 units apart are what a caption must not bridge.
+    let expected = Infinity;
+    for (let i = 0; i < WORKSTATIONS.length; i++) {
+      for (let j = i + 1; j < WORKSTATIONS.length; j++) {
+        const a = WORKSTATIONS[i]!.interactionAnchor;
+        const b = WORKSTATIONS[j]!.interactionAnchor;
+        if (Math.abs(a.y - b.y) > 60) continue;
+        expected = Math.min(expected, Math.abs(a.x - b.x));
+      }
+    }
+
+    expect(MIN_SEAT_SPACING).toBe(expected);
+    expect(MIN_SEAT_SPACING).toBeGreaterThan(0);
   });
 });

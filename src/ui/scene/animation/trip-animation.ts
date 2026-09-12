@@ -2,8 +2,8 @@
  * Archive-trip animation (blocker B.2, tasks.md 21.2-21.4): the RENDER half of
  * `OfficeViewModel.archiveTrip`. The data half (`office-view-model.ts`'s `archiveTrip` projection)
  * already existed and was tested; nothing consumed it. This module is that consumer: it walks a
- * worker along its precomputed `archiveTrip.path` (`archive-path.ts`) over real time, dwells and
- * highlights at the archive, then walks back — and reports when a trip's full round trip has
+ * worker along its precomputed `archiveTrip.path` (routed by `scene/world/office-navigation.ts`)
+ * over real time, dwells and highlights at the archive, then walks back — and reports when a trip's full round trip has
  * finished so the caller can advance the domain carry queue (`completeArchiveTripForWorker`).
  *
  * Pure and canvas-free, matching this codebase's existing split (`pixi-office-renderer.ts`'s
@@ -18,7 +18,7 @@
  * playback.
  */
 import type { OfficeViewModel, WorkerViewModel } from '../../state/office-view-model';
-import type { ScenePoint } from '../layout/archive-path';
+import type { MapPoint } from '../world/office-map';
 import { resolveMoveDirection } from '../character/character-facing';
 import type { CharacterDirection } from '../character/character-sprite';
 
@@ -31,7 +31,7 @@ export const DOCK_DURATION_MS = 350;
 
 export interface ActiveTrip {
   sessionKey: string;
-  path: ScenePoint[];
+  path: MapPoint[];
   carryCount: number;
   phase: TripPhase;
   /** When the CURRENT phase began, in the same clock as `now` — never reset except on a phase
@@ -54,7 +54,7 @@ export function createTripAnimatorState(): TripAnimatorState {
 }
 
 /** Position along `path` at `progress` in `[0, 1]`, proportional to cumulative segment length. */
-export function interpolatePath(path: ScenePoint[], progress: number): ScenePoint {
+export function interpolatePath(path: MapPoint[], progress: number): MapPoint {
   if (path.length === 0) return { x: 0, y: 0 };
   if (path.length === 1) return path[0]!;
 

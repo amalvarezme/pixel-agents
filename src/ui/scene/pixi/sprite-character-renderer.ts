@@ -15,11 +15,9 @@
  * scene rebuild would allocate a fresh `Texture` for every worker 60 times a second.
  */
 import { Assets, Container, Rectangle, Sprite, Texture } from 'pixi.js';
-import type { AgentRole } from '../../../domain/agents/agent-profile';
 import type { CharacterAnimationState } from '../character/animation-state';
 import {
   CHARACTER_IDS,
-  ROLE_SPRITE_SCALE,
   characterMetaUrl,
   characterSheetUrl,
   computeSpriteFrameRect,
@@ -36,10 +34,14 @@ import {
 
 /**
  * Opacity of a worker whose session has gone quiet. design.md "Session discovery and aging out"
- * describes the idle state as "worker dims, stays on stage" — this is that dimming. Deliberately
- * not so faint that the character stops being readable: an idle agent is still information.
+ * describes the idle state as "worker dims, stays on stage" — this is that dimming.
+ *
+ * Raised from the 0.55 that suited the old dark procedural office: against the v2 room's bright
+ * white floor a 32px character at the back of the room all but disappeared at that value, and an
+ * idle agent is still information. The idle POSE (turned away from the laptop) now carries most of
+ * the signal, so the dimming only has to be noticeable, not drastic.
  */
-export const IDLE_CHARACTER_ALPHA = 0.55;
+export const IDLE_CHARACTER_ALPHA = 0.78;
 
 interface LoadedCharacter {
   meta: CharacterSpriteMeta;
@@ -114,20 +116,15 @@ export class CharacterAtlas {
 
 export interface SpriteCharacterInput {
   projectPath?: string;
-  role: AgentRole;
   state: CharacterAnimationState;
   /** True only while dwelling at the Persistent Memory Archive — selects the `point` clip. */
   atArchive: boolean;
   /** Which way the character is currently heading (`character-facing.ts`). */
   direction: CharacterDirection;
   now: number;
-  /**
-   * Depth scale for the character's current position on the floor, from the map's own
-   * `depth.scaleBands`. Multiplied by the role scale, never replaced by it: perspective and role
-   * are two independent readings of the same figure, and both must stay whole numbers
-   * (guide section 6) — which is why this is a band index, not a ratio.
-   */
-  depthScale?: number;
+  /** The whole-number scale to draw at — perspective plus role, already resolved by
+   * `resolveCharacterScale` so this renderer makes no sizing decision of its own. */
+  scale: number;
 }
 
 /**
@@ -152,13 +149,12 @@ export function renderSpriteCharacter(atlas: CharacterAtlas, input: SpriteCharac
   const texture = atlas.frameTexture(id, resolved.clip, selectSpriteFrame(resolved.clip, input.now));
   if (!texture) return null;
 
-  const scale = ROLE_SPRITE_SCALE[input.role] * (input.depthScale ?? 1);
   const anchor = spriteAnchorPoint(meta);
 
   const sprite = new Sprite(texture);
   sprite.anchor.set(anchor.x, anchor.y);
   // Guide section 5: mirror rather than ship a second set of assets for `left`.
-  sprite.scale.set(resolved.mirror ? -scale : scale, scale);
+  sprite.scale.set(resolved.mirror ? -input.scale : input.scale, input.scale);
 
   const group = new Container();
   group.addChild(sprite);

@@ -183,7 +183,7 @@
       },
       "interactionAnchor": {
         "x": 225,
-        "y": 612
+        "y": 545
       },
       "facing": "up",
       "type": "workstation",
@@ -202,7 +202,7 @@
       },
       "interactionAnchor": {
         "x": 325,
-        "y": 612
+        "y": 545
       },
       "facing": "up",
       "type": "workstation",
@@ -221,7 +221,7 @@
       },
       "interactionAnchor": {
         "x": 660,
-        "y": 695
+        "y": 647
       },
       "facing": "up",
       "type": "workstation",
@@ -240,7 +240,7 @@
       },
       "interactionAnchor": {
         "x": 1085,
-        "y": 615
+        "y": 544
       },
       "facing": "up",
       "type": "workstation",
@@ -259,7 +259,7 @@
       },
       "interactionAnchor": {
         "x": 1170,
-        "y": 615
+        "y": 544
       },
       "facing": "up",
       "type": "workstation",
@@ -278,7 +278,7 @@
       },
       "interactionAnchor": {
         "x": 1460,
-        "y": 615
+        "y": 544
       },
       "facing": "up",
       "type": "workstation",
@@ -297,7 +297,7 @@
       },
       "interactionAnchor": {
         "x": 1545,
-        "y": 615
+        "y": 544
       },
       "facing": "up",
       "type": "workstation",
@@ -316,7 +316,7 @@
       },
       "interactionAnchor": {
         "x": 190,
-        "y": 785
+        "y": 725
       },
       "facing": "up",
       "type": "workstation",
@@ -335,7 +335,7 @@
       },
       "interactionAnchor": {
         "x": 600,
-        "y": 885
+        "y": 820
       },
       "facing": "up",
       "type": "workstation",
@@ -354,7 +354,7 @@
       },
       "interactionAnchor": {
         "x": 880,
-        "y": 885
+        "y": 819
       },
       "facing": "up",
       "type": "workstation",
@@ -372,8 +372,8 @@
         "y": 651
       },
       "interactionAnchor": {
-        "x": 1225,
-        "y": 800
+        "x": 1350,
+        "y": 721
       },
       "facing": "up",
       "type": "workstation",
@@ -479,5 +479,9 @@
       "walk"
     ],
     "renderBeforeAgents": true
-  }
+  },
+  "localAdjustments": [
+    "ws_11.interactionAnchor.x moved from 1225 to 1350: the shipped x sits inside the `file_shelf` collision rectangle, so an agent seated there stood on the shelf and the pathfinder could not route to it.",
+    "Every ws_*.interactionAnchor.y raised so the character straddles its desk instead of standing below it. Measured against foreground.png: at the shipped anchors the desk in the foreground layer covered 100% of a character's upper body at every one of the eleven stations, leaving only its feet visible. The new line is the lowest y at which the head and torso are fully clear of the foreground while at least 45% of the lower body stays behind it \u2014 which is what reads as 'working at the desk'. Guide section 7 assigns this kind of fine-tuning to this file rather than to the engine."
+  ]
 }
