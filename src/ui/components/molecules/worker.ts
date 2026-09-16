@@ -52,6 +52,9 @@ export interface WorkerView {
    * under that project regardless of role. */
   projectPath?: string;
   archiveTrip?: WorkerArchiveTripView;
+  /** Carried straight through from `WorkerViewModel.lastToolStartAt` — the pixi renderer computes
+   * `isToolRecentlyStarted` from it to pick the `typing` vs. `work` clip. */
+  lastToolStartAt?: number;
 }
 
 export function buildWorkerView(worker: WorkerViewModel): WorkerView {
@@ -84,6 +87,7 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     ...(worker.activity !== undefined ? { activity: worker.activity } : {}),
     ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
     ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
+    ...(worker.lastToolStartAt !== undefined ? { lastToolStartAt: worker.lastToolStartAt } : {}),
     ...(worker.archiveTrip
       ? {
           archiveTrip: {

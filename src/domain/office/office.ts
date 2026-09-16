@@ -54,6 +54,11 @@ export interface Worker {
    * it (Antigravity). Merge-not-replace, exactly like `toolLabel`/`toolDetail`: a later event
    * that does not carry a project must never erase an already-known one. */
   projectPath?: string;
+  /** Wall-clock `at` of the most recent `tool_start` — the ONLY per-worker timestamp the scene
+   * reads. Exists so the renderer (`ui/scene/character/animation-state.ts`'s
+   * `isToolRecentlyStarted`) can tell a worker hammering tools apart from one thinking between
+   * them, without needing a matching `tool_end` (see that module for why pairing was rejected). */
+  lastToolStartAt?: number;
 }
 
 /**
@@ -151,6 +156,7 @@ function upsertWorker(
     toolLabel: patch.toolLabel ?? existing?.toolLabel,
     toolDetail: patch.toolDetail ?? existing?.toolDetail,
     projectPath: patch.projectPath ?? existing?.projectPath,
+    lastToolStartAt: patch.lastToolStartAt ?? existing?.lastToolStartAt,
     // Merged, never replaced wholesale: a later partial profile (e.g. just the orchestrator's
     // newly-discovered model) must enrich the existing one, not erase agentType/model/task
     // already known from an earlier profile event (spec: "a missing model stays absent rather
@@ -247,7 +253,18 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
       return applyMemoryWriteToOfficeState(pruned, event.sessionKey, event.at);
 
     default:
-      if (!event.label && !event.toolLabel && !event.agentProfile && !event.projectPath && !event.activity) {
+      // A bare `tool_start` (no label/toolLabel/profile/projectPath/activity of its own) would
+      // otherwise be dropped here, but its TIMESTAMP is exactly the typing/thinking recency signal
+      // `lastToolStartAt` exists for — so `tool_start` must never take this early exit, even when
+      // every other field on it is empty.
+      if (
+        event.kind !== 'tool_start' &&
+        !event.label &&
+        !event.toolLabel &&
+        !event.agentProfile &&
+        !event.projectPath &&
+        !event.activity
+      ) {
         return pruned;
       }
       if (!pruned.workers.has(event.sessionKey)) return pruned;
@@ -262,6 +279,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         // path that can ever move a worker OUT of 'working': every other branch either defaults it
         // to 'working' or preserves what is already there.
         ...(event.activity !== undefined ? { activity: event.activity } : {}),
+        ...(event.kind === 'tool_start' ? { lastToolStartAt: event.at } : {}),
       });
   }
 }

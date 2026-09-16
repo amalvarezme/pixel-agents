@@ -127,8 +127,9 @@ export function resolveCharacterScale(footY: number, role: AgentRole): number {
  *
  * Four clips reach further and are deliberately EXCLUDED, on one consistent principle: a hover
  * target should be the person, not the gesture. `point`, `talk` and `celebrate` extend or raise an
- * arm, and so does `work`, whose elbow juts out and whose hand comes up to the head. Counting that
- * arm would widen every worker's hover box to 17 half-columns for a gesture that is not the body.
+ * arm, and so does `work` — its whole reason for existing is an elbow that juts out and a hand at
+ * the head, which is the only part of the pose a desk cannot hide. Counting that arm would widen
+ * every worker's hover box to 17 half-columns for a gesture that is not the body.
  */
 export const CHARACTER_BODY_HALF_WIDTH = 15;
 export const CHARACTER_BODY_HEIGHT = 59;
@@ -187,6 +188,9 @@ export interface SpritePoseInput {
   /** Where the character is currently heading. Only read while walking; the other states are
    * pinned to the direction their station or the room demands. */
   direction?: CharacterDirection;
+  /** Whether a tool started recently enough to draw the worker at the keys
+   * (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`). */
+  toolActive?: boolean;
 }
 
 /**
@@ -202,11 +206,17 @@ export interface SpritePoseInput {
  * - an idle agent turns AWAY from the laptop, toward the room (`down`). That is the difference a
  *   viewer needs to read at a glance — hands on keys versus a figure facing the floor — and it is
  *   also the only way the character's face, and therefore its project identity, is ever visible.
+ * - `working` itself splits into two clips (`typing` vs `work`) by `toolActive`
+ *   (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`): a tool started recently
+ *   reads as hands-on-keys, otherwise the worker is thinking between tools. `toolActive`
+ *   OMITTED (not `false`) still resolves to `typing` — `office-map.json` declares
+ *   `defaultAnimation: "typing"` on every workstation, and a caller with no signal must fall back
+ *   to the map's own default rather than silently downgrading every worker to `work`.
  */
 export function selectSpritePose(input: SpritePoseInput): SpritePose {
   if (input.atArchive) return { action: 'point', direction: 'up' };
   if (input.state === 'walking') return { action: 'walk', direction: input.direction ?? 'down' };
-  if (input.state === 'working') return { action: 'typing', direction: 'up' };
+  if (input.state === 'working') return { action: input.toolActive === false ? 'work' : 'typing', direction: 'up' };
   return { action: 'idle', direction: 'down' };
 }
 

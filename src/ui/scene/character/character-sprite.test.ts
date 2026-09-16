@@ -94,6 +94,20 @@ describe('selectSpritePose', () => {
     expect(selectSpritePose({ state: 'working' })).toEqual({ action: 'typing', direction: 'up' });
   });
 
+  it('types when a tool started recently enough to be at the keys', () => {
+    expect(selectSpritePose({ state: 'working', toolActive: true })).toEqual({ action: 'typing', direction: 'up' });
+  });
+
+  it('thinks between tools when no tool has started recently', () => {
+    expect(selectSpritePose({ state: 'working', toolActive: false })).toEqual({ action: 'work', direction: 'up' });
+  });
+
+  it('falls back to typing when toolActive is omitted, matching the map\'s own default', () => {
+    // office_map.json declares `defaultAnimation: "typing"` on every workstation — a caller with
+    // no signal must fall back to the map's default rather than silently downgrading to `work`.
+    expect(selectSpritePose({ state: 'working' })).toEqual({ action: 'typing', direction: 'up' });
+  });
+
   it('turns away from the laptop toward the room once the session goes quiet', () => {
     expect(selectSpritePose({ state: 'idle' })).toEqual({ action: 'idle', direction: 'down' });
   });
@@ -215,6 +229,16 @@ describe('resolveCharacterScale', () => {
 });
 
 describe('shipped asset pack', () => {
+  // Guards the `typing`/`work` split (selectSpritePose): a repacked asset set that drops the
+  // `work` row would silently downgrade every worker to `typing` forever, since
+  // `resolveSpriteClip` degrades to null rather than throwing.
+  it('ships a resolvable work/up clip for every character, alongside typing', () => {
+    for (const id of CHARACTER_IDS) {
+      const meta = loadMeta(id);
+      expect(resolveSpriteClip(meta, 'work', 'up')).not.toBeNull();
+    }
+  });
+
   /** Guide section 18 "Criterios de aceptación", enforced rather than trusted. */
   it('ships every character the code can resolve, with the frame geometry the code assumes', () => {
     for (const id of CHARACTER_IDS) {

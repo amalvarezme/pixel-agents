@@ -23,3 +23,29 @@ export function selectCharacterAnimationState(input: CharacterAnimationInput): C
   if (input.isWalking) return 'walking';
   return input.activity === 'working' ? 'working' : 'idle';
 }
+
+/**
+ * How recent a `tool_start` has to be for a worker to read as actively using a tool (`typing`)
+ * rather than thinking between tools (`work`).
+ *
+ * Recency of `tool_start` alone, deliberately NOT a `tool_start`/`tool_end` pairing: only the
+ * claude-code adapter ever emits `tool_end` at all — codex, opencode and antigravity never do — so
+ * pairing would make the two clips a claude-code-only feature instead of a signal every harness can
+ * drive.
+ *
+ * Known limitation: codex's parser excludes the `exec` sandbox family from `tool_start` entirely,
+ * so a codex worker doing shell work will under-report and read as thinking more than it actually
+ * is.
+ */
+export const TOOL_ACTIVE_WINDOW_MS = 4000;
+
+/**
+ * Whether `lastToolStartAt` (`domain/office/office.ts`) is recent enough to draw the worker at the
+ * keys. `undefined` (no tool_start ever recorded) is always `false` — never invented as active. A
+ * timestamp in the FUTURE counts as active: harness clocks and the render clock are independent
+ * processes, and a small forward skew must not read as "stale".
+ */
+export function isToolRecentlyStarted(lastToolStartAt: number | undefined, now: number): boolean {
+  if (lastToolStartAt === undefined) return false;
+  return now - lastToolStartAt < TOOL_ACTIVE_WINDOW_MS;
+}

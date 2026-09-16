@@ -72,6 +72,10 @@ export interface WorkerViewModel {
    * a missing value to idle rather than inventing "working". */
   activity?: WorkerActivity;
   archiveTrip?: ArchiveTripView;
+  /** Carried straight through from `Worker.lastToolStartAt` — the pixi renderer uses it
+   * (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`) to pick the `typing` vs.
+   * `work` clip. `undefined` for a worker with no recorded tool_start. */
+  lastToolStartAt?: number;
 }
 
 /**
@@ -142,6 +146,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
       ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
       ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
+      ...(worker.lastToolStartAt !== undefined ? { lastToolStartAt: worker.lastToolStartAt } : {}),
       // Routed around the furniture rather than straight at the cabinet (guide section 7): the
       // room between a desk and the archive wall is full of desks, a sofa and the memory core.
       ...(held
