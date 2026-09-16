@@ -1,35 +1,35 @@
 {
-  "format": "pixel-office-v2",
-  "version": 2,
+  "format": "pixel-office-v3",
+  "version": 3,
   "note": "Paths are relative to this file's own served directory (/characters), not to the source pack layout.",
   "characters": {
     "alex": {
       "displayName": "Alex",
       "role": "Software Developer",
       "metadata": "alex/alex.json",
-      "spritesheet": "alex/alex_spritesheet_v2.png",
-      "portrait": "alex/alex_portrait_v2.png"
+      "spritesheet": "alex/alex_spritesheet_v3.png",
+      "portrait": "alex/alex_portrait_v3.png"
     },
     "marcus": {
       "displayName": "Marcus",
       "role": "IT / DevOps Engineer",
       "metadata": "marcus/marcus.json",
-      "spritesheet": "marcus/marcus_spritesheet_v2.png",
-      "portrait": "marcus/marcus_portrait_v2.png"
+      "spritesheet": "marcus/marcus_spritesheet_v3.png",
+      "portrait": "marcus/marcus_portrait_v3.png"
     },
     "sophia": {
       "displayName": "Sophia",
       "role": "UX/UI Designer",
       "metadata": "sophia/sophia.json",
-      "spritesheet": "sophia/sophia_spritesheet_v2.png",
-      "portrait": "sophia/sophia_portrait_v2.png"
+      "spritesheet": "sophia/sophia_spritesheet_v3.png",
+      "portrait": "sophia/sophia_portrait_v3.png"
     },
     "elena": {
       "displayName": "Elena",
       "role": "Data Scientist / AI Engineer",
       "metadata": "elena/elena.json",
-      "spritesheet": "elena/elena_spritesheet_v2.png",
-      "portrait": "elena/elena_portrait_v2.png"
+      "spritesheet": "elena/elena_spritesheet_v3.png",
+      "portrait": "elena/elena_portrait_v3.png"
     }
   }
 }

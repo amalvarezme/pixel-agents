@@ -150,10 +150,10 @@ describe('computeSpriteFrameRect', () => {
   it('reads the source rectangle straight off the resolved clip', () => {
     const walkSide = resolveSpriteClip(meta, 'walk', 'right')!;
     expect(computeSpriteFrameRect(meta, walkSide.clip, 2)).toEqual({
-      x: 64,
-      y: walkSide.clip.row * 32,
-      width: 32,
-      height: 32,
+      x: 128,
+      y: walkSide.clip.row * 64,
+      width: 64,
+      height: 64,
     });
   });
 
@@ -219,11 +219,11 @@ describe('shipped asset pack', () => {
   it('ships every character the code can resolve, with the frame geometry the code assumes', () => {
     for (const id of CHARACTER_IDS) {
       const meta = loadMeta(id);
-      expect(meta.schemaVersion ?? 2).toBe(2);
-      expect(meta.frameWidth).toBe(32);
-      expect(meta.frameHeight).toBe(32);
-      expect(meta.sheetWidth).toBe(128);
-      expect(meta.sheetHeight).toBe(512);
+      expect(meta.schemaVersion).toBe(3);
+      expect(meta.frameWidth).toBe(64);
+      expect(meta.frameHeight).toBe(64);
+      expect(meta.sheetWidth).toBe(384);
+      expect(meta.sheetHeight).toBe(1024);
       expect(meta.sideFaces).toBe('right');
       for (const action of SPRITE_ACTIONS) {
         expect(Object.keys(meta.animations[action] ?? {}).length).toBeGreaterThan(0);
@@ -250,10 +250,11 @@ describe('shipped asset pack', () => {
   });
 
   /**
-   * The v2 sprites are body-only (guide section 5): desks, laptops and chairs belong to the
-   * environment. Nothing in code can assert "no furniture", but the sheet HEIGHT can: v1 packed 8
-   * furniture-bearing rows into 256px, v2 needs 16 directional rows and 512px. A pack that fails
-   * this is the old one, and every anchor in the renderer would be wrong.
+   * The sprites are body-only (guide section 5): desks, laptops and chairs belong to the
+   * environment. Nothing in code can assert "no furniture", but the sheet SHAPE can: v1 packed 8
+   * furniture-bearing rows into 256px, v2 needed 16 directional rows at 32px, and v3 draws those
+   * same 16 rows at 64px with six frames each. A pack that fails this is an older one, and every
+   * anchor in the renderer would be wrong.
    */
   it('ships the 16-row directional sheet, not the 8-row v1 sheet', () => {
     for (const id of CHARACTER_IDS) {

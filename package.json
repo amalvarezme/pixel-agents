@@ -12,7 +12,9 @@
     "dev:server": "vite-node src/server.ts",
     "dev:client": "vite",
     "dev": "npm run dev:server & npm run dev:client",
-    "build": "vite build"
+    "build": "vite build",
+    "gen:characters": "node scripts/gen-characters/index.mjs",
+    "gen:characters:preview": "node scripts/gen-characters/inspect.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -89,16 +89,19 @@ export interface CharacterSpriteMeta {
 export const ROLE_SCALE_BONUS: Record<AgentRole, number> = { orchestrator: 1, subagent: 0 };
 
 /**
- * One whole step added to every character, on top of the map's perspective band.
+ * Extra whole steps added to every character, on top of the map's perspective band.
  *
- * The map's bands are written for a scene you look AT; this one is a monitor you glance at. At the
- * shipped band values a back-row agent is 64px tall in a 1672x941 room full of detailed furniture
- * and reads as part of the artwork rather than as a person — the same "readable at a glance"
- * defect commit e7bb2ca had to fix once already for the procedural figure. A whole step keeps the
- * art pixel-perfect (guide section 6) and keeps the room's own depth ordering intact, because it
- * is added to every band equally.
+ * ZERO since the v3 pack, and that is a resolution change rather than a change of mind. The bonus
+ * existed because a 30px-tall v2 body at the map's own bands read as part of the artwork instead of
+ * as a person. The v3 body is 59px tall in a 64px frame, so one band step now buys roughly what two
+ * used to, and keeping the bonus would draw a front-row orchestrator at 295px in a 941px room.
+ *
+ * It stays as a named constant rather than being deleted: a future pack at another resolution needs
+ * exactly this dial, and the scale must remain a WHOLE number (guide section 6) — the honest
+ * parity value for a doubled frame would be a half step, which nearest-neighbour rendering cannot
+ * take without destroying the pixel grid.
  */
-const READABILITY_BONUS = 1;
+const READABILITY_BONUS = 0;
 
 /**
  * The scale one character is drawn at: perspective from where its feet are (the map's
@@ -118,13 +121,17 @@ export function resolveCharacterScale(footY: number, role: AgentRole): number {
  * The character's drawn footprint at `scale`, as offsets from its origin (the centre of its feet)
  * — what a hover hit-test needs and the only place the body's measured pixel bounds live.
  *
- * Measured from the shipped sheets rather than assumed: every clip of every character draws its
- * body inside columns 7..24 and rows 1..30 of the 32px frame, with the origin at column 16,
- * row 30. The `point` clips reach further right (an extended arm), deliberately ignored here — a
- * hover target should be the person, not the gesture.
+ * Measured from the shipped sheets rather than assumed. Across `idle`, `walk` and `typing` every
+ * v3 character draws inside columns 17..47 and rows 1..60 of the 64px frame, with the origin at
+ * column 32, row 60.
+ *
+ * Four clips reach further and are deliberately EXCLUDED, on one consistent principle: a hover
+ * target should be the person, not the gesture. `point`, `talk` and `celebrate` extend or raise an
+ * arm, and so does `work`, whose elbow juts out and whose hand comes up to the head. Counting that
+ * arm would widen every worker's hover box to 17 half-columns for a gesture that is not the body.
  */
-export const CHARACTER_BODY_HALF_WIDTH = 9;
-export const CHARACTER_BODY_HEIGHT = 30;
+export const CHARACTER_BODY_HALF_WIDTH = 15;
+export const CHARACTER_BODY_HEIGHT = 59;
 
 export interface ResolvedSpriteClip {
   clip: SpriteClipMeta;
@@ -276,13 +283,13 @@ export function resolveCharacterId(projectPath?: string): CharacterId {
 
 /** Path of a character's sheet under the served asset root, so no caller hand-builds one. */
 export function characterSheetUrl(id: CharacterId, assetRoot = '/characters'): string {
-  return `${assetRoot}/${id}/${id}_spritesheet_v2.png`;
+  return `${assetRoot}/${id}/${id}_spritesheet_v3.png`;
 }
 
 /** Path of a character's portrait (guide section 20 of the v1 pack, kept in v2: panels and
  * tooltips, never the scene). */
 export function characterPortraitUrl(id: CharacterId, assetRoot = '/characters'): string {
-  return `${assetRoot}/${id}/${id}_portrait_v2.png`;
+  return `${assetRoot}/${id}/${id}_portrait_v3.png`;
 }
 
 /** Path of a character's metadata JSON, the source of truth for every clip's timing. */
