@@ -836,3 +836,67 @@ describe('applyEventToOfficeState worker activity', () => {
     expect(state.workers.size).toBe(0);
   });
 });
+
+/**
+ * `Worker.lastToolStartAt` is the ONLY per-worker timestamp the scene reads (`office.ts`), used to
+ * tell a worker hammering tools apart from one thinking between them
+ * (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`). Recorded from `tool_start`
+ * alone — never invented from any other event kind.
+ */
+describe('applyEventToOfficeState — lastToolStartAt (typing vs. thinking recency signal)', () => {
+  function started(sessionKey: string): AgentEvent {
+    return { id: 1, kind: 'session_start', harness: 'claude-code', sessionKey, at: 0 };
+  }
+  function toolStart(sessionKey: string, at: number, id = 2): AgentEvent {
+    return { id, kind: 'tool_start', harness: 'claude-code', sessionKey, at, toolLabel: 'Bash' };
+  }
+
+  it('records lastToolStartAt from a tool_start event', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    state = applyEventToOfficeState(state, toolStart('claude-code:s1', 1000));
+
+    expect(state.workers.get('claude-code:s1')?.lastToolStartAt).toBe(1000);
+  });
+
+  it('does NOT erase lastToolStartAt when a later message/status event carries none of its own', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    state = applyEventToOfficeState(state, toolStart('claude-code:s1', 1000));
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'status',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 2000,
+      activity: 'idle',
+    });
+
+    expect(state.workers.get('claude-code:s1')?.lastToolStartAt).toBe(1000);
+  });
+
+  it('advances lastToolStartAt on a second tool_start', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    state = applyEventToOfficeState(state, toolStart('claude-code:s1', 1000));
+    state = applyEventToOfficeState(state, toolStart('claude-code:s1', 5000, 3));
+
+    expect(state.workers.get('claude-code:s1')?.lastToolStartAt).toBe(5000);
+  });
+
+  it('is a no-op for a tool_start on a session with no known worker', () => {
+    const state = applyEventToOfficeState(createOfficeState(), toolStart('claude-code:ghost', 1000));
+
+    expect(state.workers.size).toBe(0);
+  });
+
+  it('records lastToolStartAt even when the tool_start carries no label/toolLabel/profile/projectPath/activity', () => {
+    let state = applyEventToOfficeState(createOfficeState(), started('claude-code:s1'));
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+    });
+
+    expect(state.workers.get('claude-code:s1')?.lastToolStartAt).toBe(1000);
+  });
+});

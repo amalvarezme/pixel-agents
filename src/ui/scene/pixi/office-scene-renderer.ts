@@ -33,7 +33,7 @@ import { Container, Graphics, Sprite, Text, type TextStyleOptions, type Texture 
 import type { OfficeFloorView } from '../../components/organisms/office-floor';
 import type { WorkerView } from '../../components/molecules/worker';
 import { PERSISTENT_MEMORY, WORLD_HEIGHT, WORLD_WIDTH } from '../world/office-map';
-import { selectCharacterAnimationState } from '../character/animation-state';
+import { isToolRecentlyStarted, selectCharacterAnimationState } from '../character/animation-state';
 import { selectAnimationFrame } from '../character/animation-clock';
 import { resolveModelAccentColor } from '../character/model-accent';
 import { resolveProjectCharacterColor } from '../character/project-accent';
@@ -137,6 +137,7 @@ function renderWorkerCharacter(worker: WorkerView, now: number, atlas?: Characte
       direction,
       now,
       scale: worker.scale,
+      toolActive: isToolRecentlyStarted(worker.lastToolStartAt, now),
     });
     if (sprite) return sprite;
   }

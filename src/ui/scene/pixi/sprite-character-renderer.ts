@@ -125,6 +125,9 @@ export interface SpriteCharacterInput {
   /** The whole-number scale to draw at — perspective plus role, already resolved by
    * `resolveCharacterScale` so this renderer makes no sizing decision of its own. */
   scale: number;
+  /** Whether a tool started recently enough to draw the worker at the keys — forwarded straight
+   * into `selectSpritePose` to split `working` into `typing` vs `work`. */
+  toolActive?: boolean;
 }
 
 /**
@@ -142,7 +145,12 @@ export function renderSpriteCharacter(atlas: CharacterAtlas, input: SpriteCharac
   const meta = atlas.meta(id);
   if (!meta) return null;
 
-  const pose = selectSpritePose({ state: input.state, atArchive: input.atArchive, direction: input.direction });
+  const pose = selectSpritePose({
+    state: input.state,
+    atArchive: input.atArchive,
+    direction: input.direction,
+    toolActive: input.toolActive,
+  });
   const resolved = resolveSpriteClip(meta, pose.action, pose.direction);
   if (!resolved) return null;
 
