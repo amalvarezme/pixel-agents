@@ -201,12 +201,11 @@ offered and is a one-line change plus a manifest regeneration, with no art impli
   poses hold the hands at the hips and the calibrated envelope is only 33 columns wide. The envelope
   won.
 - The art is verified by eye. No test can assert "this reads as Kitana".
-- **`role: 'Delivery Lead'` is unapproved.** Invented to fill the meta builder's string, inert at
-  runtime, product-visible in `characters_manifest.json`. Flagged for the maintainer exactly as
-  Scorpion's role was; rename it if it should be something else.
-- **Out-of-surface observation, not fixed:** `scripts/gen-characters/README.md` still says
-  "`palette.mjs` — the four characters" (stale since Scorpion, and outside this unit's edit
-  surfaces). It should say six.
+- **`role: 'Delivery Lead'`** was invented to fill the meta builder's string and has since been
+  APPROVED by the maintainer, so it stays. Inert at runtime, product-visible in
+  `characters_manifest.json`.
+- **Closed since this doc was written:** `scripts/gen-characters/README.md` was fixed in a follow-up
+  commit — it now says six characters and records which of the two id lists is the hash table.
 - **`scripts/gen-characters/palette.mjs`'s exported `CHARACTER_IDS` is dead code** (unused anywhere).
   The drift-trap comment was the requested fix and it is in place; deleting the export is the stronger
   cleanup and is reported rather than done, because this unit scoped the item to a comment.
