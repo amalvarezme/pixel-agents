@@ -279,6 +279,39 @@ removed without a failure indication").
       Changing `presence-read.ts` would mean fabricating a path from a name — the exact guess F2 is
       about not making.
 
+### Finding F3 — a Pi SUBAGENT's Engram save reaches the memory zone
+
+Found while verifying the maintainer's report that the current session showed 0 archived files. The
+report itself was explained by something else (a server pointed at a synthetic fixture, plus Pi
+booting its transcript tail at EOF), but reading the two paths side by side exposed a real gap:
+`parse.ts` emits `memory_write` for a `mem_save` `toolCall` in the ORCHESTRATOR transcript, while
+`presence-source.ts`'s `diffThread` emits only `tool_start`/`tool_end`. A subagent's activity exists
+ONLY in the presence registry, never in the orchestrator transcript, so a `mem_save` made inside a
+subagent would never dock a file. Inspecting the real registry shows this has not bitten yet (only
+`bash`, `read` and `edit` appear in subagent threads), which is exactly why it would fail silently.
+
+- [x] 13.1 RED: `presence-source.test.ts` — a subagent whose registry thread holds a `mem_save` tool
+      item emits `memory_write` IN ADDITION to its `tool_start` (spec: "mem_save produces both
+      events"), and emits it exactly ONCE per call, never once per poll.
+- [x] 13.2 GUARD, not RED: adversarial twin — a thread item for any other tool (`bash`, `read`,
+      `edit`) emits `tool_start` and never `memory_write`. This PASSED before the fix, for a vacuous
+      reason: at that point `presence-source.ts` emitted no `memory_write` at all, so "never emits"
+      was trivially true, and it only becomes a meaningful regression guard once the feature
+      exists. It is kept as the adversarial twin that would catch a regression, and the mutation
+      that gives it force is the one disabling the emit condition, which turns 13.1, 13.3 and 13.6
+      red while 13.2 stays green. Measured pre-fix status of the four new presence tests: 13.1
+      fail, 13.2 pass, 13.3 fail, 13.6 fail.
+- [x] 13.3 RED: the prefixed spelling `mcp__engram__mem_save` matches too, because Pi can surface
+      Engram through its MCP gateway; the two spellings must be accepted by ONE shared predicate.
+- [x] 13.4 GREEN: reuse the detector's tool-NAME predicate rather than duplicating the regex in the
+      source. The registry item carries no tool arguments, so `title`, `topicKey` and
+      `observationType` stay ABSENT — an honest degradation, documented in the code, never a title
+      fabricated out of the tool name.
+- [x] 13.5 `parse.ts` MUST NOT change: the orchestrator path already works and must keep working.
+- [x] 13.6 RED+GREEN: at the seam, folding the emitted events into `OfficeState` docks a file (an
+      occupied archive slot), mirroring the 11.6 seam test — an event that never reaches the office
+      would be no fix at all.
+
 ### Verification for this unit
 
 - [x] 10.v `npm test` 1145/1145 across 100 files, `npm run typecheck` clean, `npm run lint:deps`

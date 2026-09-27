@@ -28,9 +28,10 @@ import type {
 } from '../../../ports/activity-source.port';
 import type { AgentEventBase, HarnessId } from '../../../domain/events/types';
 import type { AgentProfile } from '../../../domain/agents/agent-profile';
-import { createEventFromLogRecord } from '../../../domain/events/factories';
+import { createEventFromLogRecord, createMemoryWriteEvent } from '../../../domain/events/factories';
 import { createAsyncQueue } from '../../../shared/async-queue';
 import type { PiSessionHashIndex } from './correlate';
+import { isMemoryWriteToolName } from './memory-write-detector';
 import {
   presenceRootFor,
   readPresenceActivity,
@@ -433,6 +434,40 @@ export class PiPresenceSource implements ActivitySource {
             toolLabel: item.name,
           }),
         );
+        // F3: a subagent's activity lives ONLY in this registry, never in the orchestrator
+        // transcript, so `parse.ts` can never observe the subagent's `mem_save`. The
+        // `runningCalls` gate above is what makes this fire exactly once per CALL within one pump,
+        // never once per poll. The label is normalized to `mem_save` on THIS event, for contract
+        // consistency with the orchestrator's `PiMemoryWriteDetector` (whose
+        // `MemoryWriteSignal.toolLabel` is `'mem_save'`); the rendered caption is unaffected,
+        // because it comes from the `tool_start` event above, whose label is the RAW registry
+        // `item.name`. For the bare `mem_save` spelling the two coincide; for
+        // `mcp__engram__mem_save` the caption shows the prefixed name, and that asymmetry is by
+        // design on the orchestrator path too.
+        //
+        // "Exactly once" is per CALL within one pump only: a fresh pump on the same task would
+        // re-announce this. What keeps that harmless is the open-once wiring — `discover()`'s
+        // `seen` set and `ingestAgentActivity` as the only `open()` call site — never the event's
+        // own nature.
+        //
+        // `title`, `topicKey` and `observationType` stay ABSENT: a registry item is
+        // `{kind,callId,name,output,running,isError}` and carries no tool arguments, so there is
+        // nothing honest to put there — never a title synthesized from the tool name.
+        //
+        // Documented limitation: a `mem_save` that COMPLETED before this pump's first read is
+        // never observed at all (the cursor starts empty and the `tool_end` branch only fires for a
+        // call it previously saw open). This covers saves a running subagent makes while the office
+        // watches, not ones that finished before the server started.
+        if (isMemoryWriteToolName(item.name)) {
+          events.push(
+            createMemoryWriteEvent(this.allocateId(), {
+              harness: 'pi',
+              sessionKey,
+              at,
+              toolLabel: 'mem_save',
+            }),
+          );
+        }
         continue;
       }
       if (!item.running && open) {

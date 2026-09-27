@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { AgentEvent } from '../../../domain/events/types';
+import type { AgentEvent, MemoryWriteEvent } from '../../../domain/events/types';
 import { applyEventToOfficeState, createOfficeState } from '../../../domain/office/office';
 import { PiSessionHashIndex } from './correlate';
 import { presenceActivityFileName, presenceHeaderFileName, type PresenceTaskStatus } from './presence-read';
@@ -483,6 +483,106 @@ describe('PiPresenceSource', () => {
     expect(ended.reason).toBeDefined();
 
     stream.stop();
+    await source.close();
+  });
+
+  /** One registry thread item, matching the presence-read shape `{kind,callId,name,output,running,isError}`. */
+  function toolItem(callId: string, name: string, running: boolean): unknown {
+    return { kind: 'tool', callId, name, output: '', running, isError: false };
+  }
+
+  /**
+   * F3 (13.1). A Pi subagent's activity exists ONLY in the presence registry, never in the
+   * orchestrator transcript, so `walkPiTranscript` can never see a subagent's `mem_save`. The
+   * presence source therefore emits the `memory_write` itself, IN ADDITION to the `tool_start`
+   * (spec: "mem_save produces both events"). The cursor's `runningCalls` gate is what makes it fire
+   * exactly once per call: republishing the SAME running call under a new thread version re-runs the
+   * diff, and a cursor that forgot the open call would emit a second `memory_write` on every poll.
+   */
+  it('emits memory_write in addition to tool_start for a subagent mem_save, exactly once per call (13.1)', async () => {
+    await makeHome();
+    await publish([task({ items: [toolItem('c1', 'mem_save', true)] })]);
+    const source = new PiPresenceSource(piHome, indexWithParent(), { cadenceMs: 20 });
+    const { stream, events } = await openTaskStream(source, 'pi:task:t1');
+
+    const toolStart = await nextEventWhere(events, (event) => event.kind === 'tool_start');
+    const write = await nextEventWhere(events, (event) => event.kind === 'memory_write');
+
+    expect(toolStart).toMatchObject({ kind: 'tool_start', toolLabel: 'mem_save' });
+    expect(write).toMatchObject({ kind: 'memory_write', toolLabel: 'mem_save' });
+    // The registry item carries no tool arguments, so nothing may be synthesized. (`AgentEvent`'s
+    // union collapses to `AgentEventBase` because `MemoryWriteEvent` extends it, so the narrowed
+    // value needs one local cast to reach its extra fields.)
+    const memoryWrite = write?.kind === 'memory_write' ? (write as MemoryWriteEvent) : undefined;
+    expect(memoryWrite).toBeDefined();
+    expect(memoryWrite?.title).toBeUndefined();
+    expect(memoryWrite?.topicKey).toBeUndefined();
+    expect(memoryWrite?.observationType).toBeUndefined();
+
+    // Same running call, new thread version: the diff re-runs, the cursor must not re-open it.
+    await publish([task({ threadVersion: 2, items: [toolItem('c1', 'mem_save', true)] })]);
+    const duplicate = await nextEventWhere(events, (event) => event.kind === 'memory_write', 500);
+    expect(duplicate).toBeUndefined();
+
+    stream.stop();
+    await source.close();
+  });
+
+  /** 13.2 adversarial twin: every other tool opens a call and never docks a file. */
+  it('never emits memory_write for a thread item that is not a mem_save (13.2)', async () => {
+    await makeHome();
+    await publish([
+      task({
+        items: [toolItem('c1', 'bash', true), toolItem('c2', 'read', true), toolItem('c3', 'edit', true)],
+      }),
+    ]);
+    const source = new PiPresenceSource(piHome, indexWithParent(), { cadenceMs: 20 });
+    const { stream, events } = await openTaskStream(source, 'pi:task:t1');
+
+    const opens: AgentEvent[] = [];
+    for (let i = 0; i < 3; i++) {
+      const next = await nextEventWhere(events, (event) => event.kind === 'tool_start');
+      if (next) opens.push(next);
+    }
+    expect(opens.map((event) => event.toolLabel)).toEqual(['bash', 'read', 'edit']);
+
+    const write = await nextEventWhere(events, (event) => event.kind === 'memory_write', 500);
+    expect(write).toBeUndefined();
+
+    stream.stop();
+    await source.close();
+  });
+
+  /** 13.3 the MCP-gateway spelling is accepted by the SAME predicate, and the label is normalized. */
+  it('matches the MCP-prefixed mem_save spelling and normalizes the label to mem_save (13.3)', async () => {
+    await makeHome();
+    await publish([task({ items: [toolItem('c1', 'mcp__engram__mem_save', true)] })]);
+    const source = new PiPresenceSource(piHome, indexWithParent(), { cadenceMs: 20 });
+    const { stream, events } = await openTaskStream(source, 'pi:task:t1');
+
+    const write = await nextEventWhere(events, (event) => event.kind === 'memory_write');
+
+    expect(write).toMatchObject({ kind: 'memory_write', toolLabel: 'mem_save' });
+
+    stream.stop();
+    await source.close();
+  });
+
+  /**
+   * 13.6 seam, mirroring the 11.6 fold test: an event that never reaches the office would be no fix
+   * at all. The subagent's `mem_save` has to occupy a real archive docking slot once folded.
+   */
+  it('docks an archive slot when the subagent memory_write is folded into OfficeState (13.6 seam)', async () => {
+    await makeHome();
+    await publish([task({ items: [toolItem('c1', 'mem_save', true)] })]);
+    const source = new PiPresenceSource(piHome, indexWithParent('/Users/dev/pixel-agents'), { cadenceMs: 20 });
+
+    const events = await drain(source, 'pi:task:t1', 5);
+
+    let state = createOfficeState();
+    for (const event of events) state = applyEventToOfficeState(state, event);
+
+    expect(state.archive.slots.some((slot) => slot.occupiedBySessionKey === 'pi:task:t1')).toBe(true);
     await source.close();
   });
 

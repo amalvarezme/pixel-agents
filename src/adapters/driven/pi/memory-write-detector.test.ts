@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PiMemoryWriteDetector } from './memory-write-detector';
+import { isMemoryWriteToolName, PiMemoryWriteDetector } from './memory-write-detector';
 import type { PiToolCallPart } from './parse';
 
 const detector = new PiMemoryWriteDetector();
@@ -61,5 +61,24 @@ describe('PiMemoryWriteDetector', () => {
 
   it('ignores a non-string title rather than coercing it', () => {
     expect(detector.detect(toolCall('mem_save', { title: 42 }))?.title).toBeUndefined();
+  });
+});
+
+// The exported predicate is the ONE tool-name contract shared by the orchestrator detector (above)
+// and the subagent presence source (`presence-source.ts`). Pinned here so a future regex edit that
+// silently stops covering the MCP-gateway spelling fails against the predicate itself, not only
+// through one of its two callers.
+describe('isMemoryWriteToolName (shared Pi memory-write tool-name predicate)', () => {
+  it('matches the bare spelling Pi writes and its MCP-gateway-prefixed form', () => {
+    expect(isMemoryWriteToolName('mem_save')).toBe(true);
+    expect(isMemoryWriteToolName('mcp__engram__mem_save')).toBe(true);
+  });
+
+  it('rejects near-misses: siblings, suffixes, prefixes and ordinary tools', () => {
+    expect(isMemoryWriteToolName('mem_search')).toBe(false);
+    expect(isMemoryWriteToolName('mem_save_prompt')).toBe(false);
+    expect(isMemoryWriteToolName('mcp__engram__mem_search')).toBe(false);
+    expect(isMemoryWriteToolName('bash')).toBe(false);
+    expect(isMemoryWriteToolName('')).toBe(false);
   });
 });
