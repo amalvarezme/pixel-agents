@@ -54,28 +54,57 @@ function idle(dir, t) {
   return { dir, bob, legs: restLegs(), arms, eyes: t === 4 ? 'closed' : 'open', mouth: 'neutral' };
 }
 
+/**
+ * Profile walk, as six AUTHORED key frames instead of one sine.
+ *
+ * A walk reads through its CONTACTS — the frames where both feet are on the floor and the stride is
+ * widest — and a sine has no such frames: it holds both feet at the same height at every phase, so
+ * the legs scissor through each other and the figure skates.
+ *
+ * What this gained: a 12px stride against the old 8 (a step you can see at 54px, not a shuffle), two
+ * real contact frames (0 and 3) with both feet planted, a stance leg that STAYS planted through the
+ * passing position, and a body that drops on the two recoil frames — the down/up pair that makes a
+ * walk read as weight instead of as a spin.
+ *
+ * Index 0 is the FAR leg (drawn first, darkened) and index 1 the NEAR one, the order `drawLegs` takes.
+ */
+const SIDE_WALK = [
+  { legs: [{ dx: 6, lift: 0 }, { dx: -6, lift: 0 }], bob: 0 }, // contact: widest stride, both planted
+  { legs: [{ dx: 4, lift: 0 }, { dx: -5, lift: 1 }], bob: -1 }, // recoil: the body drops onto the far foot
+  { legs: [{ dx: 1, lift: 0 }, { dx: 0, lift: 3 }], bob: 0 }, // passing: the near leg swings through, lifted
+  { legs: [{ dx: -6, lift: 0 }, { dx: 6, lift: 0 }], bob: 0 }, // contact, opposite legs
+  { legs: [{ dx: -5, lift: 1 }, { dx: 4, lift: 0 }], bob: -1 }, // recoil
+  { legs: [{ dx: 0, lift: 3 }, { dx: 1, lift: 0 }], bob: 0 }, // passing
+];
+
 function walk(dir, t) {
+  if (dir === 'side') {
+    const key = SIDE_WALK[t];
+    const base = restArms('side');
+    const arms = [0, 1].map((i) => {
+      // The arm counter-swings the leg on the OTHER side, derived from that leg rather than from a
+      // second sine, so the arms and the legs cannot drift apart in timing.
+      const swing = key.legs[1 - i].dx;
+      return offsetArm(base[i], Math.round(-swing * 0.6), 0, Math.round(-swing * 0.8), -Math.round(Math.abs(swing) / 3));
+    });
+    return { dir, bob: key.bob, legs: key.legs, arms, eyes: 'open', mouth: 'neutral' };
+  }
+
   const phase = (t / FRAMES) * TAU;
   const swing = Math.sin(phase);
   const bob = Math.abs(Math.cos(phase)) > 0.7 ? 0 : -1;
 
-  let legs;
-  if (dir === 'side') {
-    // In profile the legs travel along x; the leg swinging forward also lifts off the floor.
-    legs = [
-      { dx: Math.round(-swing * 4), lift: Math.max(0, Math.round(-swing * 2)) },
-      { dx: Math.round(swing * 4), lift: Math.max(0, Math.round(swing * 2)) },
-    ];
-  } else {
-    // Head-on there is no forward travel to show, so the cycle lives in the lift and a 1px stride.
-    legs = [
-      { dx: Math.round(swing), lift: Math.max(0, Math.round(swing * 3)) },
-      { dx: Math.round(-swing), lift: Math.max(0, Math.round(-swing * 3)) },
-    ];
-  }
+  // Head-on there is no forward travel to show, so the cycle lives in the lift and a 1px stride.
+  const legs = [
+    { dx: Math.round(swing), lift: Math.max(0, Math.round(swing * 3)) },
+    { dx: Math.round(-swing), lift: Math.max(0, Math.round(-swing * 3)) },
+  ];
 
   const base = restArms(dir);
-  const reach = dir === 'side' ? 3 : 1;
+  // 1px, not the profile's 3: head-on there is no forward travel to show, so an arm swinging 3px
+  // sideways reads as a shrug. Left exactly as it was — this clip is not one of the four the
+  // maintainer asked to re-time, and the row-level diff proves it stays byte-identical.
+  const reach = 1;
   const arms = [
     offsetArm(base[0], Math.round(swing * reach), 0, Math.round(swing * (reach + 1)), Math.round(-Math.abs(swing))),
     offsetArm(base[1], Math.round(-swing * reach), 0, Math.round(-swing * (reach + 1)), Math.round(-Math.abs(swing))),
@@ -84,24 +113,35 @@ function walk(dir, t) {
   return { dir, bob, legs, arms, eyes: 'open', mouth: 'neutral' };
 }
 
-/** Hands on a surface that belongs to the ENVIRONMENT, not to the sprite (v2 sprites are
- * furniture-free) — so the pose has to imply the desk purely through where the hands stop. */
+/**
+ * Typing at a keyboard that belongs to the ENVIRONMENT, not to the sprite (v2 sprites are
+ * furniture-free), so the pose implies the desk purely through where the hands stop.
+ *
+ * What it gained: the tick is a real two-frame alternation instead of a one-pixel jitter. The
+ * pressing hand drops 4px onto the keys, the SHOULDER above it drops a pixel with it — the micro-move
+ * that makes the hands look attached to a body rather than pasted over one — and the hand that is not
+ * pressing rides a pixel higher. At 9 fps that reads as a regular keystroke; before, the difference
+ * between the two states was small enough to disappear at draw size.
+ *
+ * Still six frames, still `dir: 'up'`: at the desk the worker faces its laptop with its back to the
+ * room, so the whole read is elbows and shoulder blades.
+ */
 function typing(t) {
   const base = restArms('up');
-  const tick = t % 2 === 0;
-  return {
-    dir: 'up',
-    bob: 0,
-    legs: restLegs(),
-    // Elbows tucked in and low, hands just below the waist line: from behind, a person at a
-    // keyboard is mostly a pair of tucked elbows. Reaching upward reads as surrender, not as work.
-    arms: [
-      offsetArm(base[0], 3, 2, 5, tick ? -1 : 0),
-      offsetArm(base[1], -3, 2, -5, tick ? 0 : -1),
-    ],
-    eyes: 'focus',
-    mouth: 'neutral',
+  const pressLeft = t % 2 === 0;
+
+  const arm = (i) => {
+    const rest = base[i];
+    const dx = i === 0 ? 3 : -3;
+    const down = (i === 0) === pressLeft;
+    return {
+      shoulder: [rest.shoulder[0] + dx, rest.shoulder[1] + (down ? 1 : 0)],
+      elbow: [rest.elbow[0] + dx, rest.elbow[1] + (down ? 2 : 1)],
+      hand: [rest.hand[0] + dx + 2, rest.hand[1] + (down ? 2 : -2)],
+    };
   };
+
+  return { dir: 'up', bob: 0, legs: restLegs(), arms: [arm(0), arm(1)], eyes: 'focus', mouth: 'neutral' };
 }
 
 /**
@@ -130,45 +170,119 @@ function work(t) {
   };
 }
 
+/**
+ * Talking, with a SHAPED mouth instead of an alternating one.
+ *
+ * What it gained: the old version flipped the mouth open/closed on every single frame (`t % 2`),
+ * which at 6 fps is a 3Hz flicker and reads as a twitch rather than as speech. Here the mouth opens
+ * for TWO frames, shuts for two, opens for one, shuts for one — three syllables per second-shaped
+ * loop instead of six irrelevant flips. The gesturing hand rides the same envelope as the mouth
+ * instead of an unrelated sine, so the two agree about where the emphasis is, and the body lifts a
+ * pixel on the stressed frames.
+ */
+const TALK_KEYS = [
+  { open: false, gesture: 0, bob: 0 }, // rest
+  { open: true, gesture: -3, bob: -1 }, // first stressed syllable: hand and head both come up
+  { open: true, gesture: -3, bob: -1 }, // held, so the mouth reads as OPEN FOR TWO FRAMES
+  { open: false, gesture: -1, bob: 0 }, // settle
+  { open: true, gesture: -2, bob: 0 }, // second, shorter syllable
+  { open: false, gesture: 0, bob: 0 }, // rest
+];
+
 function talk(dir, t) {
   const base = restArms(dir);
-  const open = t % 2 === 0;
-  const gesture = Math.round(Math.sin((t / FRAMES) * TAU) * 2);
+  const key = TALK_KEYS[t];
   return {
     dir,
-    bob: open ? 0 : -1,
+    bob: key.bob,
     legs: restLegs(),
-    arms: [base[0], offsetArm(base[1], -2, -4 + gesture, -3, -6 + gesture)],
+    arms: [base[0], offsetArm(base[1], -2, key.gesture - 2, -3, key.gesture - 4)],
     eyes: 'open',
-    mouth: open ? 'talk' : 'neutral',
+    mouth: key.open ? 'talk' : 'neutral',
   };
 }
 
-/** The archive gesture. The scene pins this to `up`, so the raised arm has to read from behind. */
+/**
+ * The archive gesture. The scene pins this to `up`, so the raised arm has to read from behind.
+ *
+ * What it gained: anticipation and follow-through. The old clip was three monotone steps (0, -1, -2
+ * spread over six frames) — the arm crept upward, never snapped, and never settled. Now it winds
+ * DOWN past rest for two frames, takes most of its travel in one frame (the snap that makes a
+ * gesture read as deliberate), overshoots the target by two pixels, and comes back onto it: five
+ * distinct poses where there used to be three barely distinguishable ones.
+ *
+ * `k` interpolates the raised arm between rest (0) and full extension (1), so a negative k is a
+ * wind-up below rest and k above 1 an overshoot past it.
+ */
+const POINT_KEYS = [
+  { k: -0.1, bob: 0 }, // wind-up: the arm drops below rest before it lifts
+  { k: -0.2, bob: 0 }, // deepest anticipation, hand down by the thigh
+  { k: 0.65, bob: -1 }, // the snap: most of the travel happens in this one frame
+  { k: 0.96, bob: -1 }, // arrives just short of full extension
+  { k: 1.12, bob: -1 }, // overshoot, two pixels beyond the target
+  { k: 1.0, bob: 0 }, // follow-through, settling onto the target
+];
+
 function point(dir, t) {
   const base = restArms(dir);
-  const reach = t < 2 ? 0 : t < 4 ? -1 : -2;
+  const key = POINT_KEYS[t];
+  const rest = base[1];
+  const full = { elbow: [rest.elbow[0] + 1, rest.elbow[1] - 9], hand: [rest.hand[0] + 3, rest.hand[1] - 18] };
+  const at = (a, b) => Math.round(a + (b - a) * key.k);
+
   const raised = {
-    shoulder: base[1].shoulder,
-    elbow: [base[1].elbow[0] + 1, base[1].elbow[1] - 9],
-    hand: [base[1].hand[0] + 3, base[1].hand[1] - 18 + reach],
+    shoulder: rest.shoulder,
+    elbow: [at(rest.elbow[0], full.elbow[0]), at(rest.elbow[1], full.elbow[1])],
+    hand: [at(rest.hand[0], full.hand[0]), at(rest.hand[1], full.hand[1])],
   };
-  return { dir, bob: reach === -2 ? -1 : 0, legs: restLegs(), arms: [base[0], raised], eyes: 'open', mouth: 'neutral' };
+  // The free arm dips a pixel during the wind-up: an arm that does nothing at all while the other
+  // one throws itself upward is what makes a gesture look pasted onto the body.
+  const free = key.k < 0 ? offsetArm(base[0], 0, 1, 0, 1) : base[0];
+
+  return { dir, bob: key.bob, legs: restLegs(), arms: [free, raised], eyes: 'open', mouth: 'neutral' };
 }
+
+/**
+ * The one-shot celebration. `loop: false`, so frame 5 is where it RESTS — the runtime holds the last
+ * frame rather than wrapping.
+ *
+ * What it gained: anticipation, a real jump, and follow-through. The old clip raised the arms across
+ * its first two frames and then held, which is a pose and not a movement. Now frame 1 winds the arms
+ * down and back past rest, frame 2 throws them up as the feet leave the floor, frame 3 is the apex
+ * with the arms overshooting past vertical, frame 4 hangs there, and frame 5 lands and settles back
+ * onto rest. The `lift` is why it reads as a jump at all: the whole body rises AND both feet tuck.
+ */
+const CELEBRATE_KEYS = [
+  { raise: 0, lift: 0, bob: 0, eyes: 'open' }, // ready
+  { raise: -0.18, lift: 0, bob: 0, eyes: 'open' }, // anticipation: arms swing down and back
+  { raise: 0.6, lift: 1, bob: -1, eyes: 'closed' }, // launch: arms thrown up, feet leave the floor
+  { raise: 1.18, lift: 2, bob: -2, eyes: 'closed' }, // apex, arms overshooting past vertical
+  { raise: 1.0, lift: 1, bob: -1, eyes: 'closed' }, // hangs at the top
+  { raise: 0.1, lift: 0, bob: 0, eyes: 'open' }, // landing, arms travelling back to rest
+];
 
 function celebrate(t) {
   const base = restArms('down');
-  const up = t < 2 ? 0 : t < 4 ? -3 : -2;
-  const lift = t >= 2 && t < 5 ? -2 : 0;
+  const key = CELEBRATE_KEYS[t];
+  const at = (a, b) => Math.round(a + (b - a) * key.raise);
+
+  const arm = (side) => {
+    const rest = base[side];
+    const elbow = [rest.elbow[0], rest.elbow[1] - 11];
+    const hand = [rest.hand[0] + (side === 0 ? -2 : 2), rest.hand[1] - 25];
+    return {
+      shoulder: rest.shoulder,
+      elbow: [at(rest.elbow[0], elbow[0]), at(rest.elbow[1], elbow[1])],
+      hand: [at(rest.hand[0], hand[0]), at(rest.hand[1], hand[1])],
+    };
+  };
+
   return {
     dir: 'down',
-    bob: lift,
-    legs: restLegs(),
-    arms: [
-      { shoulder: base[0].shoulder, elbow: [21, 26 + up], hand: [20, 18 + up] },
-      { shoulder: base[1].shoulder, elbow: [43, 26 + up], hand: [44, 18 + up] },
-    ],
-    eyes: 'closed',
+    bob: key.bob,
+    legs: restLegs().map(() => ({ dx: 0, lift: key.lift })),
+    arms: [arm(0), arm(1)],
+    eyes: key.eyes,
     mouth: 'smile',
   };
 }
