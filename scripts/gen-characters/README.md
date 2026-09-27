@@ -45,8 +45,9 @@ sense of scale rides on them.
   build-time job whose output is committed.
 - `pixel.mjs` — the canvas, plus the auto-outline and shading passes that make composed shapes read
   as pixel art.
-- `palette.mjs` — the four characters: colours and silhouette features. Silhouette first, one
-  saturated accent each on a desaturated base.
+- `palette.mjs` — the six characters: colours and silhouette features. Silhouette first, one
+  saturated accent each on a desaturated base. Its own `CHARACTER_IDS` export is GENERATION order
+  only; the runtime hash table lives in `src/ui/scene/character/character-sprite.ts`.
 - `body.mjs` — the skeleton and every drawing decision.
 - `poses.mjs` — the 16 clips as functions from frame index to pose.
 - `index.mjs` — assembly and output.
