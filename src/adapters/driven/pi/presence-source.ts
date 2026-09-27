@@ -99,6 +99,18 @@ interface TaskCursor {
   status: string | null;
   started: boolean;
   runningCalls: Set<string>;
+  /**
+   * The project path already ANNOUNCED for this task. Its job is to remember the value already
+   * announced so a late resolution fires exactly once and a known path is never erased.
+   *
+   * `null` does NOT distinguish "absent" from "not yet read" — it is `null` both at construction
+   * and after announcing an absent path. The sibling `started` flag is what makes that distinction.
+   *
+   * A path counts as present when the parent transcript's `cwd` is non-empty (`cwd.length > 0` in
+   * `PiSessionHashIndex.register`), so a WHITESPACE-ONLY cwd (`'  '`) IS recorded and therefore
+   * announced. Only `undefined`, `null`, and the empty string are treated as absent.
+   */
+  announcedProjectPath: string | null;
 }
 
 export class PiPresenceSource implements ActivitySource {
@@ -252,7 +264,13 @@ export class PiPresenceSource implements ActivitySource {
     state: PumpState,
   ): Promise<void> {
     const taskKey = taskKeyOf(session.activationKey, session.taskId);
-    const cursor: TaskCursor = { threadVersion: -1, status: null, started: false, runningCalls: new Set() };
+    const cursor: TaskCursor = {
+      threadVersion: -1,
+      status: null,
+      started: false,
+      runningCalls: new Set(),
+      announcedProjectPath: null,
+    };
     let checkpoint: GenerationCheckpoint = initial;
 
     while (!state.stopped && !this.closed) {
@@ -289,9 +307,14 @@ export class PiPresenceSource implements ActivitySource {
     // Pi's own activity clock, never the moment this scan ran (spec: "Event time is the task's
     // activity clock").
     const at = task.summary.lastActivityAt;
+    // Finding F2: a registry header names a project, never a path, so the subagent's own events
+    // cannot state a project. The parent orchestrator's transcript DOES carry the real `cwd`, and
+    // the parent is already identified by the hash join — so this is a LOOKUP, not a guess.
+    const projectPath = this.sessionIndex.resolveProjectPath(entry.sessionHash);
 
     if (!cursor.started) {
       cursor.started = true;
+      cursor.announcedProjectPath = projectPath;
       events.push(
         createEventFromLogRecord(this.allocateId(), {
           kind: 'session_start',
@@ -300,6 +323,7 @@ export class PiPresenceSource implements ActivitySource {
           at,
           ...(task.summary.label.length > 0 ? { label: task.summary.label } : {}),
           agentProfile: profileFor(task),
+          ...(projectPath !== null ? { projectPath } : {}),
         }),
       );
 
@@ -317,6 +341,27 @@ export class PiPresenceSource implements ActivitySource {
           }),
         );
       }
+    } else if (projectPath !== null && projectPath !== cursor.announcedProjectPath) {
+      // Ordering hazard (src/server.ts): the presence source can drain a subagent BEFORE its
+      // parent transcript has been registered, so a lookup that was absent on the first poll may
+      // resolve LATE. The absence announced earlier must not be cached forever. Re-announce the
+      // FULL identity — `SessionLifecycleCoordinator.observe` REPLACES its retained
+      // `SessionIdentity` wholesale from a `session_start`, so a path-only event would silently
+      // erase the worker's label and profile. A `parent` event is never duplicated: it is emitted
+      // only in the first-run branch above, and a session whose hash already resolved there has
+      // already carried its edge.
+      cursor.announcedProjectPath = projectPath;
+      events.push(
+        createEventFromLogRecord(this.allocateId(), {
+          kind: 'session_start',
+          harness: 'pi',
+          sessionKey,
+          at,
+          ...(task.summary.label.length > 0 ? { label: task.summary.label } : {}),
+          agentProfile: profileFor(task),
+          projectPath,
+        }),
+      );
     }
 
     // Status BEFORE the thread diff: the office should learn what this worker IS (queued, running,

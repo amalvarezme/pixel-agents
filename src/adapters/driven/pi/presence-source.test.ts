@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../../../domain/events/types';
+import { applyEventToOfficeState, createOfficeState } from '../../../domain/office/office';
 import { PiSessionHashIndex } from './correlate';
 import { presenceActivityFileName, presenceHeaderFileName, type PresenceTaskStatus } from './presence-read';
 import { PiPresenceSource } from './presence-source';
@@ -79,9 +80,9 @@ describe('PiPresenceSource', () => {
     generation = 0;
   }
 
-  function indexWithParent(): PiSessionHashIndex {
+  function indexWithParent(parentCwd: string | null = null): PiSessionHashIndex {
     const index = new PiSessionHashIndex();
-    index.register(PARENT_SESSION_ID);
+    index.register(PARENT_SESSION_ID, parentCwd);
     return index;
   }
 
@@ -103,6 +104,42 @@ describe('PiPresenceSource', () => {
     }
     stream.stop();
     return events;
+  }
+
+  /** Opens a task's stream and keeps its iterator, for tests that must act BETWEEN two events. */
+  async function openTaskStream(source: PiPresenceSource, sessionKey: string) {
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    let ref = (await iterator.next()).value;
+    while (ref && ref.sessionKey !== sessionKey) ref = (await iterator.next()).value;
+    const stream = source.open(ref!, null);
+    return { stream, events: stream.events[Symbol.asyncIterator]() };
+  }
+
+  /** The next event, or `undefined` if none arrives within `timeoutMs`. */
+  async function nextEvent(
+    events: AsyncIterator<{ event: AgentEvent }>,
+    timeoutMs = 1_500,
+  ): Promise<AgentEvent | undefined> {
+    return Promise.race([
+      events.next().then((result) => result.value?.event),
+      new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
+    ]);
+  }
+
+  /** Reads past events this test does not care about until `predicate` matches, or the bound elapses. */
+  async function nextEventWhere(
+    events: AsyncIterator<{ event: AgentEvent }>,
+    predicate: (event: AgentEvent) => boolean,
+    timeoutMs = 2_000,
+  ): Promise<AgentEvent | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return undefined;
+      const event = await nextEvent(events, remaining);
+      if (!event) return undefined;
+      if (predicate(event)) return event;
+    }
   }
 
   afterEach(async () => {
@@ -182,6 +219,151 @@ describe('PiPresenceSource', () => {
 
     expect(events[0]?.kind).toBe('session_start');
     expect(events.some((event) => event.kind === 'parent')).toBe(false);
+    await source.close();
+  });
+
+  /**
+   * F2 (phantom second project). A Pi subagent's registry header carries a project NAME, never a
+   * path, so the subagent's own events cannot state a project. But the PARENT orchestrator's
+   * transcript DOES carry the real `cwd`, and the parent is already identified by the hash join —
+   * so inheriting that known path is a lookup, not a guess. Without it the subagent renders as
+   * `Unknown` and the roster reports a phantom second project.
+   */
+  it("inherits the resolved parent's real project path onto the subagent's session_start", async () => {
+    await makeHome();
+    await publish([task()]);
+    const source = new PiPresenceSource(piHome, indexWithParent('/Users/dev/pixel-agents'), { cadenceMs: 20 });
+
+    const events = await drain(source, 'pi:task:t1', 1);
+
+    expect(events[0]).toMatchObject({
+      kind: 'session_start',
+      sessionKey: 'pi:task:t1',
+      projectPath: '/Users/dev/pixel-agents',
+    });
+    await source.close();
+  });
+
+  it('invents no project path when the parent hash does not resolve (adversarial twin)', async () => {
+    await makeHome();
+    await publish([task()]);
+    const source = new PiPresenceSource(piHome, new PiSessionHashIndex(), { cadenceMs: 20 });
+
+    const events = await drain(source, 'pi:task:t1', 1);
+
+    expect(events[0]?.kind).toBe('session_start');
+    expect(events[0]?.projectPath).toBeUndefined();
+    await source.close();
+  });
+
+  it('invents no project path when the parent resolved but its transcript yielded no cwd (adversarial twin)', async () => {
+    await makeHome();
+    await publish([task()]);
+    const source = new PiPresenceSource(piHome, indexWithParent(null), { cadenceMs: 20 });
+
+    const events = await drain(source, 'pi:task:t1', 1);
+
+    expect(events[0]?.kind).toBe('session_start');
+    expect(events[0]?.projectPath).toBeUndefined();
+    await source.close();
+  });
+
+  /**
+   * 11.6 seam. The roster reads `OfficeState`, so the RED has to live where the real events meet
+   * that fold: once the subagent's `session_start` carries the parent's path, `applyEventToOfficeState`
+   * attributes BOTH workers to the same project. Before the fix `events[0].projectPath` is absent,
+   * the subagent lands under `Unknown`, and the roster reports a phantom second project for one
+   * real one (`2 PROJECTS` for a single checkout). The office fold itself never changes — the path
+   * crosses the boundary as an ordinary event field.
+   */
+  it('attributes the subagent to the orchestrator project once folded into OfficeState (11.6 seam)', async () => {
+    await makeHome();
+    await publish([task()]);
+    const source = new PiPresenceSource(piHome, indexWithParent('/Users/dev/pixel-agents'), { cadenceMs: 20 });
+
+    const events = await drain(source, 'pi:task:t1', 1);
+
+    let state = createOfficeState();
+    // The orchestrator's OWN session_start (PiActivitySource) already carries the real cwd.
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'pi',
+      sessionKey: `pi:${PARENT_SESSION_ID}`,
+      at: 1_000,
+      projectPath: '/Users/dev/pixel-agents',
+      agentProfile: { role: 'orchestrator' },
+    });
+    state = applyEventToOfficeState(state, events[0]!);
+
+    expect(state.workers.get(`pi:${PARENT_SESSION_ID}`)?.projectPath).toBe('/Users/dev/pixel-agents');
+    expect(state.workers.get('pi:task:t1')?.projectPath).toBe('/Users/dev/pixel-agents');
+    await source.close();
+  });
+
+  /**
+   * Ordering hazard (src/server.ts:135-137): the presence source can drain a subagent BEFORE its
+   * parent transcript has been registered. The inherited path is a LOOKUP that may resolve late,
+   * so the source must not cache the earlier absence forever. The re-announced `session_start`
+   * carries the full identity (label/profile + projectPath), because the lifecycle coordinator
+   * replaces its retained SessionIdentity from that event.
+   */
+  it('inherits the parent project path when the parent is registered only AFTER the subagent is drained', async () => {
+    await makeHome();
+    await publish([task()]);
+    const index = new PiSessionHashIndex();
+    const source = new PiPresenceSource(piHome, index, { cadenceMs: 20 });
+    const { stream, events } = await openTaskStream(source, 'pi:task:t1');
+
+    const first = await nextEvent(events);
+    expect(first?.kind).toBe('session_start');
+    expect(first?.projectPath).toBeUndefined();
+
+    // The parent becomes resolvable now — after the subagent's first session_start already went out.
+    index.register(PARENT_SESSION_ID, '/Users/dev/pixel-agents');
+
+    const inherited = await nextEventWhere(
+      events,
+      (event) => event.kind === 'session_start' && event.projectPath !== undefined,
+    );
+
+    expect(inherited?.projectPath).toBe('/Users/dev/pixel-agents');
+    expect(inherited?.label).toBe('apply work unit 2');
+    stream.stop();
+    await source.close();
+  });
+
+  /**
+   * Triangulation on the same late-resolution path: the re-announcement must happen AT MOST once
+   * per newly resolved value. Because the pump re-reads the registry on every cadence, a cursor
+   * that forgot the value it already announced would re-emit the FULL identity on every poll — a
+   * stream of duplicate `session_start`s that resets the office worker's identity each time. The
+   * value never changes here, so the pump must go quiet after the one re-announcement.
+   */
+  it('re-announces the inherited path at most once, never on every poll', async () => {
+    await makeHome();
+    await publish([task()]);
+    const index = new PiSessionHashIndex();
+    const source = new PiPresenceSource(piHome, index, { cadenceMs: 20 });
+    const { stream, events } = await openTaskStream(source, 'pi:task:t1');
+
+    await nextEvent(events); // the first session_start, before the parent resolves
+    index.register(PARENT_SESSION_ID, '/Users/dev/pixel-agents');
+
+    const inherited = await nextEventWhere(
+      events,
+      (event) => event.kind === 'session_start' && event.projectPath !== undefined,
+    );
+    expect(inherited?.projectPath).toBe('/Users/dev/pixel-agents');
+
+    // A second identical announcement would mean the cursor never remembered the value.
+    const duplicate = await nextEventWhere(
+      events,
+      (event) => event.kind === 'session_start' && event.projectPath !== undefined,
+      500,
+    );
+    expect(duplicate).toBeUndefined();
+    stream.stop();
     await source.close();
   });
 

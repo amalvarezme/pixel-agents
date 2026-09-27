@@ -342,6 +342,73 @@ describe('SessionLifecycleCoordinator re-admission after a timeout eviction', ()
     });
   });
 
+  /**
+   * 11.4 (Finding F2). The INHERITED project path is not special-cased anywhere: it rides the very
+   * same `session_start` identity the coordinator already records, so a Pi subagent evicted for
+   * going quiet and revived by fresh activity is republished WITH its project. This is a GUARD —
+   * `observe()` already copies `projectPath` into `SessionIdentity` wholesale, so it passes from the
+   * first run; the adversarial twin below proves the property is not vacuous by showing that the
+   * one delivery path that does NOT populate identity (`parent`, which returns early) does not
+   * survive.
+   */
+  it('republishes an INHERITED projectPath when an evicted subagent is re-admitted (11.4 guard)', () => {
+    const { coordinator, publish } = evictedCoordinator('pi:task:t1', {
+      ...sessionStart('pi:task:t1', 'pi', 0),
+      label: 'apply work unit 2',
+      projectPath: '/Users/dev/pixel-agents',
+      agentProfile: { role: 'subagent', agentType: 'sdd-apply' },
+    });
+
+    coordinator.observe(toolStart('pi:task:t1', 'pi', EVICT_TIMEOUT_MS + 60_000));
+
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({
+      kind: 'session_start',
+      sessionKey: 'pi:task:t1',
+      label: 'apply work unit 2',
+      projectPath: '/Users/dev/pixel-agents',
+    });
+  });
+
+  /**
+   * Adversarial twin of 11.4. A `parent` event is STRUCTURE, never discovery, so a `projectPath`
+   * delivered ONLY on a `parent` event never becomes the session's retained identity and must NOT
+   * be republished on re-admission.
+   *
+   * What makes this hold is NOT the `if (event.kind === 'parent') return;` early return — removing
+   * that line leaves this test GREEN. The `parent` event lands while the session is still untracked
+   * (the `!tracked` early return), and `SessionIdentity` is only ever assigned wholesale by a
+   * `session_start`, so a `parent` event's `projectPath` is never read at all. The early return
+   * itself is pinned by two pre-existing liveness tests (`does not let a synthesized parent event
+   * rescue a session from eviction`, `does not let a parent event revive an evicted session`), both
+   * of which go RED once it is removed.
+   *
+   * So this twin pins the OBSERVABLE property — the path that survives re-admission is the one the
+   * SUBAGENT's own `session_start` carried, which is exactly where the presence source puts the
+   * inherited value — not the early-return mechanism. The structural reason is narrower:
+   * `SessionIdentity` is only ever assigned from a `session_start`.
+   */
+  it('does not let a parent-only projectPath survive re-admission (11.4 adversarial twin)', () => {
+    const { coordinator, publish, clock } = makeCoordinator();
+    coordinator.observe({
+      id: 9,
+      kind: 'parent',
+      harness: 'pi',
+      sessionKey: 'pi:task:t1',
+      at: 0,
+      correlationId: 'pi:parent',
+      projectPath: '/Users/dev/pixel-agents',
+    });
+    coordinator.observe(sessionStart('pi:task:t1', 'pi', 0));
+    clock.set(EVICT_TIMEOUT_MS);
+    coordinator.tick();
+    publish.mockClear();
+
+    coordinator.observe(toolStart('pi:task:t1', 'pi', EVICT_TIMEOUT_MS + 60_000));
+
+    expect(publish.mock.calls[0]?.[0]).toMatchObject({ kind: 'session_start', sessionKey: 'pi:task:t1' });
+    expect(publish.mock.calls[0]?.[0]?.projectPath).toBeUndefined();
+  });
+
   it('re-ages the re-admitted session from the event that revived it, so it can be evicted again', () => {
     const { coordinator, publish, clock } = evictedCoordinator();
     const revivedAt = EVICT_TIMEOUT_MS + 60_000;

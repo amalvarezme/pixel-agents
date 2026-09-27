@@ -18,15 +18,39 @@ import { createHash } from 'node:crypto';
 export class PiSessionHashIndex {
   /** `sha256(sessionId) -> sessionId`. Built forwards, read backwards. */
   private readonly bySessionHash = new Map<string, string>();
+  /** `sessionId -> cwd`, recorded alongside the hash join so a subagent can INHERIT its parent's
+   * real project path (Finding F2). A registry header names a project, never a path, so the parent
+   * transcript's own `cwd` is the only honest source — and the parent is already identified by the
+   * hash join, which makes this a lookup rather than a guess. */
+  private readonly cwdBySessionId = new Map<string, string>();
 
-  /** Idempotent: re-registering an already-known session is a no-op, not a duplicate. */
-  register(sessionId: string): void {
+  /**
+   * Idempotent for the hash join: re-registering an already-known session is a no-op, not a
+   * duplicate. A `cwd` counts as present when it is non-empty (`cwd.length > 0`), so a
+   * WHITESPACE-ONLY reading (`'  '`) IS recorded; only `undefined`, `null`, and the empty string are
+   * treated as absent — "no path this time", never "the path went away", so they must not erase one
+   * already known. A later present `cwd` DOES replace an earlier one (merge-not-erase, mirroring the
+   * domain's own discipline).
+   */
+  register(sessionId: string, cwd?: string | null): void {
     this.bySessionHash.set(createHash('sha256').update(sessionId).digest('hex'), sessionId);
+    if (cwd !== undefined && cwd !== null && cwd.length > 0) this.cwdBySessionId.set(sessionId, cwd);
   }
 
   /** The bare session id for a registry `sessionHash`, or `null` when no known session hashes to it. */
   resolve(sessionHash: string): string | null {
     return this.bySessionHash.get(sessionHash) ?? null;
+  }
+
+  /**
+   * The resolved parent's OWN known project path for a registry `sessionHash`, or `null`. `null`
+   * covers both "no known session hashes to this" and "the session is known but its transcript
+   * yielded no cwd" — absence either way, never a fabricated path.
+   */
+  resolveProjectPath(sessionHash: string): string | null {
+    const sessionId = this.resolve(sessionHash);
+    if (sessionId === null) return null;
+    return this.cwdBySessionId.get(sessionId) ?? null;
   }
 
   /**

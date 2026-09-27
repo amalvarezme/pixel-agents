@@ -134,8 +134,11 @@ function buildSources(
         replayFromStart: REPLAY_FROM_START,
         // Feeds the hash index BEFORE the presence source can need it: a subagent whose parent has
         // not been registered yet simply publishes no `parent` event and is promoted by the agent
-        // tree's orphan grace, so ordering degrades correlation rather than breaking it.
-        onSessionDiscovered: (ref) => piSessionIndex.register(ref.sessionId),
+        // tree's orphan grace, so ordering degrades correlation rather than breaking it. The
+        // parent's `cwd` travels WITH the id (Finding F2): it is the only honest source for the
+        // project path a Pi subagent inherits, since the presence registry names a project, never a
+        // path. A discovery whose cwd is absent registers the id alone, exactly as before.
+        onSessionDiscovered: (ref) => piSessionIndex.register(ref.sessionId, ref.cwd ?? undefined),
       }),
     );
     const presenceSource = new PiPresenceSource(PI_HOME, piSessionIndex, { allocateId, now: clock.now });

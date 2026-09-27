@@ -71,6 +71,36 @@ describe('buildProjectRoster', () => {
     expect(view.rows[0]?.project).toBe('pixel-agents');
   });
 
+  /**
+   * 11.6 adversarial twin (the PRE-FIX symptom). A Pi subagent's registry header names a project,
+   * never a path, so before it inherits the orchestrator's path it arrives with NO `projectPath`
+   * and the roster files it under `Unknown` — a phantom SECOND project for one real checkout, the
+   * live `2 PROJECTS · 4 AGENTS` reading. This test documents that symptom; the companion below is
+   * the post-fix half, where the inherited path collapses the two into one row.
+   */
+  it('counts an unattributed subagent as its own project — the phantom second project the fix removes (11.6 adversarial twin)', () => {
+    const view = buildProjectRoster([
+      worker({ projectPath: '/a/pixel-agents', role: 'orchestrator', activity: 'working' }),
+      worker({ role: 'subagent', activity: 'working' }),
+    ]);
+
+    expect(view.totalProjects).toBe(2);
+    expect(view.totalAgents).toBe(2);
+    expect(view.rows.map((row) => row.project)).toContain('Unknown');
+  });
+
+  it('collapses an orchestrator and its path-inheriting subagent into ONE project, never a phantom second (11.6)', () => {
+    const view = buildProjectRoster([
+      worker({ projectPath: '/a/pixel-agents', role: 'orchestrator', activity: 'working' }),
+      worker({ projectPath: '/a/pixel-agents', role: 'subagent', activity: 'working' }),
+    ]);
+
+    expect(view.rows).toHaveLength(1);
+    expect(view.totalProjects).toBe(1);
+    expect(view.totalAgents).toBe(2);
+    expect(view.rows[0]).toMatchObject({ project: 'pixel-agents', orchestrators: 1, subagents: 1, working: 2 });
+  });
+
   it('carries the character the scene draws that project as', () => {
     const view = buildProjectRoster([worker({ projectPath: '/a/pixel-agents' })]);
 

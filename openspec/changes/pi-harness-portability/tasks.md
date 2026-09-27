@@ -250,22 +250,34 @@ removed without a failure indication").
 
 ### Finding F2 — a Pi subagent inherits its orchestrator's project
 
-- [ ] 11.1 RED: `presence-source.test.ts` — once the parent hash resolves and the parent session's
+- [x] 11.1 RED: `presence-source.test.ts` — once the parent hash resolves and the parent session's
       cwd is known, the subagent's events carry the parent's real `projectPath`.
-- [ ] 11.2 RED: adversarial twin — when the hash does not resolve, or the parent transcript yielded
+- [x] 11.2 RED: adversarial twin — when the hash does not resolve, or the parent transcript yielded
       no cwd, `projectPath` stays absent. Never a guess.
-- [ ] 11.3 RED: a subagent discovered BEFORE its parent is registered still receives the inherited
+- [x] 11.3 RED: a subagent discovered BEFORE its parent is registered still receives the inherited
       `projectPath` once the parent becomes resolvable. The source must not cache `undefined`
       permanently (the ordering hazard documented at `server.ts:135-137`).
-- [ ] 11.4 RED: the inherited `projectPath` rides an event `SessionLifecycleCoordinator` records into
-      `SessionIdentity`, so a re-admission after eviction republishes it. A `parent`-only delivery
-      does not survive, because `observe()` returns early for `parent` events.
-- [ ] 11.5 GREEN: record each registered session's cwd in the parent index, and attach the parent's
+- [x] 11.4 GUARD, not RED: the inherited `projectPath` rides an event `SessionLifecycleCoordinator`
+      records into `SessionIdentity`, so a re-admission after eviction republishes it. No pre-fix
+      failure was observed — this is a GUARD that passes from the first run, and the mechanism was
+      already pinned by two pre-existing tests, `carries the original discovery identity back onto
+      the republished session_start` (unit) and `restores an evicted worker to the office snapshot…`
+      (integration), both of which go RED when `projectPath` is dropped from `SessionIdentity`. The
+      F2 value here is that it pins the Pi-harness variant over that already-existing mechanism. A
+      `parent`-only delivery is not republished either, but that is a structural consequence of
+      `SessionIdentity` never being read off a `parent` event (see the adversarial twin below), not
+      of `observe()`'s early return for `parent` events.
+- [x] 11.5 GREEN: record each registered session's cwd in the parent index, and attach the parent's
       project path to the subagent's identity once it resolves.
-- [ ] 11.6 RED+GREEN: the roster reports ONE project for one orchestrator plus its subagents — no
+- [x] 11.6 RED+GREEN: the roster reports ONE project for one orchestrator plus its subagents — no
       phantom `2 PROJECTS · 4 AGENTS` for a single real project.
-- [ ] 11.7 `presence-read.ts` MUST NOT change: the registry files genuinely contain no path, so
-      inheritance from the resolved parent is the only honest source.
+- [x] 11.7 `presence-read.ts` MUST NOT change, and did not. The registry genuinely holds no path:
+      the header's `label` is a project NAME (`pixel-agents`) and its `activity` carries task
+      summaries with no cwd column, so a reader that "found" one would be inventing it. The
+      inheritance lives entirely in `presence-source.ts` + `correlate.ts`, reading the resolved
+      parent's real `cwd` (which its own transcript DOES carry) through the already-known hash join.
+      Changing `presence-read.ts` would mean fabricating a path from a name — the exact guess F2 is
+      about not making.
 
 ### Verification for this unit
 
