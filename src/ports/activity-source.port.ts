@@ -60,12 +60,16 @@ export interface SeqCheckpoint {
 /**
  * Pi presence-registry checkpoint. The registry is a SNAPSHOT store, not an append-only log: Pi
  * rewrites `activity.json` atomically on every change, bumping a monotonic `generation`. There is
- * no offset and no sequence to resume from, so the checkpoint records what was last PUBLISHED.
+ * no offset and no sequence to resume from, so this records what was last PUBLISHED.
  *
- * Two currencies, for the same reason `SeqCheckpoint` carries two: `byActivation` decides WHEN a
- * registry file has content we have not seen, while `threadByTask` decides WHICH tasks inside it
- * actually changed. Without the second, one task's progress would republish every sibling task's
- * whole thread on the same tick.
+ * UNLIKE the other two kinds, this one is deliberately NOT load-bearing for resume. A byte offset
+ * says where a log was read to, and replaying from it would duplicate history; a snapshot has no
+ * history to duplicate, and every fact in it — this task exists, it is queued, that tool is still
+ * running — is CURRENT state that a freshly started process needs told to it again. So
+ * `PiPresenceSource.open()` re-announces the task and diffs from empty, and these fields serve as
+ * published progress rather than as a suppression gate. Seeding the cursor from them instead left
+ * live subagents invisible after a restart, because the checkpoint file outlives the in-memory
+ * office it was describing.
  */
 export interface GenerationCheckpoint {
   kind: 'generation';

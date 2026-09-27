@@ -231,9 +231,19 @@ export class PiPresenceSource implements ActivitySource {
   }
 
   /**
-   * Drives one task's diff loop. The cursor is seeded FROM the checkpoint, never from zero, so a
-   * resumed task does not republish its whole thread (the same rule `SeqCheckpoint.partsBySession`
-   * documents for OpenCode).
+   * Drives one task's diff loop.
+   *
+   * The cursor deliberately starts EMPTY on every `open()`, and is NOT seeded from the checkpoint.
+   * A snapshot registry is not a log: "resuming" it means re-reading the state it describes right
+   * now, not replaying history. The checkpoint survives a process restart but the office does not —
+   * it lives in memory — so treating a checkpoint as proof that a worker is already on the floor
+   * left live subagents invisible for as long as they kept running (found by restarting the server
+   * against a live registry, pinned by `re-announces a task on a fresh open ...`).
+   *
+   * `PiActivitySource.open()` has always re-announced its session for exactly this reason; this
+   * source now matches it. Re-announcing costs nothing, because `ingestAgentActivity` calls `open()`
+   * once per session per process, and every event it re-emits describes CURRENT state: the task
+   * exists, whose child it is, what state it is in, and which of its tool calls are still running.
    */
   private async pumpTask(
     session: PiTaskSessionRef,
@@ -242,15 +252,7 @@ export class PiPresenceSource implements ActivitySource {
     state: PumpState,
   ): Promise<void> {
     const taskKey = taskKeyOf(session.activationKey, session.taskId);
-    const resumedThreadVersion = initial.threadByTask?.[taskKey];
-    const resumedStatus = initial.statusByTask?.[taskKey] ?? null;
-    const cursor: TaskCursor = {
-      threadVersion: resumedThreadVersion ?? -1,
-      status: resumedStatus,
-      // A checkpoint that already names this task means its `session_start` was published before.
-      started: resumedThreadVersion !== undefined,
-      runningCalls: new Set(),
-    };
+    const cursor: TaskCursor = { threadVersion: -1, status: null, started: false, runningCalls: new Set() };
     let checkpoint: GenerationCheckpoint = initial;
 
     while (!state.stopped && !this.closed) {

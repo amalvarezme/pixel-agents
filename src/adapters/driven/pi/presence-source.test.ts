@@ -373,7 +373,18 @@ describe('PiPresenceSource', () => {
     await source.close();
   });
 
-  it('resumes from a supplied checkpoint without replaying the task it already published', async () => {
+  /**
+   * Caught by live verification, after a server restart: a checkpoint is NOT evidence that this
+   * task's worker still exists on the floor. The office lives in memory, so a restart empties it
+   * while the checkpoint file survives — and a task suppressed here stayed invisible for as long as
+   * it kept running, which is exactly the stale/missing-agent class this project has been burned by
+   * before.
+   *
+   * The presence registry is a SNAPSHOT store, so "resuming" it means re-reading current state, not
+   * replaying a log. `PiActivitySource.open()` has always re-announced its session for the same
+   * reason; this source now matches it.
+   */
+  it('re-announces a task on a fresh open even when the checkpoint already names it', async () => {
     await makeHome();
     await publish([task()]);
     const source = new PiPresenceSource(piHome, indexWithParent(), { cadenceMs: 20 });
@@ -387,14 +398,37 @@ describe('PiPresenceSource', () => {
       statusByTask: { [`${SESSION_HASH}.${INCARNATION}.t1`]: 'running' },
     });
 
-    const quiet = await Promise.race([
+    const first = await Promise.race([
       stream.events[Symbol.asyncIterator]()
         .next()
         .then((r) => r.value?.event.kind ?? 'none'),
-      new Promise<string>((resolve) => setTimeout(() => resolve('quiet'), 500)),
+      new Promise<string>((resolve) => setTimeout(() => resolve('quiet'), 800)),
     ]);
 
-    expect(quiet).toBe('quiet');
+    expect(first).toBe('session_start');
+    stream.stop();
+    await source.close();
+  });
+
+  it('re-announces the task\'s current lifecycle on that fresh open, not just its existence', async () => {
+    await makeHome();
+    await publish([task({ status: 'waiting' })]);
+    const source = new PiPresenceSource(piHome, indexWithParent(), { cadenceMs: 20 });
+
+    const iterator = source.discover()[Symbol.asyncIterator]();
+    const ref = (await iterator.next()).value;
+    const stream = source.open(ref!, {
+      kind: 'generation',
+      byActivation: { [`${SESSION_HASH}.${INCARNATION}`]: 1 },
+      threadByTask: { [`${SESSION_HASH}.${INCARNATION}.t1`]: 1 },
+      statusByTask: { [`${SESSION_HASH}.${INCARNATION}.t1`]: 'waiting' },
+    });
+
+    const events: AgentEvent[] = [];
+    const streamIterator = stream.events[Symbol.asyncIterator]();
+    for (let i = 0; i < 3; i++) events.push((await streamIterator.next()).value!.event);
+
+    expect(events.find((event) => event.kind === 'status')?.lifecycle).toBe('waiting');
     stream.stop();
     await source.close();
   });

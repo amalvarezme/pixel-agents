@@ -182,14 +182,30 @@ renderer.
       `ui/scene/character/animation-state.ts` with a total mapping over the closed lifecycle set.
 - [x] 9.6 RED+GREEN: tooltip shows the Pi subagent's type, label, model, and lifecycle, omitting any
       field the registry did not report.
-- [ ] 9.7 Verify live in the browser: a queued subagent, a running one, and a failed one are each
+- [x] 9.7 Verify live in the browser: a queued subagent, a running one, and a failed one are each
       visually distinct.
-      **NOT DONE.** Only `running` was observed live — that is the state a real `subagent_run`
-      actually reaches on this machine within a verification window. `queued`, `waiting` and
-      `failed` are covered by unit tests (distinct child counts and distinct flag colours in
-      `office-scene-renderer.test.ts`, distinct postures in `lifecycle-presentation.test.ts`) but
-      have not been seen on a real floor, because forcing them needs either a saturated subagent
-      queue or a deliberately failing agent. Left open rather than claimed.
+      **THREE OF FOUR VERIFIED.** Done against a crafted presence-registry fixture holding one task
+      per state, rendered in a real browser:
+      - `running` — seated, captioned with its live tool (`bash`).
+      - `queued` — present but not at a desk, captioned `sdd-verify`.
+      - `waiting` — seated, carrying the amber blocked flag; its tooltip reads
+        `Role: Subagent (review-risk) / Model: claude-sonnet-5 / Task: risk review / State: waiting`,
+        confirming task 9.6 visually as well.
+      - `failed` — **NOT OBSERVABLE, and this is a real gap, not a test artifact.** See below.
+
+### Findings from live verification (open follow-ups)
+
+- [ ] F1 **A failed subagent is never actually seen.** A terminal status emits `status(lifecycle)`
+      and `session_end` in the same batch, so the office removes the worker in the same fold that
+      learns it failed. The red indicator is correct in unit tests and unreachable on a real floor.
+      Spec scenario "A failed subagent ends visibly, not silently" is therefore NOT satisfied by the
+      current implementation. The fix is a dwell before removal — an animation-clock concern, which
+      belongs in the render half next to `sofa-visit.ts`, not in the domain fold.
+- [ ] F2 **A Pi subagent's project shows as `Unknown`.** `header.label` is a project name, not a
+      path, so the source correctly refuses to publish it as `projectPath`. But the parent IS known
+      whenever the hash resolves, so inheriting the orchestrator's `projectPath` through the
+      resolved `parentSessionKey` would be a lookup, not a guess. Today the roster reports a
+      phantom second project (`2 PROJECTS · 4 AGENTS`) for one real one.
 
 ---
 
