@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Hexagonal office visualizer for Claude Code, Codex, OpenCode and Antigravity agent sessions.",
+  "bin": {
+    "office-mcp": "./src/mcp/stdio.ts"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
@@ -14,6 +17,7 @@
     "dev": "npm run dev:server & npm run dev:client",
     "build": "vite build",
     "office": "vite build && vite-node src/server.ts",
+    "mcp": "vite-node src/mcp/stdio.ts",
     "gen:characters": "node scripts/gen-characters/index.mjs",
     "gen:characters:preview": "node scripts/gen-characters/inspect.mjs"
   },

@@ -29,6 +29,14 @@ module.exports = {
       from: { path: '^src/adapters/driven/launcher', pathNot: '\\.test\\.ts$' },
       to: { path: '^src/adapters/driven/(claude-code|codex|opencode|antigravity)' },
     },
+    {
+      name: 'mcp-no-adapters',
+      comment:
+        'src/mcp/ is a driving adapter: it reaches the visualizer over HTTP and imports the domain/ports layer directly, never another adapter. This is what keeps office_launch a genuine proxy (the Zero-Injection denylist and the /launch validation stay behind their own route) and office_snapshot a reader of the real SSE frame.',
+      severity: 'error',
+      from: { path: '^src/mcp', pathNot: '\\.test\\.ts$' },
+      to: { path: '^src/adapters' },
+    },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

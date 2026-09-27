@@ -83,24 +83,80 @@ different times is a real hazard; state the observation time with any filesystem
 
 ## Slice 2 — the MCP server
 
-- [ ] `src/mcp/` with a stdio entry, plus a `bin` in `package.json`.
-- [ ] An idempotent lifecycle manager over the visualizer: probe the port BEFORE spawning, because
+- [x] `src/mcp/` with a stdio entry, plus a `bin` in `package.json`.
+      → `src/mcp/stdio.ts` speaks newline-delimited JSON-RPC 2.0 on stdin/stdout (`initialize`,
+      `notifications/initialized`, `ping`, `tools/list`, `tools/call`). `package.json` gains
+      `"bin": { "office-mcp": "./src/mcp/stdio.ts" }` and an `npm run mcp` script. There is no
+      build step and no compiled `bin`: the source is TypeScript and the project already runs its
+      own TS runtime (`vite-node`), so a client starts it with
+      `node node_modules/vite-node/vite-node.mjs src/mcp/stdio.ts` (see the config block below).
+- [x] An idempotent lifecycle manager over the visualizer: probe the port BEFORE spawning, because
       the server has no `EADDRINUSE` handling and a second start would crash; pass a free `PORT` to
       the child and read it back rather than assuming 4317.
-- [ ] **stdout is the MCP protocol**: the visualizer's own startup `console.log` must go to a file or
+      → `src/mcp/office-controller.ts`: `probe(port)` returns `free` / `ours` / `foreign`; `free`
+      spawns on the default port, `ours` returns the already-running office unchanged, `foreign`
+      picks a free port (`findFreePort`) and passes it to the child. `office_start` waits for the
+      port to answer before returning, and kills the child it spawned if readiness times out.
+- [x] **stdout is the MCP protocol**: the visualizer's own startup `console.log` must go to a file or
       a pipe, never to the MCP stream.
-- [ ] Tool surface, split by whether it mutates (which maps onto `approveTools`):
+      → `src/mcp/visualizer-spawner.ts` opens `.data/office-mcp-visualizer.log` (override with
+      `OFFICE_MCP_LOG`) and gives the child `stdio: ['ignore', logFd, logFd]`. The parent's own
+      diagnostics go to `process.stderr`. Pinned by the end-to-end test: every raw stdout line is
+      JSON, the banner is absent from it, and the banner IS present in the log file.
+- [x] Tool surface, split by whether it mutates (which maps onto `approveTools`):
       `office_start` (idempotent, returns the URL), `office_stop`, `office_launch` (proxies to
       `POST /launch` so the existing Zero-Injection denylist applies for free) — and read-only
       `office_status` and `office_snapshot`, the latter returning the hub's existing snapshot JSON.
-- [ ] A `lifecycle: lazy` config block for `~/.pi/agent/mcp.json` in the shape the existing entries
-      use.
-- [ ] Honest limits to state with it: a stdio MCP dies with its client, so "the office dies when the
-      chat closes" unless the child is deliberately detached; SSE is a long-lived push channel and a
-      tool call is request/response, so the mapping is URL + text snapshot, with the BROWSER holding
-      the stream; the visualizer's launch endpoint is unauthenticated on localhost by its own
-      documentation; and with no harness logs at all the floor is legitimately empty, which
-      `office_status` must report as zero sessions rather than as a fault.
+      → `src/mcp/tools.ts` declares all five and the JSON-RPC layer reads that catalog for
+      `tools/list`. `office_launch` forwards its arguments verbatim to `POST /launch`
+      (`src/mcp/office-client.ts`) so the validation is never duplicated; `office_snapshot` reads
+      the first `event: snapshot` frame from the live `/stream` with a timeout and closes.
+- [x] A `lifecycle: lazy` config block for `~/.pi/agent/mcp.json` in the shape the existing entries
+      use. See "The `~/.pi/agent/mcp.json` entry" below.
+- [x] Honest limits to state with it. See "Honest limits" below.
+
+### The `~/.pi/agent/mcp.json` entry
+
+```json
+"office": {
+  "approveTools": ["*start*", "*stop*", "*launch*"],
+  "args": ["node_modules/vite-node/vite-node.mjs", "src/mcp/stdio.ts"],
+  "command": "node",
+  "cwd": "/Users/andresalvarez/Documents/pixel-agents",
+  "lifecycle": "lazy"
+}
+```
+
+`approveTools` names the three MUTATING tools (`office_start`, `office_stop`, `office_launch`); the
+read-only `office_status` and `office_snapshot` are deliberately absent. The existing entries use
+glob-shaped patterns (`*click*`), so the glob form above is the wildcard-equivalent.
+
+**Why `node node_modules/vite-node/vite-node.mjs src/mcp/stdio.ts`.** The project is TypeScript with
+no compiled `bin` and no build step for the server. `vite-node` is already the project's TS runtime
+(`npm run office` uses it), so this reuses the pinned local copy with zero new dependencies and no
+PATH assumptions. `cwd` is the project root because the visualizer child, the checkpoint file and
+`dist/` all resolve from the serving process's working directory. A client could instead run the
+`bin` (`office-mcp`) or `npx --no-install vite-node src/mcp/stdio.ts`; the explicit `node ...` form
+is the one that cannot silently fall back to a network install.
+
+### Honest limits
+
+- **A stdio MCP dies with its client.** The child is deliberately NOT detached, so closing the chat
+  session stops the office — the port is never left occupied. `office_status` says which case it is
+  in (`running (this MCP server started it; office_stop will stop it)` vs `running but NOT started by
+  this MCP server; office_stop will not stop it`), and `office_stop` only ever signals a process this
+  server spawned.
+- **SSE is a push channel; a tool call is request/response.** The mapping is URL + text snapshot: the
+  BROWSER holds the `/stream` connection and renders the floor; `office_snapshot` returns one frame of
+  state as text. No progress notifications or subscriptions are implemented.
+- **`POST /launch` is unauthenticated on localhost** by the visualizer's own documentation; proxying
+  preserves that posture and its Zero-Injection denylist, and adds no new authority.
+- **No harness logs at all is a legitimate empty floor.** `office_status` reports `sessionCount: 0`
+  (not an error) whenever the office is up; `sessionCount: null` only when the office is down, because
+  then the count is genuinely unknowable.
+- **What the protocol does not implement.** Resources, prompts, sampling, logging and progress
+  notifications are absent by design (the maintainer chose the hand-rolled protocol); a client that
+  requires any of them will not find it here.
 
 ## Not verified by the exploration
 
