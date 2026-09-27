@@ -62,6 +62,16 @@ describe('resolveCharacterId', () => {
     expect(resolveCharacterId(undefined)).toBe(resolveCharacterId('   '));
   });
 
+  it('defaults to Scorpion: the first agent on a fresh floor is Scorpion', () => {
+    // PRODUCT DECISION, not an implementation detail. Scorpion is the character a worker with no
+    // project is drawn as, so `CHARACTER_IDS[0]` is a chosen default rather than an accident of
+    // array order. That same slot also answers every project whose hash lands on 0, because the
+    // array is the hash table — which is why reordering `CHARACTER_IDS` is a BEHAVIOURAL change
+    // and must never be done for tidiness. Changing the default has to be deliberate, and this
+    // assertion is what forces that.
+    expect(resolveCharacterId(undefined)).toBe('scorpion');
+  });
+
   it('can reach EVERY shipped character, so no project silently loses the character it was assigned', () => {
     // The modulus is `CHARACTER_IDS.length`, never a literal. A `% 4` left behind when the fifth
     // character was added would make that character unreachable for every project in existence,

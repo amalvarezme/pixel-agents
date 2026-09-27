@@ -25,7 +25,7 @@ import type { AgentRole } from '../../../domain/agents/agent-profile';
 import { depthScaleFor } from '../world/office-map';
 import type { CharacterAnimationState } from './animation-state';
 
-export const CHARACTER_IDS = ['alex', 'marcus', 'sophia', 'elena', 'scorpion'] as const;
+export const CHARACTER_IDS = ['scorpion', 'alex', 'marcus', 'sophia', 'elena'] as const;
 export type CharacterId = (typeof CHARACTER_IDS)[number];
 
 /** Every action the pack ships (guide section 5). */
@@ -289,8 +289,19 @@ export function spriteAnchorPoint(meta: CharacterSpriteMeta): { x: number; y: nu
  *
  * A worker with no known project (Antigravity reports none) gets a fixed character rather than a
  * per-call guess. Unlike `project-accent.ts`, which reserves a neutral colour outside its palette,
- * there is no fifth sprite to reserve — so this one deliberately overlaps with whichever project
- * happens to hash to it, and the tooltip's Project row stays the authority on identity.
+ * nothing is held back here: the character is picked by a hash INTO the packed table, so every
+ * entry both names a sprite and is reachable by a project. The no-project case therefore has to
+ * share a character with whichever project happens to hash to that same slot, and the tooltip's
+ * Project row stays the authority on identity.
+ *
+ * READ BEFORE TOUCHING `CHARACTER_IDS` — THE ORDER IS THE HASH TABLE. `resolveCharacterId` maps a
+ * project onto `CHARACTER_IDS[hash % length]`, so a position in this array IS a bucket of the
+ * mapping, not a display order. The FIRST entry carries two jobs at once: it is the no-project
+ * fallback (Scorpion, so the first agent on a fresh floor is Scorpion), and it is also the
+ * character that every project whose hash lands on 0 is drawn as. REORDERING IS THEREFORE A
+ * BEHAVIOURAL CHANGE, NEVER A COSMETIC ONE — it silently reshuffles which character existing
+ * projects render as, and moves the default with it. Append when a new sprite is added; reorder
+ * only when the reassignment is meant and pinned by `character-sprite.test.ts`.
  */
 function hashProjectPath(value: string): number {
   let hash = 0;
