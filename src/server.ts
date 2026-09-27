@@ -25,6 +25,7 @@
  * `disabled` (missing db, schema drift, or a missing `-shm` sidecar) — so ingestion for that
  * harness simply never finds anything to open.
  */
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ActivitySource } from './ports/activity-source.port';
@@ -66,6 +67,11 @@ const REPLAY_FROM_START = process.env.REPLAY_FROM_START === 'true';
 // checkpoint file must never live inside a directory any adapter watches (guard test:
 // `checkpoint-path.test.ts`).
 const CHECKPOINT_FILE = join(process.cwd(), '.data', 'checkpoints.json');
+// Slice 1 (odd/tasks/office-mcp.md "one process, one command"): the built UI is served from THIS
+// process, on the same origin as `/stream`, so the office no longer needs a second Vite process.
+// Resolved from `process.cwd()` like CHECKPOINT_FILE, and may legitimately be absent (no build
+// yet) — `createStreamServer` then degrades to its previous 404-for-unknown-paths behaviour.
+const STATIC_ROOT = join(process.cwd(), 'dist');
 // design.md "Launch <-> log correlation": CLAIM_POST_WINDOW_MS is 30s, so a 1s tick expires a
 // timed-out claim within one second of its window closing without a tight busy-poll.
 const LAUNCH_CORRELATION_TICK_MS = 1000;
@@ -217,9 +223,16 @@ async function main(): Promise<void> {
   const correlationTimer = setInterval(() => correlator.expireTimedOutClaims(), LAUNCH_CORRELATION_TICK_MS);
   const lifecycleTimer = setInterval(() => lifecycleCoordinator.tick(), SESSION_LIFECYCLE_TICK_MS);
 
-  const server = createStreamServer(hub, launcher);
+  const server = createStreamServer(hub, launcher, { staticRoot: STATIC_ROOT });
   server.listen(PORT, HOST, () => {
     console.log(`[office-agent-visualizer] SSE stream ready at http://${HOST}:${PORT}/stream`);
+    if (existsSync(join(STATIC_ROOT, 'index.html'))) {
+      console.log(`[office-agent-visualizer] serving the built UI at http://${HOST}:${PORT}/ (from ${STATIC_ROOT})`);
+    } else {
+      console.log(
+        `[office-agent-visualizer] no UI build found at ${STATIC_ROOT} — run \`npm run build\` (or \`npm run office\`) to serve it`,
+      );
+    }
     for (const source of sources) {
       console.log(`[office-agent-visualizer] watching ${source.harness} (read-only)`);
     }

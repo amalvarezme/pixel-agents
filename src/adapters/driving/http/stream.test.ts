@@ -1,5 +1,8 @@
 import { describe, expect, it, afterEach } from 'vitest';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Server } from 'node:http';
 import type { AgentEvent } from '../../../domain/events/types';
 import { createStreamServer, SseEventHub } from './stream';
@@ -61,16 +64,26 @@ function parseFrame(frame: string): { id?: string; event?: string; data?: string
 describe('SSE stream server (tasks.md 9.1, 9.2, 9.4)', () => {
   let server: Server | null = null;
   let readers: SseFrameReader[] = [];
+  let tempRoots: string[] = [];
 
   afterEach(async () => {
     for (const reader of readers) await reader.close();
     readers = [];
     server?.close();
     server = null;
+    for (const root of tempRoots) await rm(root, { recursive: true, force: true });
+    tempRoots = [];
   });
 
   async function startServer(hub: SseEventHub): Promise<string> {
     server = createStreamServer(hub);
+    await new Promise<void>((resolve) => server!.listen(0, resolve));
+    const { port } = server.address() as AddressInfo;
+    return `http://127.0.0.1:${port}`;
+  }
+
+  async function startStaticServer(hub: SseEventHub, staticRoot: string): Promise<string> {
+    server = createStreamServer(hub, undefined, { staticRoot });
     await new Promise<void>((resolve) => server!.listen(0, resolve));
     const { port } = server.address() as AddressInfo;
     return `http://127.0.0.1:${port}`;
@@ -232,5 +245,219 @@ describe('SSE stream server (tasks.md 9.1, 9.2, 9.4)', () => {
     const response = await fetch(`${baseUrl}/launch`, { method: 'POST', body: '{}' });
 
     expect(response.status).toBe(404);
+  });
+
+  /**
+   * Slice 1 (odd/tasks/office-mcp.md "one process, one command"): the Node server must serve the
+   * built UI from the SAME ORIGIN as `/stream`, so the office no longer needs a second Vite
+   * process. Pure `node:fs` + `node:http` — no static-file dependency.
+   */
+  describe('static UI serving (slice 1)', () => {
+    const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]);
+    const WOFF2_BYTES = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0x01]);
+
+    interface StaticFixture {
+      /** The vite `dist/` equivalent: what the server is told its static root is. */
+      root: string;
+      /** The temp dir CONTAINING the root — anything here is "outside the static root". */
+      outside: string;
+    }
+
+    async function makeStaticFixture(): Promise<StaticFixture> {
+      const outside = await mkdtemp(join(tmpdir(), 'office-static-'));
+      tempRoots.push(outside);
+      const root = join(outside, 'dist');
+      await mkdir(join(root, 'assets'), { recursive: true });
+      await writeFile(join(root, 'index.html'), '<!doctype html><html><head><title>office</title></head><body></body></html>');
+      await writeFile(join(root, 'assets', 'app-abc123.js'), "console.log('office');\n");
+      await writeFile(join(root, 'assets', 'app-abc123.css'), 'body{color:red}\n');
+      await writeFile(join(root, 'assets', 'logo.png'), PNG_BYTES);
+      await writeFile(join(root, 'assets', 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+      await writeFile(join(root, 'assets', 'font.woff2'), WOFF2_BYTES);
+      await writeFile(join(root, 'data.json'), '{"ok":true}');
+      // The traversal guard's canary, deliberately OUTSIDE the static root.
+      await writeFile(join(outside, 'package.json'), '{"secret":"do-not-serve"}');
+      return { root, outside };
+    }
+
+    /**
+     * Sends a request line BYTE-FOR-BYTE over a raw socket. `fetch()` (undici) normalises `..`
+     * client-side before the bytes ever leave the process, so it cannot exercise the bytes the
+     * handler actually receives. This helper is the only way to test the traversal guard on the
+     * real input.
+     */
+    function rawHttpGet(baseUrl: string, rawTarget: string): Promise<{ status: number; contentType: string; body: string }> {
+      const port = Number(new URL(baseUrl).port);
+      return new Promise((resolve, reject) => {
+        const socket = connect(port, '127.0.0.1', () => {
+          socket.write(`GET ${rawTarget} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+        });
+        let raw = '';
+        socket.setEncoding('utf8');
+        socket.on('data', (chunk) => (raw += chunk));
+        socket.on('error', reject);
+        socket.on('end', () => {
+          const [head = '', ...bodyParts] = raw.split('\r\n\r\n');
+          const lines = head.split('\r\n');
+          const status = Number(lines[0]?.split(' ')[1] ?? 0);
+          const contentType = lines.find((l) => l.toLowerCase().startsWith('content-type:'))?.slice(13).trim() ?? '';
+          resolve({ status, contentType, body: bodyParts.join('\r\n\r\n') });
+        });
+      });
+    }
+
+    it('serves GET / as index.html with text/html', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      const response = await fetch(`${baseUrl}/`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      await expect(response.text()).resolves.toContain('<title>office</title>');
+    });
+
+    it('serves a real built asset with its correct content type', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      const js = await fetch(`${baseUrl}/assets/app-abc123.js`);
+      expect(js.status).toBe(200);
+      expect(js.headers.get('content-type')).toContain('javascript');
+      await expect(js.text()).resolves.toBe("console.log('office');\n");
+
+      const css = await fetch(`${baseUrl}/assets/app-abc123.css`);
+      expect(css.status).toBe(200);
+      expect(css.headers.get('content-type')).toContain('text/css');
+
+      const json = await fetch(`${baseUrl}/data.json`);
+      expect(json.status).toBe(200);
+      expect(json.headers.get('content-type')).toContain('application/json');
+
+      const svg = await fetch(`${baseUrl}/assets/icon.svg`);
+      expect(svg.status).toBe(200);
+      expect(svg.headers.get('content-type')).toContain('image/svg+xml');
+
+      const png = await fetch(`${baseUrl}/assets/logo.png`);
+      expect(png.status).toBe(200);
+      expect(png.headers.get('content-type')).toContain('image/png');
+      expect(Buffer.from(await png.arrayBuffer()).equals(PNG_BYTES)).toBe(true);
+
+      const woff2 = await fetch(`${baseUrl}/assets/font.woff2`);
+      expect(woff2.status).toBe(200);
+      expect(woff2.headers.get('content-type')).toContain('font/woff2');
+    });
+
+    it('falls back to index.html for an unknown NON-asset path so a client-side route still loads', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      const response = await fetch(`${baseUrl}/office/session/abc`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      await expect(response.text()).resolves.toContain('<title>office</title>');
+    });
+
+    it('404s a MISSING asset instead of answering it with index.html (a <script src> must not receive HTML)', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      const response = await fetch(`${baseUrl}/assets/missing-xyz.js`);
+
+      expect(response.status).toBe(404);
+      await expect(response.text()).resolves.not.toContain('<title>office</title>');
+    });
+
+    // The one security requirement of the slice. Node's http layer hands the handler the RAW
+    // request-target (`/..%2fpackage.json` arrives verbatim), and `new URL(...).pathname` collapses
+    // a literal `../` but NOT `%2f`, so the guard must decode and then re-check containment against
+    // the root. Removing the guard serves `<root>/../package.json` — this test is the pin.
+    it('refuses a URL-encoded traversal attempt that would escape the static root', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      const response = await rawHttpGet(baseUrl, '/..%2fpackage.json');
+
+      expect(response.body).not.toContain('do-not-serve');
+      expect(response.status).toBe(404);
+      expect(response.status).not.toBe(200);
+    });
+
+    it('refuses a literal /../ traversal too (Node normalises it before the handler; pin the bytes actually received)', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      // The raw bytes are '/../package.json'. `new URL(...).pathname` collapses the dot-segment to
+      // '/package.json', which resolves INSIDE the root and does not exist -> 404. Either way the
+      // canary outside the root is never read.
+      const response = await rawHttpGet(baseUrl, '/../package.json');
+
+      expect(response.status).toBe(404);
+      expect(response.body).not.toContain('do-not-serve');
+    });
+
+    it('does not fall back to index.html for a traversal attempt (the SPA fallback must not absorb it)', async () => {
+      const { root } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), root);
+
+      const response = await rawHttpGet(baseUrl, '/..%2fpackage.json');
+
+      expect(response.status).toBe(404);
+      expect(response.body).not.toContain('<title>office</title>');
+    });
+
+    it('degrades to the previous 404 behaviour when the static root does not exist', async () => {
+      const { outside } = await makeStaticFixture();
+      const baseUrl = await startStaticServer(new SseEventHub(), join(outside, 'dist-does-not-exist'));
+
+      const response = await fetch(`${baseUrl}/`);
+
+      expect(response.status).toBe(404);
+    });
+
+    it('serves no static files at all when no static root is configured (previous behaviour preserved)', async () => {
+      const { root } = await makeStaticFixture();
+      const hub = new SseEventHub();
+      const baseUrl = await startServer(hub);
+
+      const response = await fetch(`${baseUrl}/`);
+
+      expect(response.status).toBe(404);
+      expect(root).toBeDefined(); // fixture built; the server simply was not told about it
+    });
+
+    it('does not shadow or pre-empt /stream or /launch when a static root is configured', async () => {
+      const { root } = await makeStaticFixture();
+      const hub = new SseEventHub();
+      const launcher = { launch: async () => ({ outcome: 'started' as const, launchId: 'l1', pid: 1, startedAt: 0 }), shutdown: async () => {} };
+      server = createStreamServer(hub, launcher, { staticRoot: root });
+      await new Promise<void>((resolve) => server!.listen(0, resolve));
+      const { port } = server.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${port}`;
+
+      // /stream is still the SSE route.
+      const stream = await fetch(`${baseUrl}/stream`);
+      expect(stream.status).toBe(200);
+      expect(stream.headers.get('content-type')).toContain('text/event-stream');
+      const reader = new SseFrameReader(stream);
+      readers.push(reader);
+      const [frame] = await reader.readFrames(1);
+      expect(parseFrame(frame!).event).toBe('snapshot');
+
+      // POST /launch still reaches the launcher (and does not get index.html).
+      const launch = await fetch(`${baseUrl}/launch`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ harness: 'claude-code', cwd: '/tmp', args: [] }),
+      });
+      expect(launch.status).toBe(200);
+      await expect(launch.json()).resolves.toEqual({ outcome: 'started', launchId: 'l1', pid: 1, startedAt: 0 });
+
+      // GET /launch is not an SPA route either: it stays a 404, never index.html.
+      const wrongMethod = await fetch(`${baseUrl}/launch`);
+      expect(wrongMethod.status).toBe(404);
+      await expect(wrongMethod.text()).resolves.not.toContain('<title>office</title>');
+    });
   });
 });

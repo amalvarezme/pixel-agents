@@ -39,15 +39,47 @@ different times is a real hazard; state the observation time with any filesystem
 
 ## Slice 1 — one process, one command
 
-- [ ] Serve the built UI from the Node server: a static branch in `createStreamServer` (or beside it)
+- [x] Serve the built UI from the Node server: a static branch in `createStreamServer` (or beside it)
       so `dist/` is served from the same origin as `/stream`, with a sane `index.html` fallback and
       correct content types. Keep `/stream` and `/launch` untouched.
-- [ ] A single command that lifts everything: `npm run office` (build if needed, then start the one
+      → `createStreamServer(hub, launcher?, { staticRoot })` (`adapters/driving/http/stream.ts`).
+      Zero new dependencies (`node:fs/promises` + `node:path` only). `staticRoot` is injectable, so
+      tests point at a temp dir instead of requiring a build. `src/server.ts` passes
+      `join(process.cwd(), 'dist')`. A missing root degrades to the previous 404-for-unknown-paths
+      behaviour instead of crashing. `/stream` and `/launch` are matched FIRST; every `/launch`
+      shape that was a 404 before is still a 404 (it never falls into the SPA fallback).
+- [x] A single command that lifts everything: `npm run office` (build if needed, then start the one
       process), replacing the need for two terminals.
-- [ ] Prove it end to end: build, start the ONE process, load the page, and confirm the floor renders
+      → `"office": "vite build && vite-node src/server.ts"`. The build is unconditional (a stale
+      `dist/` can then never be served); `dev`, `dev:server` and `dev:client` are unchanged.
+- [x] Prove it end to end: build, start the ONE process, load the page, and confirm the floor renders
       and the SSE stream connects **through the same origin**, with `/launch` still reachable.
-- [ ] Honest limits: `dist/` must be built first, and the checkpoint file still resolves from the
+      → `npm run office` on `PORT=4399`: `GET /` 200 `text/html`; `GET /assets/index-CX747f3W.js`
+      200 `text/javascript` (347876 B); `GET /characters/scorpion/scorpion_portrait_v3.png` 200
+      `image/png`; `GET /characters/characters_manifest.json` 200 `application/json`;
+      `GET /office/session/abc` 200 `text/html` (SPA fallback); `GET /assets/nope-1234.js` 404;
+      `GET /stream` 200 `text/event-stream` with `event: snapshot`; `POST /launch` with an invalid
+      body 400 (route reached, nothing spawned). "The floor renders" was NOT browser-verified — the
+      HTTP surface and the built bundle were, and nothing about the bundle had to change.
+- [x] Honest limits: `dist/` must be built first, and the checkpoint file still resolves from the
       process's working directory.
+      → Unchanged and still true. New: the static root also resolves from `process.cwd()`.
+
+### Slice 1 decisions the design did not make
+
+- **Missing-path policy.** (1) The exact file wins (`/` → `index.html`). (2) A missing path WITH a
+  file extension 404s — handing HTML to a `<script src>` would surface as a MIME error, not a
+  missing-asset error. (3) A missing path with NO extension falls back to `index.html` so a
+  client-side route still loads. (4) A traversal attempt 404s and NEVER falls back, so the fallback
+  cannot absorb it into a 200.
+- **Traversal guard (the one security requirement).** Node's HTTP layer hands the handler the RAW
+  request-target (`GET /..%2fpackage.json` arrives verbatim; `new URL(...).pathname` collapses a
+  literal `../` but leaves `%2f`). The handler decodes the path and then re-checks that the RESOLVED
+  ABSOLUTE path is still inside the root. Pinned by a raw-socket test (which bypasses `fetch()`'s
+  client-side normalisation) plus a mutation check: removing the guard serves
+  `<root>/../package.json` and the test goes red.
+- **Fallback for unknown/dir paths without an extension** returns the root's `index.html` even if the
+  request was a directory (e.g. `/assets/`), which is the standard SPA behaviour and leaks nothing.
 
 ## Slice 2 — the MCP server
 
@@ -72,5 +104,7 @@ different times is a real hazard; state the observation time with any filesystem
 
 ## Not verified by the exploration
 
-Whether `vite build` output works unmodified behind a static handler (no build was run), and Pi's
-canonical MCP config schema beyond the keys observed in the existing entries.
+Whether `vite build` output works unmodified behind a static handler — **VERIFIED in slice 1**: the
+build ran, the single process served `dist/` (html/js/png/json) and the SSE stream on one origin,
+and no change to the bundle was needed. Pi's canonical MCP config schema beyond the keys observed in
+the existing entries remains unverified (slice 2).

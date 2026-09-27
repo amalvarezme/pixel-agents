@@ -13,6 +13,7 @@
     "dev:client": "vite",
     "dev": "npm run dev:server & npm run dev:client",
     "build": "vite build",
+    "office": "vite build && vite-node src/server.ts",
     "gen:characters": "node scripts/gen-characters/index.mjs",
     "gen:characters:preview": "node scripts/gen-characters/inspect.mjs"
   },
