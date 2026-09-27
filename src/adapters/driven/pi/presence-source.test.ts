@@ -212,10 +212,12 @@ describe('PiPresenceSource', () => {
     expect(events[0]?.label).toBe('apply work unit 2');
     expect(status).toBeDefined();
     expect(status?.label).toBeUndefined();
+    // The status value travels here instead.
+    expect(status?.lifecycle).toBe('running');
     await source.close();
   });
 
-  it('never claims liveness on a status event — `activity` belongs to the lifecycle coordinator', async () => {
+  it('carries every reported status through as a lifecycle, and never claims liveness', async () => {
     await makeHome();
     await publish([task({ status: 'queued', startedAt: null })]);
     const source = new PiPresenceSource(piHome, indexWithParent(), { cadenceMs: 20 });
@@ -223,7 +225,7 @@ describe('PiPresenceSource', () => {
     const events = await drain(source, 'pi:task:t1', 3);
     const status = events.find((event) => event.kind === 'status');
 
-    expect(status).toBeDefined();
+    expect(status?.lifecycle).toBe('queued');
     expect(status?.activity).toBeUndefined();
     await source.close();
   });
@@ -316,7 +318,7 @@ describe('PiPresenceSource', () => {
 
     await publish([task({ status: 'failed', endedAt: 1_300, lastActivityAt: 1_300, threadVersion: 2 })]);
 
-    expect((await streamIterator.next()).value!.event).toMatchObject({ kind: 'status' });
+    expect((await streamIterator.next()).value!.event).toMatchObject({ kind: 'status', lifecycle: 'failed' });
     expect((await streamIterator.next()).value!.event).toMatchObject({ kind: 'session_end', at: 1_300 });
 
     stream.stop();

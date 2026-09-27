@@ -230,3 +230,40 @@ describe('buildAgentTooltip portrait', () => {
     expect(view.portraitUrl).toContain('_portrait_v3.png');
   });
 });
+
+// Requirement: Pi Subagent Tooltip Detail (spec: office-scene-renderer).
+describe('buildAgentTooltip with a reported lifecycle', () => {
+  const piSubagent = {
+    harnessName: 'Pi',
+    role: 'subagent' as const,
+    agentType: 'sdd-apply',
+    model: 'claude-sonnet-5',
+    task: 'apply work unit 2',
+    projectPath: '/Users/a/Documents/pixel-agents',
+  };
+
+  it('adds a State row carrying the lifecycle, after Task', () => {
+    const tooltip = buildAgentTooltip({ ...piSubagent, lifecycle: 'waiting' });
+
+    expect(tooltip.rows).toHaveLength(6);
+    expect(tooltip.rows[5]).toEqual({ label: 'State', value: 'waiting' });
+  });
+
+  it('omits the State row entirely for a harness that reports no lifecycle', () => {
+    const tooltip = buildAgentTooltip(piSubagent);
+
+    expect(tooltip.rows).toHaveLength(5);
+    expect(tooltip.rows.some((row) => row.label === 'State')).toBe(false);
+  });
+
+  it('keeps the first five rows unchanged when a lifecycle is present', () => {
+    const withState = buildAgentTooltip({ ...piSubagent, lifecycle: 'running' });
+    const without = buildAgentTooltip(piSubagent);
+
+    expect(withState.rows.slice(0, 5)).toEqual(without.rows);
+  });
+
+  it('reads timed_out as its own state rather than collapsing it into failed', () => {
+    expect(buildAgentTooltip({ ...piSubagent, lifecycle: 'timed_out' }).rows[5]?.value).toBe('timed_out');
+  });
+});

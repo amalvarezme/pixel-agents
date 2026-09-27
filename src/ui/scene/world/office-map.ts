@@ -102,6 +102,18 @@ export const MEETING_SOFA = {
   facing: mapData.specialZones.meeting_sofa.facing as Workstation['facing'],
 } as const;
 
+/**
+ * Where a worker stands while it has no desk yet — the destination for a `queued` subagent (spec:
+ * "A queued subagent does not appear to be working").
+ *
+ * These are the map's own `spawnPoints`: the positions the room already declares as "an agent has
+ * just arrived and is standing in the open floor", which is exactly what a queued task is. The map
+ * declares no door or lobby zone, and inventing coordinates the illustrated room does not support
+ * would put workers inside furniture; reusing the spawn points keeps every waiting worker inside
+ * `walkableBounds` and clear of every collision zone by construction.
+ */
+export const WAITING_AREA: readonly MapPoint[] = Object.values(mapData.spawnPoints) as MapPoint[];
+
 /** One piece of furniture, as an axis-aligned box. The `id` is the map's own name for it — kept
  * because a clipping report is only actionable if it can say WHICH rectangle to tune (guide
  * section 7: fine-tuning happens in `office_map.json`, never in the engine). */

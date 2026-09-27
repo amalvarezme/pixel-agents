@@ -322,18 +322,20 @@ export class PiPresenceSource implements ActivitySource {
     // counts as a change, because until it lands nothing downstream knows the task's state at all.
     if (task.summary.status !== cursor.status) {
       cursor.status = task.summary.status;
-      // Deliberately NO `label`: the office projection uses `label` as the worker's NAME, so
-      // carrying the status there overwrites the task label this same task published on its
-      // `session_start` — a worker called "running" instead of "apply work unit 2" (caught live,
-      // pinned by a regression test below). The status value gets a field of its own (`lifecycle`)
-      // in the session-lifecycle-states work unit; until then this event marks activity without
-      // claiming to rename the worker.
+      // The status travels in `lifecycle`, never in `label`: the office projection uses `label` as
+      // the worker's NAME, so carrying the status there renamed the worker to "running" and threw
+      // away the task label its own `session_start` had just published (caught live, pinned by a
+      // regression test).
+      //
+      // `activity` is deliberately never set here — that field is the session lifecycle
+      // coordinator's, and this factory does not even accept it.
       events.push(
         createEventFromLogRecord(this.allocateId(), {
           kind: 'status',
           harness: 'pi',
           sessionKey,
           at,
+          lifecycle: task.summary.status,
         }),
       );
       if (TERMINAL_STATUSES.includes(task.summary.status)) {

@@ -11,6 +11,7 @@ import { isBehindForeground } from '../../scene/world/foreground-occlusion';
 import { buildHarnessBadge, type HarnessBadge } from '../atoms/badge';
 import { buildCaption } from '../atoms/caption';
 import { buildAgentTooltip, type AgentTooltipView } from '../atoms/agent-tooltip';
+import type { SessionLifecycle } from '../../../domain/events/types';
 
 /** Archive-trip drawing data (blocker B.2, tasks.md 21.2) — carried through unchanged from
  * `WorkerViewModel.archiveTrip`; presence alone means "draw a carried document". */
@@ -59,6 +60,9 @@ export interface WorkerView {
    * animate the sofa-visit feature's walk/sit. Never set alongside `archiveTrip` (the render half
    * already resolves that precedence upstream, `applySofaOverlay`). */
   sofaVisit?: { seated: boolean; direction: CharacterDirection };
+  /** The harness's own scheduler report, carried through so the renderer can pick the clip and draw
+   * the blocked/failed flag. `undefined` for a harness that reports none. */
+  lifecycle?: SessionLifecycle;
 }
 
 export function buildWorkerView(worker: WorkerViewModel): WorkerView {
@@ -87,8 +91,10 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
       toolLabel: worker.toolLabel,
       toolDetail: worker.toolDetail,
       projectPath: worker.projectPath,
+      lifecycle: worker.lifecycle,
     }),
     ...(worker.activity !== undefined ? { activity: worker.activity } : {}),
+    ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
     ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
     ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
     ...(worker.lastToolStartAt !== undefined ? { lastToolStartAt: worker.lastToolStartAt } : {}),

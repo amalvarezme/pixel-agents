@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyEventToOfficeState, createOfficeState } from '../../domain/office/office';
-import type { AgentEvent, HarnessId } from '../../domain/events/types';
+import { applyEventToOfficeState, createOfficeState, type OfficeState } from '../../domain/office/office';
+import type { AgentEvent, HarnessId, SessionLifecycle } from '../../domain/events/types';
 import { buildOfficeViewModel } from './office-view-model';
 import { PERSISTENT_MEMORY } from '../scene/world/office-map';
 import { MAX_SEATED_WORKERS } from '../scene/layout/office-layout';
@@ -259,5 +259,71 @@ describe('buildOfficeViewModel roster', () => {
     expect(viewModel.roster?.map((entry) => entry.sessionKey)).toEqual(
       viewModel.workers.map((worker) => worker.sessionKey),
     );
+  });
+});
+
+// Requirement: Lifecycle-Distinct Worker Presentation (spec: office-scene-renderer).
+describe('lifecycle in the office view model', () => {
+  function stateWith(lifecycle: SessionLifecycle | undefined): OfficeState {
+    let state = applyEventToOfficeState(createOfficeState(), {
+      id: 1,
+      kind: 'session_start',
+      harness: 'pi',
+      sessionKey: 'pi:task:t1',
+      at: 1000,
+      label: 'apply',
+    });
+    if (lifecycle) {
+      state = applyEventToOfficeState(state, {
+        id: 2,
+        kind: 'status',
+        harness: 'pi',
+        sessionKey: 'pi:task:t1',
+        at: 1100,
+        lifecycle,
+      });
+    }
+    return state;
+  }
+
+  it('carries the reported lifecycle through to the worker view model', () => {
+    const vm = buildOfficeViewModel(stateWith('waiting'));
+
+    expect(vm.workers[0]?.lifecycle).toBe('waiting');
+  });
+
+  it('carries the lifecycle through to the roster entry too', () => {
+    const vm = buildOfficeViewModel(stateWith('failed'));
+
+    expect(vm.roster?.[0]?.lifecycle).toBe('failed');
+  });
+
+  it('leaves lifecycle absent for a worker whose harness reports none', () => {
+    const vm = buildOfficeViewModel(stateWith(undefined));
+
+    expect(vm.workers[0]?.lifecycle).toBeUndefined();
+  });
+
+  it('places a queued worker away from its desk, while remembering which desk is its', () => {
+    const vm = buildOfficeViewModel(stateWith('queued'));
+    const worker = vm.workers[0]!;
+
+    expect(worker.x === worker.seatX && worker.y === worker.seatY).toBe(false);
+    expect(worker.seatX).toBeGreaterThan(0);
+  });
+
+  it('keeps a running worker at its desk (triangulation: the ordinary case is unchanged)', () => {
+    const vm = buildOfficeViewModel(stateWith('running'));
+    const worker = vm.workers[0]!;
+
+    expect(worker.x).toBe(worker.seatX);
+    expect(worker.y).toBe(worker.seatY);
+  });
+
+  it('keeps a worker with no lifecycle at its desk, exactly as before lifecycle existed', () => {
+    const worker = buildOfficeViewModel(stateWith(undefined)).workers[0]!;
+
+    expect(worker.x).toBe(worker.seatX);
+    expect(worker.y).toBe(worker.seatY);
   });
 });

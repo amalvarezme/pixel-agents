@@ -12,7 +12,7 @@
  * (to build a resume `snapshot` frame, tasks.md 9.2) and the browser-side `OfficeContainer`
  * client projection (tasks.md 10.4) — one canonical fold over the normalized event stream.
  */
-import type { AgentEvent, HarnessId, SessionActivity } from '../events/types';
+import type { AgentEvent, HarnessId, SessionActivity, SessionLifecycle } from '../events/types';
 import { DEFAULT_ORPHAN_GRACE_MS } from '../agents/agent-tree';
 import type { AgentProfile } from '../agents/agent-profile';
 import {
@@ -36,6 +36,17 @@ export interface Worker {
   harness: HarnessId;
   label: string;
   activity: WorkerActivity;
+  /**
+   * What this worker's own harness SCHEDULER last reported about it (`domain/events/types.ts`).
+   * Independent of `activity` above in both directions: a `waiting` worker can also be `idle`, and
+   * neither field is ever derived from or overwritten by the other. `undefined` for a harness that
+   * reports no lifecycle at all — which must render exactly as it did before lifecycle existed,
+   * never as `running`.
+   *
+   * Merge-not-replace, like `toolLabel`/`projectPath`: a later event carrying no lifecycle must not
+   * erase an already-known one.
+   */
+  lifecycle?: SessionLifecycle;
   /**
    * Stable harness-agnostic correlation field, sourced only from a `parent` event's
    * `correlationId` (normalized-event-model spec: "Parent/Child Correlation Field Contract").
@@ -163,6 +174,7 @@ function upsertWorker(
     label: patch.label ?? existing?.label ?? sessionKey,
     activity: patch.activity ?? existing?.activity ?? 'working',
     parentSessionKey: patch.parentSessionKey !== undefined ? patch.parentSessionKey : (existing?.parentSessionKey ?? null),
+    lifecycle: patch.lifecycle ?? existing?.lifecycle,
     toolLabel: patch.toolLabel ?? existing?.toolLabel,
     toolDetail: patch.toolDetail ?? existing?.toolDetail,
     projectPath: patch.projectPath ?? existing?.projectPath,
@@ -282,7 +294,11 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         !event.toolLabel &&
         !event.agentProfile &&
         !event.projectPath &&
-        !event.activity
+        !event.activity &&
+        // A `status` carrying ONLY a lifecycle is the entire point of that event for Pi's subagents
+        // — without this clause it takes the early exit above and the office never learns that a
+        // worker is queued, blocked, or failed.
+        !event.lifecycle
       ) {
         return pruned;
       }
@@ -299,6 +315,10 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         // path that can ever move a worker OUT of 'working': every other branch either defaults it
         // to 'working' or preserves what is already there.
         ...(event.activity !== undefined ? { activity: event.activity } : {}),
+        // The harness's own scheduler report, from an ingestion adapter. Separate line from
+        // `activity` above on purpose: the two arrive from different sources and must never be
+        // collapsed into one field or derived from each other.
+        ...(event.lifecycle !== undefined ? { lifecycle: event.lifecycle } : {}),
         ...(event.kind === 'tool_start' ? { lastToolStartAt: event.at } : {}),
       });
   }

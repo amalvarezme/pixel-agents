@@ -5,6 +5,8 @@
  * desk-bound `activity` (`domain/office/office.ts`) and whether it is currently mid archive-trip.
  */
 import type { WorkerActivity } from '../../../domain/office/office';
+import type { SessionLifecycle } from '../../../domain/events/types';
+import { resolveLifecyclePresentation } from './lifecycle-presentation';
 
 export type CharacterAnimationState = 'idle' | 'working' | 'walking';
 
@@ -15,12 +17,24 @@ export interface CharacterAnimationInput {
   /** True while a worker's archive-trip is actively in transit (walking-out/walking-back), i.e.
    * NOT while dwelling/highlighted at the cabinet — see office-scene-renderer.ts. */
   isWalking: boolean;
+  /** The harness's own scheduler report, when it makes one. Absent means no claim, and renders
+   * exactly as it did before lifecycle existed. */
+  lifecycle?: SessionLifecycle;
 }
 
-/** Walking always wins over the desk-bound activity: a worker cannot be shown typing while mid
- * archive-trip transit. */
+/**
+ * Walking always wins over the desk-bound activity: a worker cannot be shown typing while mid
+ * archive-trip transit.
+ *
+ * A reported lifecycle can VETO the working clip but never grant it: a `queued` or `waiting` worker
+ * is drawn idle no matter what `activity` says, because a task blocked on an answer that still looks
+ * like it is typing is worse than no signal at all. The reverse is deliberately not true —
+ * `lifecycle: 'running'` does not make an idle worker look busy, since only `activity` knows whether
+ * this session has actually done anything lately.
+ */
 export function selectCharacterAnimationState(input: CharacterAnimationInput): CharacterAnimationState {
   if (input.isWalking) return 'walking';
+  if (!resolveLifecyclePresentation(input.lifecycle).canWork) return 'idle';
   return input.activity === 'working' ? 'working' : 'idle';
 }
 

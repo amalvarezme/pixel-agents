@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { createEventFromLogRecord, createSelfOriginatedEvent } from './factories';
-import { EventKind, HARNESS_IDS, HarnessId, isEventKind } from './types';
+import {
+  EventKind,
+  HARNESS_IDS,
+  HarnessId,
+  isEventKind,
+  isSessionLifecycle,
+  SESSION_LIFECYCLES,
+  SessionLifecycle,
+} from './types';
 
 // Requirement: Harness Identity Is A Closed Set — five ids, Pi among them, derived from one
 // `const` array so the runtime guard and the compile-time type cannot drift.
@@ -143,5 +151,71 @@ describe('self-originated launch event payload fields (tasks.md 24.6)', () => {
 
     expect(event.pid).toBe(4242);
     expect(event.startedAt).toBe(1005);
+  });
+});
+
+// Requirement: Session Lifecycle Is Distinct From Activity (spec: normalized-event-model).
+describe('session lifecycle closed set', () => {
+  it('recognizes exactly the seven lifecycle members Pi can report', () => {
+    const expected: SessionLifecycle[] = [
+      'running',
+      'queued',
+      'waiting',
+      'completed',
+      'failed',
+      'cancelled',
+      'timed_out',
+    ];
+
+    expect([...SESSION_LIFECYCLES].sort()).toEqual([...expected].sort());
+    expect(SESSION_LIFECYCLES).toHaveLength(7);
+  });
+
+  it('rejects a plausible non-member (triangulation: an eighth state)', () => {
+    expect(isSessionLifecycle('paused')).toBe(false);
+    expect(isSessionLifecycle('running')).toBe(true);
+  });
+
+  it('carries lifecycle on a status event without carrying activity', () => {
+    const event = createEventFromLogRecord(1, {
+      kind: 'status',
+      harness: 'pi',
+      sessionKey: 'pi:task:t1',
+      at: 1000,
+      lifecycle: 'waiting',
+    });
+
+    expect(event.lifecycle).toBe('waiting');
+    expect(event.activity).toBeUndefined();
+  });
+
+  it('leaves lifecycle absent for a harness that reports none, never defaulting it to running', () => {
+    const event = createEventFromLogRecord(1, {
+      kind: 'status',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+    });
+
+    expect(event.lifecycle).toBeUndefined();
+  });
+
+  /**
+   * The mirror-image invariant: `activity` is the lifecycle coordinator's to set, and it constructs
+   * its event literal directly rather than through this factory, so an ingestion adapter has no
+   * route to it at all.
+   */
+  it('gives an ingestion adapter no way to claim liveness through the log-record factory', () => {
+    const event = createEventFromLogRecord(1, {
+      kind: 'status',
+      harness: 'pi',
+      sessionKey: 'pi:task:t1',
+      at: 1000,
+      lifecycle: 'running',
+      // @ts-expect-error — `activity` is deliberately absent from CreateLogSourcedEventInput
+      activity: 'idle',
+    });
+
+    expect(event.lifecycle).toBe('running');
   });
 });
