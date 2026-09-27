@@ -6,17 +6,22 @@ session is doing to a browser tab.
 
 ## What works today
 
-- **All four harnesses**, each behind the same `ActivitySource` port:
+- **All five harnesses**, each behind the same `ActivitySource` port:
   | Harness | Source | Root (override) |
   |---|---|---|
   | Claude Code | `*.jsonl` transcripts | `~/.claude` (`CLAUDE_HOME`) |
   | Codex | date-partitioned `rollout-*.jsonl` | `~/.codex` (`CODEX_HOME`) |
   | Antigravity | CLI + IDE `transcript.jsonl` | `~/.gemini` (`GEMINI_HOME`) |
   | OpenCode | read-only SQLite polling | `~/.local/share/opencode/opencode.db` (`OPENCODE_DB_PATH`) |
+  | Pi (gentle shell) | `<iso-ts>_<uuid>.jsonl` transcripts per project | `~/.pi/agent` (`PI_HOME`) |
 
   Each is independently disableable with `<HARNESS>_ENABLED=false` — `CLAUDE_CODE_ENABLED`,
-  `CODEX_ENABLED`, `ANTIGRAVITY_ENABLED`, `OPENCODE_ENABLED`. A harness whose root is absent on
-  this machine degrades quietly instead of stopping the server.
+  `CODEX_ENABLED`, `ANTIGRAVITY_ENABLED`, `OPENCODE_ENABLED`, `PI_ENABLED`. A harness whose root is
+  absent on this machine degrades quietly instead of stopping the server.
+
+  Pi is the only harness whose root holds TWO stores: `sessions/` for orchestrator transcripts, and
+  `gentle-agents/presence/` for the live subagent registry. `PI_HOME` points at the directory that
+  contains both (`~/.pi/agent`), not at `~/.pi`.
 
 - **`memory_write` detection and the archive animation.** When a session calls Engram's `mem_save`,
   its worker carries a document to the archive, the counter increments, and the worker returns.

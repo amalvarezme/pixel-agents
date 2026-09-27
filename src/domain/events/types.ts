@@ -6,7 +6,7 @@
 
 import type { AgentProfile } from '../agents/agent-profile';
 
-export const HARNESS_IDS = ['claude-code', 'codex', 'opencode', 'antigravity'] as const;
+export const HARNESS_IDS = ['claude-code', 'codex', 'opencode', 'antigravity', 'pi'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 /**

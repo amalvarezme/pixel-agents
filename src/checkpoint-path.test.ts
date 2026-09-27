@@ -38,7 +38,7 @@ describe('server.ts checkpoint path (composition-level guard)', () => {
     const declaration = extractConstDeclaration(source, 'CHECKPOINT_FILE');
 
     expect(declaration).toContain('process.cwd()');
-    expect(declaration).not.toMatch(/CLAUDE_HOME|CODEX_HOME|GEMINI_HOME|OPENCODE_DB_PATH/);
+    expect(declaration).not.toMatch(/CLAUDE_HOME|CODEX_HOME|GEMINI_HOME|OPENCODE_DB_PATH|PI_HOME/);
   });
 
   it('adversarial near-miss: OPENCODE_DB_PATH itself IS declared from a harness-specific home, unlike CHECKPOINT_FILE', () => {

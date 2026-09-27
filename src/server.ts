@@ -35,6 +35,7 @@ import type { ClaudeCodeSessionRef } from './adapters/driven/claude-code/discove
 import { ClaudeCodeSubagentCorrelationCoordinator } from './adapters/driven/claude-code/subagent-correlation-coordinator';
 import { CodexActivitySource } from './adapters/driven/codex/activity-source';
 import { OpenCodeActivitySource } from './adapters/driven/opencode/activity-source';
+import { PiActivitySource } from './adapters/driven/pi/activity-source';
 import { FileCheckpointStore } from './adapters/driven/checkpoint/file-checkpoint-store';
 import { ChildProcessSessionLauncher } from './adapters/driven/launcher/child-process-session-launcher';
 import { CorrelatingSessionLauncher } from './adapters/driven/launcher/correlating-session-launcher';
@@ -51,6 +52,9 @@ const CLAUDE_HOME = process.env.CLAUDE_HOME ?? join(homedir(), '.claude');
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), '.codex');
 const GEMINI_HOME = process.env.GEMINI_HOME ?? join(homedir(), '.gemini');
 const OPENCODE_DB_PATH = process.env.OPENCODE_DB_PATH ?? join(homedir(), '.local', 'share', 'opencode', 'opencode.db');
+// Pi's root is its AGENT home (`~/.pi/agent`), not `~/.pi` — that is the directory that contains
+// `sessions/` and `gentle-agents/`, matching what every other `<HARNESS>_HOME` means here.
+const PI_HOME = process.env.PI_HOME ?? join(homedir(), '.pi', 'agent');
 // design.md "Session discovery and aging out" — Bootstrap: "an opt-in --replay-since exists for
 // demos and fixture capture". Default OFF: a session with no prior checkpoint bootstraps at EOF,
 // never replaying a fixture's (or a real transcript's) full history on process start.
@@ -110,6 +114,11 @@ function buildSources(
     sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId, now: clock.now, replayFromStart: REPLAY_FROM_START }));
   }
   if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH, { allocateId }));
+  if (isHarnessEnabled('PI_ENABLED')) {
+    // Orchestrators only. Pi's subagents live in a separate store (`gentle-agents/presence`) with
+    // its own source, so this one never has to classify what it discovers (design.md D3).
+    sources.push(new PiActivitySource(PI_HOME, { allocateId, now: clock.now, replayFromStart: REPLAY_FROM_START }));
+  }
   return sources;
 }
 

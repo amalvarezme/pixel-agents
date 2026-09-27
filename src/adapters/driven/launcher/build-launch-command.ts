@@ -21,6 +21,7 @@ export const HARNESS_BINARY: Record<HarnessId, string> = {
   codex: 'codex',
   opencode: 'opencode',
   antigravity: 'agy',
+  pi: 'pi',
 };
 
 /**
@@ -34,6 +35,11 @@ export const DEFAULT_HARNESS_TEMPLATES: Record<HarnessId, readonly string[]> = {
   codex: [],
   opencode: [],
   antigravity: [],
+  // Pi is launched exactly as the user would type `pi` (spec: "Pi launches byte-identically to a
+  // manual invocation"). Pi reads its own `~/.pi/agent/` configuration on startup, so a forced
+  // flag here would be the one thing that makes a visualizer-launched session behave differently
+  // from a hand-launched one.
+  pi: [],
 };
 
 /** Flags the launcher's OWN template must never inject (spec: Zero-Injection Spawn Invariant). */

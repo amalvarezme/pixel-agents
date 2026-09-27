@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { createEventFromLogRecord, createSelfOriginatedEvent } from './factories';
-import { EventKind, isEventKind } from './types';
+import { EventKind, HARNESS_IDS, HarnessId, isEventKind } from './types';
+
+// Requirement: Harness Identity Is A Closed Set — five ids, Pi among them, derived from one
+// `const` array so the runtime guard and the compile-time type cannot drift.
+describe('harness identity closed set', () => {
+  it('contains exactly the five supported harnesses, including pi', () => {
+    const expected: HarnessId[] = ['claude-code', 'codex', 'opencode', 'antigravity', 'pi'];
+
+    expect([...HARNESS_IDS].sort()).toEqual([...expected].sort());
+    expect(HARNESS_IDS).toHaveLength(5);
+  });
+
+  it('does not contain an unsupported harness (triangulation: a plausible non-member)', () => {
+    expect((HARNESS_IDS as readonly string[]).includes('cursor')).toBe(false);
+  });
+});
 
 // Requirement: Canonical Event Type Set — exactly eleven kinds, no twelfth constructible.
 describe('canonical event type set', () => {
