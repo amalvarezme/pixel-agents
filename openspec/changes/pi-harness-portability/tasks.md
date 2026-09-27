@@ -193,22 +193,40 @@ renderer.
         confirming task 9.6 visually as well.
       - `failed` — **NOT OBSERVABLE, and this is a real gap, not a test artifact.** See below.
 
-### Findings from live verification (open follow-ups)
+### Findings from live verification (all three now closed and delivered)
 
-Both findings below are now scoped as **Work Unit 4** (sections 10 and 11). The summaries are kept
-verbatim as the record of what live verification found.
+Both findings below were scoped as **Work Unit 4** (sections 10 and 11) and are now FIXED and
+DELIVERED on `main`: F1 by `28516d8`, F2 by `957d4fb`. A third, F3, was found later while verifying
+the memory zone, is recorded as section 13, and is also fixed and delivered (`5d19837` for the fix,
+`87fac88` for an unrelated header correction). All three were confirmed beyond the unit tests: F1 and
+F2 by the live browser check recorded in 12.2, F3 by an independent verification whose mutations
+showed each guard failing for its own reason. The summaries below are kept verbatim as the record of
+what live verification found; the closing paragraph under each records how it was resolved.
 
-- [ ] F1 **A failed subagent is never actually seen.** A terminal status emits `status(lifecycle)`
+- [x] F1 **A failed subagent is never actually seen.** A terminal status emits `status(lifecycle)`
       and `session_end` in the same batch, so the office removes the worker in the same fold that
       learns it failed. The red indicator is correct in unit tests and unreachable on a real floor.
       Spec scenario "A failed subagent ends visibly, not silently" is therefore NOT satisfied by the
       current implementation. The fix is a dwell before removal — an animation-clock concern, which
       belongs in the render half next to `sofa-visit.ts`, not in the domain fold.
-- [ ] F2 **A Pi subagent's project shows as `Unknown`.** `header.label` is a project name, not a
+      CLOSED by `28516d8` exactly as scoped: a render-half dwell beside `sofa-visit.ts` keeps a
+      failed worker's last structural frame on the floor for 1.5s after its `session_end`, then
+      drops it, reading the tick clock and clearing on a re-used `sessionKey`. The spec scenario is
+      now satisfied, and 12.2 shows it on a real floor: failing eight subagents one at a time put
+      the failure indicator on screen for ~9.4s, with one to three indicators at different desks at
+      once, and removed it after the last dwell expired.
+- [x] F2 **A Pi subagent's project shows as `Unknown`.** `header.label` is a project name, not a
       path, so the source correctly refuses to publish it as `projectPath`. But the parent IS known
       whenever the hash resolves, so inheriting the orchestrator's `projectPath` through the
       resolved `parentSessionKey` would be a lookup, not a guess. Today the roster reports a
       phantom second project (`2 PROJECTS · 4 AGENTS`) for one real one.
+      CLOSED by `957d4fb` as the lookup this described: each session's own `cwd` is recorded beside
+      the sha256 hash join and resolved as `hash -> path` (merge-not-erase, so an absent reading
+      never erases a known path), the subagent's `session_start` carries the resolved path, and a
+      parent registered late re-announces the full identity exactly once. `presence-read.ts` was
+      deliberately not changed: the registry genuinely holds no path, so a reader that produced one
+      would be inventing it. The live roster reads `1 PROJECT · 9 AGENTS` for one orchestrator plus
+      eight subagents, and the phantom is gone whenever the parent's cwd resolves.
 
 ---
 
