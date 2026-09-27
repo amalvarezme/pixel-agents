@@ -4,9 +4,12 @@
  * worker join/leave on `session_start`/`session_end`, and parent/child correlation from `parent`
  * events (office-scene-renderer spec: "Per-Agent Worker Mapping", "Parent/Child Lane Layout").
  *
- * Archive/animation BEHAVIOR (worker movement, carry-queue collapse, docking) is still out of
- * scope — that lands in slice 4 (design.md: "Slicing"). `applyEventToOfficeState` never inspects
- * `memory_write` for that reason.
+ * Slice 4 (design.md: "Slicing") later added the carry/archive BEHAVIOR on top of that projection,
+ * so `applyEventToOfficeState` now DOES fold `memory_write`: it enqueues a per-worker carry job
+ * (FIFO, with the `×N` batch collapse) and, on the first document held — the worker was idle
+ * immediately before — requests one of the 4 round-robin archive dock slots.
+ * `completeArchiveTripForWorker` then advances that queue and releases the dock once nothing is
+ * left to carry. The walk itself (waypoints, animation clock) stays a UI concern, not folded here.
  *
  * This function is pure and framework-free so it can be reused verbatim by both the SSE server
  * (to build a resume `snapshot` frame, tasks.md 9.2) and the browser-side `OfficeContainer`
