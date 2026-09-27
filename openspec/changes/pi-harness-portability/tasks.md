@@ -283,10 +283,39 @@ removed without a failure indication").
 
 - [x] 10.v `npm test` 1145/1145 across 100 files, `npm run typecheck` clean, `npm run lint:deps`
       clean (222 modules) — independently re-verified, not taken from the writer's report.
-- [ ] 12.1 `npm test`, `npm run typecheck` and `npm run lint:deps` all clean at each of the two
-      commits, not only at the tip.
-- [ ] 12.2 Re-run the live browser check from task 9.7 with a real failed subagent: the failure is
-      now observable, which is exactly what task 9.7 could not show.
+- [x] 12.1 `npm test`, `npm run typecheck` and `npm run lint:deps` all clean at each of the two
+      commits, not only at the tip. F1's commit `28516d8` was re-run in a throwaway `git worktree`
+      pinned to it (removed afterwards, never in this worktree): 1145/1145 across 100 files,
+      `tsc --noEmit` clean, 779 cruised dependencies with no violations. F2's commit `957d4fb`:
+      1157/1157 across 100 files, typecheck clean, 780 cruised dependencies with no violations.
+- [x] 12.2 Live browser check re-run, and the failure IS now observable — which is exactly what
+      task 9.7 could not show. Run against a synthetic Pi home (a hand-authored presence registry
+      plus a one-line orchestrator transcript carrying the real `cwd`; no real Pi process was
+      spawned), the real server, and a real Chrome driven over CDP:
+      - **F2, at the wire and on the floor**: a bare `/stream` connect returns 9 workers — one
+        orchestrator plus 8 subagents — and EVERY `pi:task:task-N` carries the inherited
+        `projectPath=/Users/andresalvarez/Documents/pixel-agents`. The roster reads
+        `1 PROJECT · 9 AGENTS` and all nine characters are drawn in the same project character.
+        Before F2 those eight subagents would have carried no path: `Unknown`, `2 PROJECTS`.
+      - **F1, the dwell**: the eight subagents were failed one at a time, 1.5s apart, so each
+        `status(failed)` + `session_end` batch was followed by a 1.5s dwell while later workers
+        were still failing. Recording the composited page at ~400ms intervals and locating the
+        indicator's exact fill (`#E5484D`, radius 7, above the head) gives 0 indicator pixels at
+        6.1s, then 1 cluster (~32px) at 7.6s, 2 clusters at 8.2s, 2 at 11.3s, 3 at 14.2s, 1 at
+        17.0s, and 0 from 17.8s onward — clusters at DIFFERENT desk positions as each worker failed,
+        the overlap in the middle matching a 1.5s dwell against a 1.5s stagger. Crops of the same
+        region with and without the indicator are attached to the delivery report; the same crop at
+        6.1s and at 17.8s shows none. A failure is therefore now visible on the floor before the
+        worker leaves it.
+      - **Two method findings worth keeping** (both environment, neither a product defect):
+        (a) restarting the backend while the client is connected silently freezes the browser's SSE
+        stream through vite's dev proxy — one `/stream` request stays open and never reconnects, so
+        the office keeps rendering workers the server already removed; only a page reload recovers,
+        and it invalidated a first attempt at this check. (b) `document.querySelector('canvas')`
+        readback via `drawImage` returns a cleared buffer (`preserveDrawingBuffer` is false), so an
+        in-page pixel assertion reports ZERO red while the composited page demonstrably has ~6000
+        red pixels (the scenery's robot eyes); CDP screenshots are the only honest pixel evidence
+        here, and the in-page counter was discarded as a false negative rather than reported.
 
 ---
 
