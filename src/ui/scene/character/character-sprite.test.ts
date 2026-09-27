@@ -5,6 +5,8 @@ import {
   CHARACTER_IDS,
   ROLE_SCALE_BONUS,
   SPRITE_ACTIONS,
+  characterPortraitUrl,
+  characterSheetUrl,
   computeSpriteFrameRect,
   resolveCharacterId,
   resolveCharacterScale,
@@ -16,6 +18,15 @@ import {
 } from './character-sprite';
 
 const PACK_ROOT = join(process.cwd(), 'public', 'characters');
+
+/**
+ * The characters that shipped BEFORE the pack moved to v3, and are therefore the only ones with a
+ * `_v2` pair on disk. Scorpion is born at v3 — it never had a v2 — and a fabricated `_v2` file just
+ * to satisfy a uniform loop would be a lie about the pack's history, so the two guards below are
+ * deliberately split: v3 for every character (the URLs the code actually builds), v2 for these four
+ * by name (kept so a future cleanup does not delete files that are still served).
+ */
+const LEGACY_V2_IDS = ['alex', 'marcus', 'sophia', 'elena'] as const;
 
 function loadMeta(id: string): CharacterSpriteMeta {
   return JSON.parse(readFileSync(join(PACK_ROOT, id, `${id}.json`), 'utf8')) as CharacterSpriteMeta;
@@ -49,6 +60,16 @@ describe('resolveCharacterId', () => {
   it('falls back to a fixed character for a worker with no project, never a guess per call', () => {
     expect(resolveCharacterId(undefined)).toBe(resolveCharacterId(undefined));
     expect(resolveCharacterId(undefined)).toBe(resolveCharacterId('   '));
+  });
+
+  it('can reach EVERY shipped character, so no project silently loses the character it was assigned', () => {
+    // The modulus is `CHARACTER_IDS.length`, never a literal. A `% 4` left behind when the fifth
+    // character was added would make that character unreachable for every project in existence,
+    // with no error anywhere — it would simply never be drawn — and no other test would notice.
+    const reached = new Set<string>();
+    for (let i = 0; i < 500; i++) reached.add(resolveCharacterId(`/projects/project-${i}`));
+
+    expect([...reached].sort()).toEqual([...CHARACTER_IDS].sort());
   });
 });
 
@@ -322,9 +343,25 @@ describe('shipped asset pack', () => {
   });
 
   it('ships a spritesheet and a portrait file for every character, at the URLs the code builds', () => {
+    // The v3 files are what `characterSheetUrl`/`characterPortraitUrl` return and what the scene
+    // actually fetches, so those are the ones a missing character would break on.
     for (const id of CHARACTER_IDS) {
+      for (const url of [characterSheetUrl(id), characterPortraitUrl(id)]) {
+        expect(() => readFileSync(join(PACK_ROOT, url.replace('/characters/', '')))).not.toThrow();
+      }
+    }
+  });
+
+  it('keeps the four original v2 pairs on disk, and fabricates no v2 art for a v3-born character', () => {
+    for (const id of LEGACY_V2_IDS) {
       expect(() => readFileSync(join(PACK_ROOT, id, `${id}_spritesheet_v2.png`))).not.toThrow();
       expect(() => readFileSync(join(PACK_ROOT, id, `${id}_portrait_v2.png`))).not.toThrow();
+    }
+
+    const bornAtV3 = [...CHARACTER_IDS].filter((id) => !(LEGACY_V2_IDS as readonly string[]).includes(id));
+    expect(bornAtV3).toEqual(['scorpion']);
+    for (const id of bornAtV3) {
+      expect(() => readFileSync(join(PACK_ROOT, id, `${id}_spritesheet_v2.png`))).toThrow();
     }
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildProjectRoster } from './project-roster';
+import { CHARACTER_IDS, resolveCharacterId } from '../../scene/character/character-sprite';
 import type { OfficeRosterEntry } from '../../state/office-view-model';
 
 function worker(overrides: Partial<OfficeRosterEntry> = {}): OfficeRosterEntry {
@@ -102,9 +103,15 @@ describe('buildProjectRoster', () => {
   });
 
   it('carries the character the scene draws that project as', () => {
+    // Two assertions, because the name makes two claims. The first is "the roster never surfaces an
+    // id outside the shipped set" (a literal list here went stale the moment a fifth character
+    // shipped), and the second is the stronger one the name actually promises: the roster resolves
+    // the SAME character the scene draws for that project, from the same hash, so a project can
+    // never wear one face on the floor and another in the roster.
     const view = buildProjectRoster([worker({ projectPath: '/a/pixel-agents' })]);
 
-    expect(['alex', 'marcus', 'sophia', 'elena']).toContain(view.rows[0]?.character);
+    expect(CHARACTER_IDS).toContain(view.rows[0]?.character);
+    expect(view.rows[0]?.character).toBe(resolveCharacterId('/a/pixel-agents'));
   });
 
   it('puts the busiest project first', () => {

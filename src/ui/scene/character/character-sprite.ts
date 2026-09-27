@@ -25,7 +25,7 @@ import type { AgentRole } from '../../../domain/agents/agent-profile';
 import { depthScaleFor } from '../world/office-map';
 import type { CharacterAnimationState } from './animation-state';
 
-export const CHARACTER_IDS = ['alex', 'marcus', 'sophia', 'elena'] as const;
+export const CHARACTER_IDS = ['alex', 'marcus', 'sophia', 'elena', 'scorpion'] as const;
 export type CharacterId = (typeof CHARACTER_IDS)[number];
 
 /** Every action the pack ships (guide section 5). */

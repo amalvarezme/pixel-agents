@@ -30,6 +30,13 @@
       "metadata": "elena/elena.json",
       "spritesheet": "elena/elena_spritesheet_v3.png",
       "portrait": "elena/elena_portrait_v3.png"
+    },
+    "scorpion": {
+      "displayName": "Scorpion",
+      "role": "Security Reviewer",
+      "metadata": "scorpion/scorpion.json",
+      "spritesheet": "scorpion/scorpion_spritesheet_v3.png",
+      "portrait": "scorpion/scorpion_portrait_v3.png"
     }
   }
 }
