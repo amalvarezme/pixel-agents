@@ -35,6 +35,9 @@ import type { ClaudeCodeSessionRef } from './adapters/driven/claude-code/discove
 import { ClaudeCodeSubagentCorrelationCoordinator } from './adapters/driven/claude-code/subagent-correlation-coordinator';
 import { CodexActivitySource } from './adapters/driven/codex/activity-source';
 import { OpenCodeActivitySource } from './adapters/driven/opencode/activity-source';
+import { PiActivitySource } from './adapters/driven/pi/activity-source';
+import { PiSessionHashIndex } from './adapters/driven/pi/correlate';
+import { PiPresenceSource } from './adapters/driven/pi/presence-source';
 import { FileCheckpointStore } from './adapters/driven/checkpoint/file-checkpoint-store';
 import { ChildProcessSessionLauncher } from './adapters/driven/launcher/child-process-session-launcher';
 import { CorrelatingSessionLauncher } from './adapters/driven/launcher/correlating-session-launcher';
@@ -44,6 +47,7 @@ import { createNodePtyProbe } from './adapters/driven/terminal/node-pty-probe';
 import { createStreamServer, SseEventHub } from './adapters/driving/http/stream';
 import { ingestAgentActivity } from './application/ingest-agent-activity/ingest-agent-activity';
 import type { EventPublisher } from './ports/event-publisher.port';
+import type { AgentEventBase } from './domain/events/types';
 
 const PORT = Number(process.env.PORT ?? 4317);
 const HOST = '127.0.0.1';
@@ -51,6 +55,9 @@ const CLAUDE_HOME = process.env.CLAUDE_HOME ?? join(homedir(), '.claude');
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), '.codex');
 const GEMINI_HOME = process.env.GEMINI_HOME ?? join(homedir(), '.gemini');
 const OPENCODE_DB_PATH = process.env.OPENCODE_DB_PATH ?? join(homedir(), '.local', 'share', 'opencode', 'opencode.db');
+// Pi's root is its AGENT home (`~/.pi/agent`), not `~/.pi` — that is the directory that contains
+// `sessions/` and `gentle-agents/`, matching what every other `<HARNESS>_HOME` means here.
+const PI_HOME = process.env.PI_HOME ?? join(homedir(), '.pi', 'agent');
 // design.md "Session discovery and aging out" — Bootstrap: "an opt-in --replay-since exists for
 // demos and fixture capture". Default OFF: a session with no prior checkpoint bootstraps at EOF,
 // never replaying a fixture's (or a real transcript's) full history on process start.
@@ -87,6 +94,13 @@ function buildSources(
   subagentCorrelator: ClaudeCodeSubagentCorrelationCoordinator,
   allocateId: () => number,
   clock: { now: () => number },
+  /**
+   * Pi's parent/child join table (design.md D2). Owned by `main()` and shared by Pi's TWO sources:
+   * the transcript source fills it as it discovers orchestrators, the presence source reads it to
+   * resolve each subagent's parent by `sha256(sessionId)`.
+   */
+  piSessionIndex: PiSessionHashIndex,
+  onPiRegistryStats: (event: AgentEventBase) => void,
 ): ActivitySource[] {
   const sources: ActivitySource[] = [];
   if (isHarnessEnabled('CLAUDE_CODE_ENABLED')) {
@@ -110,6 +124,26 @@ function buildSources(
     sources.push(new AntigravityActivitySource(GEMINI_HOME, { allocateId, now: clock.now, replayFromStart: REPLAY_FROM_START }));
   }
   if (isHarnessEnabled('OPENCODE_ENABLED')) sources.push(new OpenCodeActivitySource(OPENCODE_DB_PATH, { allocateId }));
+  if (isHarnessEnabled('PI_ENABLED')) {
+    // Pi is the only harness with TWO stores, so it contributes two sources under one harness id.
+    // Their key spaces are disjoint by construction (`pi:<sessionId>` vs `pi:task:<taskId>`).
+    sources.push(
+      new PiActivitySource(PI_HOME, {
+        allocateId,
+        now: clock.now,
+        replayFromStart: REPLAY_FROM_START,
+        // Feeds the hash index BEFORE the presence source can need it: a subagent whose parent has
+        // not been registered yet simply publishes no `parent` event and is promoted by the agent
+        // tree's orphan grace, so ordering degrades correlation rather than breaking it.
+        onSessionDiscovered: (ref) => piSessionIndex.register(ref.sessionId),
+      }),
+    );
+    const presenceSource = new PiPresenceSource(PI_HOME, piSessionIndex, { allocateId, now: clock.now });
+    // Registry-level `stats` belong to no single task, so they cannot travel on a task's own
+    // `open()` stream — the composition root is the only place that can publish them.
+    presenceSource.onRegistryStats(onPiRegistryStats);
+    sources.push(presenceSource);
+  }
   return sources;
 }
 
@@ -135,7 +169,10 @@ async function main(): Promise<void> {
   // their own way (e.g. OpenCode's `session.parent_id`, mapped directly in its own `parse.ts`).
   const claudeCodeAllocateId = createIdAllocator();
   const subagentCorrelator = new ClaudeCodeSubagentCorrelationCoordinator(trackedPublisher, clock, claudeCodeAllocateId);
-  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId, clock);
+  const piSessionIndex = new PiSessionHashIndex();
+  const sources = buildSources(subagentCorrelator, claudeCodeAllocateId, clock, piSessionIndex, (event) =>
+    trackedPublisher.publish(event),
+  );
   // Subsystem Separation from Ingestion (spec: agent-launcher): the launcher shares the bus
   // (`hub` as `EventPublisher`) but no code path with any of the four adapters above. The
   // correlator itself lives entirely inside the launcher subsystem too — this composition root is

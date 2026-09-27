@@ -20,6 +20,7 @@ const HARNESS_BADGES: Record<HarnessId, HarnessBadge> = {
   codex: { text: 'Codex', name: 'Codex', color: '#10a37f' },
   opencode: { text: 'OpenCode', name: 'OpenCode', color: '#5865f2' },
   antigravity: { text: 'Antigravity', name: 'Antigravity', color: '#4285f4' },
+  pi: { text: 'Pi', name: 'Pi', color: '#a855f7' },
 };
 
 export function buildHarnessBadge(harness: HarnessId): HarnessBadge {

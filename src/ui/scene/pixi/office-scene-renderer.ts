@@ -34,6 +34,7 @@ import type { OfficeFloorView } from '../../components/organisms/office-floor';
 import type { WorkerView } from '../../components/molecules/worker';
 import { PERSISTENT_MEMORY, WORLD_HEIGHT, WORLD_WIDTH } from '../world/office-map';
 import { isToolRecentlyStarted, selectCharacterAnimationState } from '../character/animation-state';
+import { resolveLifecyclePresentation } from '../character/lifecycle-presentation';
 import { selectAnimationFrame } from '../character/animation-clock';
 import { resolveModelAccentColor } from '../character/model-accent';
 import { resolveProjectCharacterColor } from '../character/project-accent';
@@ -65,6 +66,14 @@ const DOCUMENT_GAP = 30;
 const DOCUMENT_COLOR = 0xffffff;
 const DOCUMENT_BORDER_COLOR = 0x2f6fed;
 const HIGHLIGHT_RING_COLOR = 0xf5a524;
+/** Amber for "blocked, waiting on someone"; red for "this ended badly". Distinct hues, because the
+ * two states call for different reactions — one needs an answer, the other needs a look at the log. */
+const LIFECYCLE_BLOCKED_COLOR = 0xf5a524;
+const LIFECYCLE_FAILED_COLOR = 0xe5484d;
+const LIFECYCLE_FLAG_BORDER_COLOR = 0x1a1a1a;
+const LIFECYCLE_FLAG_RADIUS = 7;
+/** Clear of the caption plate, so the flag never overlaps the worker's own label. */
+const LIFECYCLE_FLAG_GAP = 54;
 const BATCH_BADGE_STYLE = { fontSize: 11, fill: 0x1b2838, fontWeight: '700' } as const;
 
 const ARCHIVE_COUNTER_STYLE = { fontSize: 15, fill: 0xffffff, fontWeight: '700' } as const;
@@ -129,7 +138,11 @@ function renderPlatedLabel(
  * is the same character, matching the procedural path's shared body colour.
  */
 function renderWorkerCharacter(worker: WorkerView, now: number, atlas?: CharacterAtlas): Container {
-  const animationState = selectCharacterAnimationState({ activity: worker.activity, isWalking: isWorkerWalking(worker) });
+  const animationState = selectCharacterAnimationState({
+    activity: worker.activity,
+    isWalking: isWorkerWalking(worker),
+    lifecycle: worker.lifecycle,
+  });
   // Archive trip direction always wins when both exist — per `applySofaOverlay`'s own precedence
   // (blocker step 4.9), an archiveTrip and a sofaVisit should never actually coexist on one worker
   // in view-model data, but reading archiveTrip first keeps that precedence explicit here too.
@@ -201,6 +214,31 @@ function addArchiveTripIndicator(group: Container, worker: WorkerView): void {
 }
 
 /**
+ * The blocked/failed flag, for a worker whose harness reported a lifecycle that warrants one
+ * (spec: "A blocked subagent is distinguishable from an idle one", "A failed subagent ends visibly,
+ * not silently").
+ *
+ * The DECISION of whether a flag belongs here is not made in this file: it comes from
+ * `resolveLifecyclePresentation`, which is pure and total over the closed lifecycle union. This
+ * function only turns that answer into pixels — the same split as `selectCharacterAnimationState`.
+ *
+ * Drawn last, so it is always the topmost child of the worker's group and never hidden behind a
+ * carried document.
+ */
+function addLifecycleIndicator(group: Container, worker: WorkerView): void {
+  const { indicator } = resolveLifecyclePresentation(worker.lifecycle);
+  if (indicator === 'none') return;
+
+  const color = indicator === 'failed' ? LIFECYCLE_FAILED_COLOR : LIFECYCLE_BLOCKED_COLOR;
+  const y = -CHARACTER_BODY_HEIGHT * worker.scale - LIFECYCLE_FLAG_GAP;
+  const flag = new Graphics()
+    .circle(0, y, LIFECYCLE_FLAG_RADIUS)
+    .fill(color)
+    .stroke({ width: 2, color: LIFECYCLE_FLAG_BORDER_COLOR });
+  group.addChild(flag);
+}
+
+/**
  * One worker: the character standing on the floor, its caption above its head, and whatever it is
  * carrying. The whole group sits at the character's own position, which is what makes the archive
  * trip a matter of moving one container rather than offsetting everything inside it — the desk it
@@ -221,6 +259,7 @@ function renderWorker(worker: WorkerView, now: number, atlas?: CharacterAtlas): 
   group.addChild(caption);
 
   addArchiveTripIndicator(group, worker);
+  addLifecycleIndicator(group, worker);
   return group;
 }
 

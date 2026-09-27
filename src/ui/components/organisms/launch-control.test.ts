@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { buildLaunchControlView } from './launch-control';
 
 describe('buildLaunchControlView', () => {
-  it('offers exactly the four supported launch targets, in a stable order', () => {
+  it('offers exactly the five supported launch targets, in a stable order', () => {
     const view = buildLaunchControlView();
 
     expect(view.targets).toEqual([
@@ -16,6 +16,7 @@ describe('buildLaunchControlView', () => {
       { harness: 'codex', label: 'Codex' },
       { harness: 'opencode', label: 'OpenCode' },
       { harness: 'antigravity', label: 'Antigravity' },
+      { harness: 'pi', label: 'Pi' },
     ]);
   });
 

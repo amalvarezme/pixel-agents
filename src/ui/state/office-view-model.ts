@@ -6,11 +6,12 @@
  * Combines the domain's structural projection (`applyEventToOfficeState`, `domain/office/office`)
  * with the pure layout math (`office-layout.ts`) into one renderable view model.
  */
-import type { HarnessId } from '../../domain/events/types';
+import type { HarnessId, SessionLifecycle } from '../../domain/events/types';
 import type { AgentProfile } from '../../domain/agents/agent-profile';
 import type { OfficeState, WorkerActivity } from '../../domain/office/office';
 import { computeOfficeLayout, type LayoutWorkerInput } from '../scene/layout/office-layout';
-import { PERSISTENT_MEMORY, type MapPoint } from '../scene/world/office-map';
+import { PERSISTENT_MEMORY, WAITING_AREA, type MapPoint } from '../scene/world/office-map';
+import { resolveLifecyclePresentation } from '../scene/character/lifecycle-presentation';
 import { officeNavigation } from '../scene/world/office-navigation';
 import type { CharacterDirection } from '../scene/character/character-sprite';
 
@@ -71,6 +72,14 @@ export interface WorkerViewModel {
    * domain field) so a hand-built view model never needs to specify it; the render layer degrades
    * a missing value to idle rather than inventing "working". */
   activity?: WorkerActivity;
+  /**
+   * Carried straight through from `Worker.lifecycle` — what this worker's own harness scheduler
+   * reported. `resolveLifecyclePresentation` (`ui/scene/character/lifecycle-presentation.ts`) turns
+   * it into whether this worker is drawn at a desk, whether it may look busy, and which flag it
+   * carries. `undefined` for a harness that reports no lifecycle, which renders exactly as it did
+   * before lifecycle existed.
+   */
+  lifecycle?: SessionLifecycle;
   archiveTrip?: ArchiveTripView;
   /** Carried straight through from `Worker.lastToolStartAt` — the pixi renderer uses it
    * (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`) to pick the `typing` vs.
@@ -101,6 +110,9 @@ export interface OfficeRosterEntry {
   harness: HarnessId;
   projectPath?: string;
   activity?: WorkerActivity;
+  /** Carried straight through from `Worker.lifecycle`, so the roster can report a queued or failed
+   * worker even when it is past `MAX_SEATED_WORKERS` and absent from `workers`. */
+  lifecycle?: SessionLifecycle;
   role?: AgentProfile['role'];
 }
 
@@ -123,6 +135,22 @@ export interface OfficeViewModel {
   now?: number;
 }
 
+/**
+ * A stable waiting spot for one session, chosen by hashing its key across `WAITING_AREA` so the
+ * same worker stands in the same place on every frame — a spot picked by array index or arrival
+ * order would make workers hop as siblings come and go. Falls back to the worker's own seat if the
+ * map ever declares no waiting area at all, so a queued worker is never drawn at (0, 0).
+ */
+function waitingSpotFor(sessionKey: string, fallback: MapPoint): MapPoint {
+  if (WAITING_AREA.length === 0) return fallback;
+  let hash = 0;
+  for (const char of sessionKey) hash = (hash * 31 + char.charCodeAt(0)) % useSafeModulus;
+  return WAITING_AREA[hash % WAITING_AREA.length] ?? fallback;
+}
+
+/** Keeps the rolling hash inside the safe-integer range without needing BigInt. */
+const useSafeModulus = 0x7fffffff;
+
 /** Projects the current `OfficeState` into a renderable `OfficeViewModel`. Pure — no I/O. */
 export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
   const workers = [...state.workers.values()];
@@ -135,6 +163,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
     harness: w.harness,
     ...(w.projectPath !== undefined ? { projectPath: w.projectPath } : {}),
     activity: w.activity,
+    ...(w.lifecycle !== undefined ? { lifecycle: w.lifecycle } : {}),
     ...(w.agentProfile?.role ? { role: w.agentProfile.role } : {}),
   }));
 
@@ -143,16 +172,22 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
     const seat = seatBySessionKey.get(worker.sessionKey);
     if (!seat) continue; // beyond MAX_SEATED_WORKERS — counted in overflowCount instead
     const held = state.carryQueues.get(worker.sessionKey)?.held;
+    // A worker with no desk yet stands in the waiting area instead (spec: "A queued subagent does
+    // not appear to be working"). `seatX`/`seatY` still name the desk that IS its, so the renderer
+    // can walk it over the moment its lifecycle says it started.
+    const presentation = resolveLifecyclePresentation(worker.lifecycle);
+    const stand = presentation.seated ? seat : waitingSpotFor(worker.sessionKey, seat);
     viewModelWorkers.push({
       sessionKey: worker.sessionKey,
       harness: worker.harness,
       label: worker.label,
-      x: seat.x,
-      y: seat.y,
+      x: stand.x,
+      y: stand.y,
       seatX: seat.x,
       seatY: seat.y,
       stationId: seat.stationId,
       activity: worker.activity,
+      ...(worker.lifecycle !== undefined ? { lifecycle: worker.lifecycle } : {}),
       ...(worker.toolLabel !== undefined ? { toolLabel: worker.toolLabel, toolDetail: worker.toolDetail } : {}),
       ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
       ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),

@@ -387,3 +387,38 @@ describe('archive counter', () => {
     expect(text).not.toContain('3');
   });
 });
+
+// Requirement: Lifecycle-Distinct Worker Presentation (spec: office-scene-renderer).
+describe('renderOfficeScene — lifecycle indicators', () => {
+  /** The indicator is the one extra child a flagged worker's group carries. */
+  function childCount(w: WorkerView): number {
+    return workerGroups(renderOfficeScene(floorOf([w])))[0]!.children.length;
+  }
+
+  it('draws a blocked worker with one indicator an unflagged worker does not have', () => {
+    expect(childCount(worker({ lifecycle: 'waiting' }))).toBe(childCount(worker()) + 1);
+  });
+
+  it('draws a failed worker with an indicator too', () => {
+    expect(childCount(worker({ lifecycle: 'failed' }))).toBe(childCount(worker()) + 1);
+  });
+
+  it('draws no indicator for a cancelled worker (triangulation: an ending with nothing to report)', () => {
+    expect(childCount(worker({ lifecycle: 'cancelled' }))).toBe(childCount(worker()));
+  });
+
+  it('draws no indicator for a running worker, nor for one with no lifecycle at all', () => {
+    expect(childCount(worker({ lifecycle: 'running' }))).toBe(childCount(worker()));
+    expect(childCount(worker({ lifecycle: undefined }))).toBe(childCount(worker()));
+  });
+
+  it('tells the blocked and failed indicators apart by colour, not only by presence', () => {
+    const colourOf = (lifecycle: WorkerView['lifecycle']) => {
+      const group = workerGroups(renderOfficeScene(floorOf([worker({ lifecycle })])))[0]!;
+      const flag = group.children[group.children.length - 1] as Graphics;
+      return flag.fillStyle.color;
+    };
+
+    expect(colourOf('waiting')).not.toBe(colourOf('failed'));
+  });
+});

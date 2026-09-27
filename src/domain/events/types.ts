@@ -6,7 +6,7 @@
 
 import type { AgentProfile } from '../agents/agent-profile';
 
-export const HARNESS_IDS = ['claude-code', 'codex', 'opencode', 'antigravity'] as const;
+export const HARNESS_IDS = ['claude-code', 'codex', 'opencode', 'antigravity', 'pi'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 /**
@@ -17,6 +17,33 @@ export type HarnessId = (typeof HARNESS_IDS)[number];
  * the office projection — and therefore the renderer — can ever learn that a worker went quiet.
  */
 export type SessionActivity = 'working' | 'idle';
+
+/**
+ * What a harness's own SCHEDULER says about a session — a different fact from `SessionActivity`
+ * above, which is our own liveness projection (spec: "Session Lifecycle Is Distinct From
+ * Activity"). A session can be `waiting` (blocked on an answer) and `idle` (quiet for a while) at
+ * once; neither is derivable from the other, so neither may overwrite the other.
+ *
+ * Derived from the `const` array so the runtime guard and the compile-time type cannot drift,
+ * exactly like `EVENT_KINDS` and `HARNESS_IDS`. Today only Pi reports this, from its subagent
+ * presence registry; a harness that reports nothing leaves the field absent, and an absent
+ * lifecycle means "no claim" — never `running`.
+ */
+export const SESSION_LIFECYCLES = [
+  'running',
+  'queued',
+  'waiting',
+  'completed',
+  'failed',
+  'cancelled',
+  'timed_out',
+] as const;
+
+export type SessionLifecycle = (typeof SESSION_LIFECYCLES)[number];
+
+export function isSessionLifecycle(value: string): value is SessionLifecycle {
+  return (SESSION_LIFECYCLES as readonly string[]).includes(value);
+}
 
 const LOG_SOURCED_EVENT_KINDS = [
   'session_start',
@@ -71,6 +98,14 @@ export interface AgentEventBase {
    * that it has since gone quiet, which is knowable only by watching a clock run out.
    */
   activity?: SessionActivity;
+  /**
+   * The scheduler-reported lifecycle, carried by the `status` events an ingestion adapter publishes
+   * when a session's own harness reports a state change (spec: "Session Lifecycle Is Distinct From
+   * Activity"). The mirror image of `activity` above: `activity` is OURS to set and an adapter must
+   * never touch it, `lifecycle` is the harness's to report and the lifecycle coordinator must never
+   * touch it. Absent means the harness made no claim.
+   */
+  lifecycle?: SessionLifecycle;
   /**
    * Launcher-only fields (design.md "The Launcher"). Populated exclusively by
    * `createSelfOriginatedEvent` for `launch_requested`/`launch_started`, and by the launcher

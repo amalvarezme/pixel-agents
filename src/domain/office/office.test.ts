@@ -8,6 +8,7 @@ import {
 } from './office';
 import type { AgentEvent } from '../events/types';
 import { DEFAULT_ORPHAN_GRACE_MS } from '../agents/agent-tree';
+import { createEventFromLogRecord } from '../events/factories';
 
 function sessionStart(id: number, sessionKey: string): AgentEvent {
   return { id, kind: 'session_start', harness: 'claude-code', sessionKey, at: id };
@@ -991,5 +992,77 @@ describe('applyEventToOfficeState — lastEventAt (quiet signal for the sofa-vis
     });
 
     expect(state.workers.get('claude-code:s1')?.lastEventAt).toBe(5000);
+  });
+});
+
+const start = (sessionKey: string, at = 1000) =>
+  createEventFromLogRecord(1, { kind: 'session_start', harness: 'pi' as const, sessionKey, at, label: 'apply' });
+
+// Requirement: Session Lifecycle Is Distinct From Activity (spec: normalized-event-model).
+describe('worker lifecycle projection', () => {
+  it('records the lifecycle a status event reports', () => {
+    let state = applyEventToOfficeState(createOfficeState(), start('pi:task:t1'));
+    state = applyEventToOfficeState(
+      state,
+      createEventFromLogRecord(2, { kind: 'status', harness: 'pi', sessionKey: 'pi:task:t1', at: 1100, lifecycle: 'queued' }),
+    );
+
+    expect(state.workers.get('pi:task:t1')?.lifecycle).toBe('queued');
+  });
+
+  it('keeps lifecycle and activity as independent facts, neither overwriting the other', () => {
+    let state = applyEventToOfficeState(createOfficeState(), start('pi:task:t1'));
+    state = applyEventToOfficeState(
+      state,
+      createEventFromLogRecord(2, { kind: 'status', harness: 'pi', sessionKey: 'pi:task:t1', at: 1100, lifecycle: 'waiting' }),
+    );
+    // The lifecycle coordinator's own announcement, constructed the way that module does.
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'status',
+      harness: 'pi',
+      sessionKey: 'pi:task:t1',
+      at: 1200,
+      activity: 'idle',
+    });
+
+    const worker = state.workers.get('pi:task:t1');
+    expect(worker?.lifecycle).toBe('waiting');
+    expect(worker?.activity).toBe('idle');
+  });
+
+  it('leaves lifecycle absent for a harness that reports none, never defaulting it', () => {
+    const state = applyEventToOfficeState(
+      createOfficeState(),
+      createEventFromLogRecord(1, { kind: 'session_start', harness: 'claude-code', sessionKey: 'claude-code:s1', at: 1000 }),
+    );
+
+    expect(state.workers.get('claude-code:s1')?.lifecycle).toBeUndefined();
+  });
+
+  it('does not erase a known lifecycle when a later event carries none (merge, not replace)', () => {
+    let state = applyEventToOfficeState(createOfficeState(), start('pi:task:t1'));
+    state = applyEventToOfficeState(
+      state,
+      createEventFromLogRecord(2, { kind: 'status', harness: 'pi', sessionKey: 'pi:task:t1', at: 1100, lifecycle: 'waiting' }),
+    );
+    state = applyEventToOfficeState(
+      state,
+      createEventFromLogRecord(3, { kind: 'tool_start', harness: 'pi', sessionKey: 'pi:task:t1', at: 1200, toolLabel: 'bash' }),
+    );
+
+    expect(state.workers.get('pi:task:t1')?.lifecycle).toBe('waiting');
+  });
+
+  it('advances the lifecycle when a later status reports a different one', () => {
+    let state = applyEventToOfficeState(createOfficeState(), start('pi:task:t1'));
+    for (const [id, lifecycle] of [[2, 'queued'], [3, 'running'], [4, 'failed']] as const) {
+      state = applyEventToOfficeState(
+        state,
+        createEventFromLogRecord(id, { kind: 'status', harness: 'pi', sessionKey: 'pi:task:t1', at: 1000 + id, lifecycle }),
+      );
+    }
+
+    expect(state.workers.get('pi:task:t1')?.lifecycle).toBe('failed');
   });
 });

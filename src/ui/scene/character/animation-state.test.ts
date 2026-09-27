@@ -62,3 +62,26 @@ describe('isToolRecentlyStarted — tool-start recency, not tool_start/tool_end 
     expect(isToolRecentlyStarted(10_000, 9_000)).toBe(true);
   });
 });
+
+// Requirement: Lifecycle-Distinct Worker Presentation (spec: office-scene-renderer).
+describe('selectCharacterAnimationState with a reported lifecycle', () => {
+  it('never draws a blocked worker as working, even while its activity says working', () => {
+    expect(selectCharacterAnimationState({ activity: 'working', isWalking: false, lifecycle: 'waiting' })).toBe('idle');
+  });
+
+  it('never draws a queued worker as working', () => {
+    expect(selectCharacterAnimationState({ activity: 'working', isWalking: false, lifecycle: 'queued' })).toBe('idle');
+  });
+
+  it('still draws a running worker as working (triangulation: the ordinary case)', () => {
+    expect(selectCharacterAnimationState({ activity: 'working', isWalking: false, lifecycle: 'running' })).toBe('working');
+  });
+
+  it('draws a worker with no reported lifecycle exactly as before lifecycle existed', () => {
+    expect(selectCharacterAnimationState({ activity: 'working', isWalking: false })).toBe('working');
+  });
+
+  it('keeps walking winning over a blocked lifecycle: a worker in transit is drawn walking', () => {
+    expect(selectCharacterAnimationState({ activity: 'working', isWalking: true, lifecycle: 'waiting' })).toBe('walking');
+  });
+});

@@ -57,7 +57,31 @@ export interface SeqCheckpoint {
   partsBySession?: Record<string, number>;
 }
 
-export type Checkpoint = ByteOffsetCheckpoint | SeqCheckpoint;
+/**
+ * Pi presence-registry checkpoint. The registry is a SNAPSHOT store, not an append-only log: Pi
+ * rewrites `activity.json` atomically on every change, bumping a monotonic `generation`. There is
+ * no offset and no sequence to resume from, so this records what was last PUBLISHED.
+ *
+ * UNLIKE the other two kinds, this one is deliberately NOT load-bearing for resume. A byte offset
+ * says where a log was read to, and replaying from it would duplicate history; a snapshot has no
+ * history to duplicate, and every fact in it — this task exists, it is queued, that tool is still
+ * running — is CURRENT state that a freshly started process needs told to it again. So
+ * `PiPresenceSource.open()` re-announces the task and diffs from empty, and these fields serve as
+ * published progress rather than as a suppression gate. Seeding the cursor from them instead left
+ * live subagents invisible after a restart, because the checkpoint file outlives the in-memory
+ * office it was describing.
+ */
+export interface GenerationCheckpoint {
+  kind: 'generation';
+  /** Last published activity `generation`, keyed by `<sessionHash>.<incarnation>`. */
+  byActivation: Record<string, number>;
+  /** Last published thread `version`, keyed by `<sessionHash>.<incarnation>.<taskId>`. */
+  threadByTask?: Record<string, number>;
+  /** Last published task `status`, keyed the same way, so a `status` event fires only on a change. */
+  statusByTask?: Record<string, string>;
+}
+
+export type Checkpoint = ByteOffsetCheckpoint | SeqCheckpoint | GenerationCheckpoint;
 
 /**
  * `probe()` MUST NOT throw. A harness that is unreachable, mis-configured, or schema-drifted

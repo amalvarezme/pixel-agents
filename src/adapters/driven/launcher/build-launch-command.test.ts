@@ -44,6 +44,7 @@ describe('buildLaunchCommand — argv byte-identity (Threat Matrix case a / succ
       codex: 'codex',
       opencode: 'opencode',
       antigravity: 'agy',
+      pi: 'pi',
     });
   });
 
@@ -53,7 +54,20 @@ describe('buildLaunchCommand — argv byte-identity (Threat Matrix case a / succ
       codex: [],
       opencode: [],
       antigravity: [],
+      pi: [],
     });
+  });
+
+  it('builds a byte-identical `pi` invocation with no flags of its own', () => {
+    expect(buildLaunchCommand({ harness: 'pi', cwd: '.', args: [] })).toEqual(['pi']);
+  });
+
+  it("passes the user's own free args through for pi, in order, unchanged", () => {
+    expect(buildLaunchCommand({ harness: 'pi', cwd: '.', args: ['--mode', 'rpc'] })).toEqual([
+      'pi',
+      '--mode',
+      'rpc',
+    ]);
   });
 });
 
@@ -63,6 +77,7 @@ describe('buildLaunchCommand — injection guard (Threat Matrix case b, Zero-Inj
     codex: [],
     opencode: [],
     antigravity: [],
+    pi: [],
   });
 
   it.each(['--append-system-prompt', '--system-prompt', '--settings', '--config'])(

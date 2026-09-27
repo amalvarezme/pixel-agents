@@ -5,7 +5,10 @@
  * overlay driven by a pure hit-test (`ui/scene/layout/hover-hit-test.ts`), and this module is the
  * pure half that decides WHAT it says.
  *
- * Always exactly five rows: Project / Agent / Role / Model / Task.
+ * Five rows always: Project / Agent / Role / Model / Task — plus a sixth, `State`, only for a
+ * worker whose harness actually reports a `SessionLifecycle`. The row is omitted rather than filled
+ * with a placeholder, because "we do not know" and "running" are different claims and only one of
+ * them is true (spec: "A field the registry omitted is absent from the tooltip").
  *
  * Model row contract (mirrors `domain/agents/agent-profile.ts`'s own contract literally):
  * `model` is the RESOLVED, LIVE running model; `requestedModel` is only what a subagent was
@@ -19,6 +22,7 @@
  * for the panel. Runs in the BROWSER, so this deliberately never imports `node:path`.
  */
 import type { AgentRole } from '../../../domain/agents/agent-profile';
+import type { SessionLifecycle } from '../../../domain/events/types';
 import { characterPortraitUrl, resolveCharacterId } from '../../scene/character/character-sprite';
 
 export interface AgentTooltipRow {
@@ -48,6 +52,9 @@ export interface AgentTooltipSource {
   task?: string;
   toolLabel?: string;
   toolDetail?: string;
+  /** The harness's own scheduler report (`Worker.lifecycle`). `undefined` for the four harnesses
+   * that report none, which render the same five rows they always did. */
+  lifecycle?: SessionLifecycle;
   /** The session's associated project — an absolute working directory, sourced from
    * `Worker.projectPath` (`domain/office/office.ts`). Renders as just its final path segment
    * (`resolveProjectSegment`), never the full path. `undefined` for a harness that reports none
@@ -134,6 +141,10 @@ export function buildAgentTooltip(source: AgentTooltipSource): AgentTooltipView 
       { label: 'Role', value: buildRoleValue(source) },
       { label: 'Model', value: buildModelValue(source) },
       { label: 'Task', value: buildTaskValue(source) },
+      // Verbatim, not prettified: `timed_out` and `failed` are genuinely different outcomes, and a
+      // friendlier label would have to choose a wording for each, inventing meaning the registry
+      // never carried.
+      ...(source.lifecycle ? [{ label: 'State', value: source.lifecycle }] : []),
     ],
   };
 }

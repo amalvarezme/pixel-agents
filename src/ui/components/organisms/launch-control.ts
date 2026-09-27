@@ -19,6 +19,7 @@ const LAUNCH_TARGET_LABELS: Record<HarnessId, string> = {
   codex: 'Codex',
   opencode: 'OpenCode',
   antigravity: 'Antigravity',
+  pi: 'Pi',
 };
 
 export function buildLaunchControlView(): LaunchControlView {

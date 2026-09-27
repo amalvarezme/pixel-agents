@@ -5,6 +5,7 @@ import {
   type LogSourcedEventKind,
   type MemoryWriteEvent,
   type SelfOriginatedEventKind,
+  type SessionLifecycle,
 } from './types';
 import type { AgentProfile } from '../agents/agent-profile';
 
@@ -19,6 +20,13 @@ export interface CreateLogSourcedEventInput {
   toolDetail?: string;
   agentProfile?: AgentProfile;
   projectPath?: string;
+  /**
+   * The harness's own scheduler report. Deliberately the ONLY of the two state fields this factory
+   * accepts: `activity` is absent here so no ingestion adapter can ever claim liveness through the
+   * one factory it is allowed to call — `session-lifecycle-coordinator.ts` constructs its
+   * `status(activity)` event literal directly, exactly so this door stays shut.
+   */
+  lifecycle?: SessionLifecycle;
 }
 
 /**
