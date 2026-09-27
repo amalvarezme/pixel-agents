@@ -86,10 +86,15 @@ hotter and colder than hers and sit on a near-black base, or the two characters 
       `/tmp/preview-scorpion-final.png` and `/tmp/preview-scorpion-final-vs-elena.png`. Intermediate
       ones kept for the record: `/tmp/preview-scorpion.png`, `/tmp/preview-scorpion-detail.png`,
       `/tmp/preview-alex.png`, `/tmp/pose-compare.png`, `/tmp/accent-variants-side-by-side.png`.
-- [ ] 7 Optional portrait: still NOT done, and explicitly left open. `index.mjs` writes a procedural
-      256x256 `_portrait_v3.png`, which is what ships. Using the AI image directly would put an
-      848px-detailed face above a 64px flat sprite, and the maintainer has not asked for it, so the
-      task stays open rather than being closed as "declined".
+- [x] 7 Portrait override SHIPPED. Scorpion's `palette.mjs` entry now declares
+      `portraitAsset: 'assets/scorpion-portrait.png'` and `index.mjs` COPIES it byte-for-byte to
+      `public/characters/scorpion/scorpion_portrait_v3.png` instead of drawing a portrait. A copy,
+      not a decode: the generator has a PNG encoder and no decoder, so a decoder would be a new
+      dependency for no benefit. The asset is Nano Banana 2 at 1024x1024, downscaled 4x NEAREST to
+      256 and QUANTIZED to Scorpion's 40 sheet colours. A new guard in `character-sprite.test.ts`
+      decodes every character's portrait and sheet and fails if any portrait colour is absent from
+      its own sheet. The other five characters' portraits and all six sheets regenerate byte for
+      byte. See "Task 7" below, including the honest limit on GRANULARITY.
 
 ## Decisions taken during implementation
 
@@ -252,6 +257,59 @@ both files were produced by the same source through the switch, which no longer 
   - the roster assertion pointed at `/a/quiet` instead of `/a/pixel-agents` breaks `carries the
     character the scene draws that project as` with `expected 'scorpion' to be 'sophia'`.
 
+## Task 7: the AI tooltip portrait (closed)
+
+The maintainer asked for the optional 256x256 AI portrait, with the caveat that an AI illustration is
+far more detailed than the flat sprite it sits above. What shipped:
+
+- **The asset.** `scripts/gen-characters/assets/scorpion-portrait.png`, 256x256 RGBA, committed with
+  the generator. Provenance: Nano Banana 2 at 1024x1024 from a prompt plus two input images (the
+  shipped Scorpion sheet preview for character and palette, and `alex_portrait_v3.png` for bust
+  framing); downscaled 1024 -> 256 by an exact 4x NEAREST resize, to keep hard pixel blocks rather
+  than introduce anti-aliasing; then QUANTIZED to the 40 colours of the shipped
+  `scorpion_spritesheet_v3.png`.
+- **The mechanism.** `index.mjs` has an optional per-character override. When a palette entry
+  declares `portraitAsset`, the generator COPIES that file byte-for-byte to
+  `public/characters/<id>/<id>_portrait_v3.png`; with no override it builds the portrait from the
+  resting frame exactly as before. It is a copy, never a decode or resize — the generator has a PNG
+  encoder only, and a decoder would be a new dependency or a lot of code for no benefit.
+- **The guard.** `character-sprite.test.ts` gains one cohesion test over EVERY character: decode
+  `public/characters/<id>/<id>_portrait_v3.png` and `<id>_spritesheet_v3.png`, and assert that no
+  portrait colour is absent from that same character's sheet. This is the property that stops the
+  tooltip and the floor from drifting apart in colour.
+
+### Evidence
+
+- **RED, honestly.** The test PASSED against the pre-integration tree on the first run (45/45): the
+  shipped portrait was still the generator's own, and a generated portrait is a crop of a frame of the
+  sheet, so it cannot carry a foreign colour. There was therefore NO natural RED for this test. It was
+  made RED by mutation instead: an unquantized portrait (the asset with every channel jittered) dropped
+  in as `scorpion_portrait_v3.png` ->
+  `FAIL ... keeps every character's portrait inside its own sheet's palette ... scorpion: 34 portrait
+  colour(s) absent from its sheet`, 1 failed | 44 passed. Restored to the asset bytes afterwards.
+- **GREEN.** `npm test`: 1168 passed across 100 files, 0 failed. `npm run typecheck`: clean.
+  `npm run lint:deps`: no dependency violations (223 modules, 783 dependencies).
+- **The shipped portrait.** Distinct visible colours: 34; the sheet has 40; 0 of the 34 fall outside
+  the sheet palette. `cmp public/characters/scorpion/scorpion_portrait_v3.png
+  scripts/gen-characters/assets/scorpion-portrait.png` is exact (both `fd3c72ac63c1c0ea…`).
+- **Blast radius.** Regenerating changed exactly ONE file's hash: `scorpion/scorpion_portrait_v3.png`
+  (`efb75ee30c520b02…` generated -> `fd3c72ac63c1c0ea…` asset). Every other file under
+  `public/characters/` is byte-identical: alex sheet `a7bfb6ed5002a395…` / portrait
+  `2434eda4cee299b3…`, marcus `2edc23ee5cf3a0ba…` / `d7a3c2dd411b6ed3…`, sophia `2d94bc921fb79cf4…`
+  / `96e63a7788862113…`, elena `af15441dfe4b4f92…` / `adcc68c7d6441e3b…`, kitana `4f900dd3af5f70ca…`
+  / `89d6f5873e51753a…`, and Scorpion's own sheet `7c34a70096525234…` unchanged.
+- **Determinism.** Two fresh `node scripts/gen-characters/index.mjs --out /tmp/...` runs are
+  byte-identical to each other AND to the shipped tree (every generated file `SAME`, including
+  `scorpion/scorpion_portrait_v3.png` = the asset's bytes).
+
+### The honest limit
+
+The palette is now shared and verifiable, so the tooltip and the sprite cannot disagree in COLOUR.
+What they still disagree in is GRANULARITY: the AI portrait's pixel blocks are finer than the
+generator's, so at 256x256 the tooltip reads as a more detailed illustration than the flat sprite on
+the floor. That is the trade the maintainer asked for — the tooltip is a portrait, not a zoomed
+sprite — and it is stated here rather than pretended away.
+
 ## Honest limits
 
 - The ART is verified by eye, not by tests. Tests can pin the contract (rows, frames, origin, ids,
@@ -265,5 +323,7 @@ both files were produced by the same source through the switch, which no longer 
 - Scorpion's accent covers LESS area than any of the other four characters' single accent — border,
   one stripe per guard and a 2px boot flash. That is the ruling, and it is why the figure reads as a
   black silhouette with yellow edges rather than as a yellow figure with black sleeves.
-- Task 7 (the optional AI tooltip portrait) is still open and undone by the maintainer's choice, not
-  by omission: the shipped portrait is the procedural flat one.
+- Task 7 (the optional AI tooltip portrait) is CLOSED: Scorpion now ships the AI asset, quantized to
+  its own sheet and guarded by a cohesion test. The palette is shared and measured; the pixel
+  GRANULARITY is not, and the tooltip therefore reads as a more detailed illustration than the floor
+  sprite. That trade was chosen deliberately — see "Task 7" above.

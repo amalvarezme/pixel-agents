@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { inflateSync } from 'node:zlib';
 import {
   CHARACTER_IDS,
   ROLE_SCALE_BONUS,
@@ -30,6 +31,92 @@ const LEGACY_V2_IDS = ['alex', 'marcus', 'sophia', 'elena'] as const;
 
 function loadMeta(id: string): CharacterSpriteMeta {
   return JSON.parse(readFileSync(join(PACK_ROOT, id, `${id}.json`), 'utf8')) as CharacterSpriteMeta;
+}
+
+/**
+ * A minimal 8-bit RGBA PNG reader, for one guard only.
+ *
+ * This file had no image decoder and `package.json` deliberately carries no image dependency (the
+ * generator's own `png.mjs` says why: a committed build-time artifact should not cost a runtime
+ * dependency). The palette-cohesion guard below needs actual pixel colours, so the smallest honest
+ * alternative is this: parse the chunks, `inflateSync` the IDAT, and undo the five standard PNG
+ * filters. Every PNG it is asked to read is 8-bit RGBA non-interlaced — the generator writes that
+ * shape and the shipped portrait asset is already in it — and any other shape throws loudly instead
+ * of returning wrong colours.
+ */
+function readRgbaPng(path: string): { width: number; height: number; pixels: Buffer } {
+  const bytes = readFileSync(path);
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (!bytes.subarray(0, 8).equals(signature)) throw new Error(`${path} is not a PNG`);
+
+  let width = 0;
+  let height = 0;
+  const idat: Buffer[] = [];
+  for (let offset = 8; offset < bytes.length; ) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      const bitDepth = data[8] ?? 0;
+      const colorType = data[9] ?? 0;
+      const interlace = data[12] ?? 0;
+      if (bitDepth !== 8 || colorType !== 6 || interlace !== 0) {
+        throw new Error(
+          `${path}: expected 8-bit RGBA non-interlaced, got depth ${bitDepth} type ${colorType} interlace ${interlace}`,
+        );
+      }
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+    offset += 12 + length;
+  }
+
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * 4;
+  const pixels = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)] ?? 0;
+    const start = y * (stride + 1) + 1;
+    const line = Buffer.from(raw.subarray(start, start + stride));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= 4 ? (line[x - 4] ?? 0) : 0;
+      const b = y > 0 ? (pixels[(y - 1) * stride + x] ?? 0) : 0;
+      const c = y > 0 && x >= 4 ? (pixels[(y - 1) * stride + x - 4] ?? 0) : 0;
+      let value = line[x] ?? 0;
+      if (filter === 1) value += a;
+      else if (filter === 2) value += b;
+      else if (filter === 3) value += (a + b) >> 1;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        value += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      } else if (filter !== 0) {
+        throw new Error(`${path}: unknown PNG filter ${filter} on row ${y}`);
+      }
+      line[x] = value & 0xff;
+    }
+    line.copy(pixels, y * stride);
+  }
+  return { width, height, pixels };
+}
+
+/**
+ * The set of VISIBLE colours (opaque RGB triples) in a decoded PNG. A fully transparent pixel has
+ * no colour a viewer can see, so it is not part of the palette claim.
+ */
+function visibleColors(image: { pixels: Buffer }): Set<string> {
+  const colors = new Set<string>();
+  for (let i = 0; i < image.pixels.length; i += 4) {
+    if (image.pixels[i + 3] === 0) continue;
+    colors.add(`${image.pixels[i]},${image.pixels[i + 1]},${image.pixels[i + 2]}`);
+  }
+  return colors;
 }
 
 describe('resolveCharacterId', () => {
@@ -369,6 +456,27 @@ describe('shipped asset pack', () => {
       for (const url of [characterSheetUrl(id), characterPortraitUrl(id)]) {
         expect(() => readFileSync(join(PACK_ROOT, url.replace('/characters/', '')))).not.toThrow();
       }
+    }
+  });
+
+  /**
+   * The tooltip portrait and the floor sprite are two drawings of one character, so the only thing
+   * that stops them reading as two characters is that they share a palette. For a GENERATED portrait
+   * that is free — it is a crop of a frame of the sheet — but a portrait SHIPPED as an asset
+   * (`palette.mjs`'s `portraitAsset`) is drawn outside the generator, and its colours are only as
+   * close to the sheet as whoever produced it made them. This guard makes the property MEASURED
+   * instead of assumed: it decodes both PNGs and reports any portrait colour that does not appear in
+   * that same character's sheet.
+   */
+  it('keeps every character\'s portrait inside its own sheet\'s palette, so the tooltip cannot drift from the floor', () => {
+    for (const id of CHARACTER_IDS) {
+      const sheet = visibleColors(readRgbaPng(join(PACK_ROOT, id, `${id}_spritesheet_v3.png`)));
+      const portrait = visibleColors(readRgbaPng(join(PACK_ROOT, id, `${id}_portrait_v3.png`)));
+      const stray = [...portrait].filter((color) => !sheet.has(color));
+      expect(
+        stray,
+        `${id}: ${stray.length} portrait colour(s) absent from its sheet: ${stray.slice(0, 8).join(' | ')}`,
+      ).toEqual([]);
     }
   });
 

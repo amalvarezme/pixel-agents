@@ -112,6 +112,30 @@ export const CHARACTERS = {
     pants: '#121218',
     shoes: '#191922',
     feature: 'scorpion',
+    /**
+     * Scorpion is the ONE character whose tooltip portrait is a shipped ASSET instead of a portrait
+     * the generator draws (task 7 of `odd/tasks/scorpion-character.md`). `index.mjs` copies this file
+     * byte-for-byte to `public/characters/scorpion/scorpion_portrait_v3.png`; it never decodes or
+     * re-encodes it, because the generator has a PNG encoder only and a decoder is out of scope.
+     *
+     * Provenance, so the file is not a mystery raster in ten months:
+     * 1. Generated with Nano Banana 2 at 1024x1024 from a prompt plus two input images: the shipped
+     *    Scorpion sheet preview (for character and palette) and `alex_portrait_v3.png` (for bust
+     *    framing).
+     * 2. Downscaled 1024 -> 256 by an exact 4x NEAREST resize, which keeps hard pixel blocks instead
+     *    of introducing anti-aliasing the rest of the pack does not have.
+     * 3. QUANTIZED to the 40 colours of the shipped `scorpion_spritesheet_v3.png`, so no colour in
+     *    the portrait falls outside the sprite's own palette. That is a MEASURED property, not a
+     *    hope — `character-sprite.test.ts` decodes both PNGs and fails if any portrait colour is
+     *    absent from the sheet.
+     *
+     * Why an asset and not a generated portrait: the maintainer chose the AI illustration for the
+     * 256x256 tooltip, where there is no grid and no frame count and the extra detail reads. The
+     * honest limit is that its pixel GRANULARITY is finer than the generator's, so at tooltip size it
+     * reads as a more detailed illustration than the flat sprite on the floor; the shared palette is
+     * what stops the two from reading as different characters in COLOUR.
+     */
+    portraitAsset: 'assets/scorpion-portrait.png',
   },
   /**
    * Kitana. The sixth character, and the second to rise.

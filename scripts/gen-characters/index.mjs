@@ -7,7 +7,7 @@
  * Aseprite and leaving the generator behind is an equally valid end state, which is why the
  * metadata is written from the same clip table the drawing uses and never typed twice.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { encodePng } from './png.mjs';
@@ -45,6 +45,28 @@ function buildPortrait(palette, size = 256) {
     }
   }
   return out;
+}
+
+/**
+ * Writes one character's portrait.
+ *
+ * A palette may SHIP its portrait as a pre-made asset (see `palette.mjs`'s `portraitAsset`) instead
+ * of having one generated, in which case that file is COPIED byte for byte. The copy is deliberate:
+ * this generator has a PNG ENCODER but no decoder, so decoding and re-encoding the asset would mean
+ * either a new dependency or a lot of code for no benefit — and it would replace the asset's exact
+ * bytes with our encoder's. The asset must already be palette-quantized to that character's own
+ * sheet; `character-sprite.test.ts` decodes both files and fails if any portrait colour falls outside
+ * the sheet, because a tooltip and a floor sprite that disagree in colour read as two characters.
+ * With no override the portrait is generated from the resting frame, exactly as before.
+ */
+function writePortrait(outDir, id, palette) {
+  const path = resolve(outDir, id, `${id}_portrait_v3.png`);
+  if (palette.portraitAsset) {
+    mkdirSync(dirname(path), { recursive: true });
+    copyFileSync(resolve(HERE, palette.portraitAsset), path);
+    return;
+  }
+  writeFrame(path, buildPortrait(palette));
 }
 
 function buildMeta(id, palette) {
@@ -112,7 +134,7 @@ function main() {
     const sheet = buildSheet(palette);
     sheets.push(sheet);
     writeFrame(resolve(outDir, id, `${id}_spritesheet_v3.png`), sheet);
-    writeFrame(resolve(outDir, id, `${id}_portrait_v3.png`), buildPortrait(palette));
+    writePortrait(outDir, id, palette);
     const meta = buildMeta(id, palette);
     mkdirSync(resolve(outDir, id), { recursive: true });
     writeFileSync(resolve(outDir, id, `${id}.json`), `${JSON.stringify(meta, null, 2)}\n`);

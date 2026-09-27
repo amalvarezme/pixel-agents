@@ -39,6 +39,25 @@ Changing the frame size means changing `CHARACTER_BODY_HALF_WIDTH`, `CHARACTER_B
 `READABILITY_BONUS` in `character-sprite.ts` too — those are in frame pixels and the scene's whole
 sense of scale rides on them.
 
+## Portraits: generated, or shipped as an asset
+
+Every character gets a 256x256 `_portrait_v3.png` beside its sheet. By default `index.mjs` DERIVES it
+from the resting frame, which is why a generated portrait can never disagree with its sheet — it is a
+crop of one.
+
+A character may instead SHIP its portrait as a pre-made asset. `palette.mjs` declares
+`portraitAsset: 'assets/<file>.png'` on that character, and `index.mjs` then copies the file
+byte-for-byte to `public/characters/<id>/<id>_portrait_v3.png`. It is a copy, not a decode: this
+generator has a PNG encoder and no decoder, so decoding and re-encoding would mean a new dependency
+for no benefit. Only Scorpion uses it today, and his `palette.mjs` entry records how the file was
+made and why the AI illustration is used where a generated portrait was before.
+
+The one requirement of an asset: it must be PALETTE-QUANTIZED to that character's own sheet, meaning
+no colour in the portrait may fall outside the sheet. `character-sprite.test.ts` decodes both PNGs and
+fails if a portrait carries a colour its sheet does not, because a tooltip and a floor sprite that
+disagree in colour read as two characters. A portrait may be as detailed or as flat as its artist
+likes; it may not be a different palette.
+
 ## Files
 
 - `png.mjs` — RGBA PNG encoder over `node:zlib`. No image dependency enters `package.json` for a
