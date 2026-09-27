@@ -6,6 +6,7 @@ Last updated: 2026-09-27
 
 ## Sources scanned
 
+- /Users/andresalvarez/.pi/agent/skills
 - /Users/andresalvarez/.config/opencode/skills
 - /Users/andresalvarez/.claude/skills
 - /Users/andresalvarez/.gemini/skills
@@ -25,6 +26,7 @@ Last updated: 2026-09-27
 | `archify` | Create polished, validated architecture, workflow, sequence, data-flow, and lifecycle/state diagrams as explorable standalone HTML with inline SVG, dark/light themes, optional trace motion, and PNG/JPEG/WebP/SVG/WebM export. Accept plain-language requirements or pasted Mermaid flowchart, sequenceDiagram, and stateDiagram input; inspect repository evidence when the diagram must reflect real code. Use when the user asks to visualize system architecture, infrastructure, cloud/security/network topology, technical workflows, API call sequences, request lifecycles, data pipelines, ETL/ELT, data lineage, state machines, or to convert/beautify Mermaid. | user | `/Users/andresalvarez/.claude/skills/archify/SKILL.md` |
 | `branch-pr` | Create Gentle AI pull requests with issue-first checks. Trigger: creating, opening, or preparing PRs for review. | user | `/Users/andresalvarez/.config/opencode/skills/branch-pr/SKILL.md` |
 | `chained-pr` | Trigger: PRs over 400 lines, stacked PRs, review slices. Split oversized changes into chained PRs that protect review focus. | user | `/Users/andresalvarez/.config/opencode/skills/chained-pr/SKILL.md` |
+| `codebase-memory` | Use the codebase knowledge graph for structural code queries. Triggers on: explore the codebase, understand the architecture, what functions exist, show me the structure, who calls this function, what does X call, trace the call chain, find callers of, show dependencies, impact analysis, dead code, unused functions, high fan-out, refactor candidates, code quality audit, graph query syntax, Cypher query examples, edge types, how to use search_graph. | user | `/Users/andresalvarez/.pi/agent/skills/codebase-memory/SKILL.md` |
 | `cognitive-doc-design` | Design docs that reduce cognitive load. Trigger: writing guides, READMEs, RFCs, onboarding, architecture, or review-facing docs. | user | `/Users/andresalvarez/.config/opencode/skills/cognitive-doc-design/SKILL.md` |
 | `comment-writer` | Write warm, direct collaboration comments. Trigger: PR feedback, issue replies, reviews, Slack messages, or GitHub comments. | user | `/Users/andresalvarez/.config/opencode/skills/comment-writer/SKILL.md` |
 | `devtools-workspace` | Trigger: edit in browser, DevTools workspace, live edit, persistent browser edits, editar desde el navegador, cambios persistentes. Wire Chrome DevTools to write edits back to local source files. | user | `/Users/andresalvarez/.claude/skills/devtools-workspace/SKILL.md` |
