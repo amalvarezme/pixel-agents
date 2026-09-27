@@ -21,6 +21,7 @@ import {
 import { buildOfficeViewModel } from '../state/office-view-model';
 import type { OfficeStage } from '../scene/OfficeStage';
 import { advanceTripAnimations, applyTripOverlay, createTripAnimatorState, type TripAnimatorState } from '../scene/animation/trip-animation';
+import { advanceSofaVisits, applySofaOverlay, createSofaVisitState, type SofaVisitState } from '../scene/animation/sofa-visit';
 import type { LaunchResult, LaunchSpec } from '../../ports/session-launcher.port';
 
 /**
@@ -67,6 +68,11 @@ export class OfficeContainer {
    * slowed down by, or coupled to, animation playback (design.md: "ingestion never blocks").
    */
   private tripAnimatorState: TripAnimatorState = createTripAnimatorState();
+  /** Sofa-visit animation state (a worker quiet for a minute walks to the meeting sofa and back).
+   * Kept apart from `officeState`/ingestion for the exact same reason as `tripAnimatorState`
+   * above: `handleMessage` never reads or advances it, so animation playback can never slow down
+   * or couple to ingestion speed. */
+  private sofaVisitState: SofaVisitState = createSofaVisitState();
   private lastTickAt = 0;
 
   constructor(
@@ -92,9 +98,17 @@ export class OfficeContainer {
   }
 
   /**
-   * Advances the archive-trip animation to `now` and re-renders. Called from the browser's own
-   * `requestAnimationFrame` loop (`ui/main.ts`) — never from `handleMessage` — so ingestion speed
-   * and animation playback speed can never affect each other.
+   * Advances the archive-trip and sofa-visit animations to `now` and re-renders. Called from the
+   * browser's own `requestAnimationFrame` loop (`ui/main.ts`) — never from `handleMessage` — so
+   * ingestion speed and animation playback speed can never affect each other.
+   *
+   * `now` MUST be WALL-CLOCK milliseconds, in the same domain as `AgentEvent.at` — not a raw
+   * `requestAnimationFrame` timestamp, which counts from page load and would be roughly 1.8e12 ms
+   * behind it. The archive trip never noticed the difference because it only ever compares `now`
+   * against a `phaseStartedAt` it captured from that same `now`; the sofa visit is the first
+   * animation to compare the render clock against a DOMAIN timestamp (`Worker.lastEventAt`), and
+   * with a page-relative clock its "has this worker been quiet for a minute?" test read about
+   * -1.8e12 ms and so was never true. `ui/main.ts` converts with `performance.timeOrigin`.
    */
   tick(now: number): void {
     this.lastTickAt = now;
@@ -104,6 +118,7 @@ export class OfficeContainer {
     for (const sessionKey of completed) {
       this.officeState = completeArchiveTripForWorker(this.officeState, sessionKey, now);
     }
+    this.sofaVisitState = advanceSofaVisits(this.sofaVisitState, structuralViewModel.workers, now);
     this.render();
   }
 
@@ -136,6 +151,8 @@ export class OfficeContainer {
    */
   private render(): void {
     const viewModel = buildOfficeViewModel(this.officeState);
-    this.stage.update(applyTripOverlay(viewModel, this.tripAnimatorState, this.lastTickAt));
+    const withTripOverlay = applyTripOverlay(viewModel, this.tripAnimatorState, this.lastTickAt);
+    const workers = applySofaOverlay(withTripOverlay.workers, this.sofaVisitState, this.lastTickAt);
+    this.stage.update({ ...withTripOverlay, workers });
   }
 }

@@ -7,7 +7,8 @@ import { createEventFromLogRecord } from '../../domain/events/factories';
 import { resolveWorkerLabel, type ClaudeCodeRecord } from '../../adapters/driven/claude-code/parse';
 import type { StreamConnection, StreamConnectionFactory, StreamMessage } from './OfficeContainer';
 import { DOCK_DURATION_MS, WALK_DURATION_MS } from '../scene/animation/trip-animation';
-import { PERSISTENT_MEMORY } from '../scene/world/office-map';
+import { SOFA_IDLE_MS } from '../scene/animation/sofa-visit';
+import { MEETING_SOFA, PERSISTENT_MEMORY } from '../scene/world/office-map';
 
 class RecordingRenderer implements OfficeRenderer {
   updates: OfficeViewModel[] = [];
@@ -329,6 +330,93 @@ describe('OfficeContainer — archive-trip animation (blocker B.2, tasks.md 21.2
     expect(worker.archiveTrip?.highlight).not.toBe(true);
     expect(worker.x).toBe(desk.x);
     expect(worker.y).toBe(desk.y);
+  });
+});
+
+describe('OfficeContainer — sofa-visit animation', () => {
+  it('tick() walks a worker to the sofa once it has been quiet for SOFA_IDLE_MS, with no new ingested event', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({ kind: 'event', event: sessionStart(1, 'claude-code:s1') });
+    const desk = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+
+    container.tick(SOFA_IDLE_MS + 1);
+    container.tick(SOFA_IDLE_MS + 1 + WALK_DURATION_MS / 2);
+
+    const midway = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+    expect(midway.x === desk.x && midway.y === desk.y).toBe(false);
+    expect(midway.sofaVisit?.seated).toBe(false);
+  });
+
+  it('tick() seats the worker at the sofa, then walks it back home once it becomes active again', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({ kind: 'event', event: sessionStart(1, 'claude-code:s1') });
+    const desk = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+
+    const tStartVisit = SOFA_IDLE_MS + 1;
+    const tSeated = tStartVisit + WALK_DURATION_MS;
+    container.tick(tStartVisit);
+    container.tick(tSeated);
+
+    const seated = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+    expect(seated.sofaVisit?.seated).toBe(true);
+    expect(MEETING_SOFA.anchors.some((anchor) => anchor.x === seated.x && anchor.y === seated.y)).toBe(true);
+
+    // A fresh event (well after the visit started) marks the worker active again.
+    const tActiveEvent = tSeated + 1;
+    connection.emit({
+      kind: 'event',
+      event: { id: 2, kind: 'tool_start', harness: 'claude-code', sessionKey: 'claude-code:s1', at: tActiveEvent, toolLabel: 'Read' },
+    });
+
+    const tWalkBackTrigger = tActiveEvent + 1;
+    const tHome = tWalkBackTrigger + WALK_DURATION_MS;
+    container.tick(tWalkBackTrigger);
+    container.tick(tHome);
+
+    const home = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+    expect(home.x).toBe(desk.x);
+    expect(home.y).toBe(desk.y);
+    expect(home.sofaVisit).toBeUndefined();
+  });
+
+  /**
+   * Regression: `tick()` takes WALL-CLOCK milliseconds, the same domain as `AgentEvent.at`.
+   *
+   * The sofa visit shipped broken because `ui/main.ts` forwarded the raw `requestAnimationFrame`
+   * timestamp, which counts from page load. Every other test in this file uses small invented
+   * numbers for BOTH the event's `at` and the tick clock, so the arithmetic stayed self-consistent
+   * and the mismatch was invisible; in the browser `now - lastEventAt` came out around -1.8e12 and
+   * no worker ever left its desk. This test pins the contract with realistic Unix timestamps so
+   * the two clocks are visibly the same one.
+   *
+   * It does NOT guard `ui/main.ts` itself — the composition root has no test harness — so the
+   * conversion there (`performance.timeOrigin + frameTime`) is held by its comment alone.
+   */
+  it('treats tick() time and event.at as the same wall-clock domain', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    const eventAt = Date.UTC(2026, 8, 16, 12, 0, 0);
+    connection.emit({
+      kind: 'event',
+      event: { id: 1, kind: 'session_start', harness: 'claude-code', sessionKey: 'claude-code:s1', at: eventAt },
+    });
+
+    container.tick(eventAt + SOFA_IDLE_MS + 1);
+    container.tick(eventAt + SOFA_IDLE_MS + 1 + WALK_DURATION_MS);
+
+    const seated = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
+    expect(seated.sofaVisit?.seated).toBe(true);
   });
 });
 

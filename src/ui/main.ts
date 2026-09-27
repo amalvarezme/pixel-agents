@@ -175,8 +175,13 @@ async function main(): Promise<void> {
   // Drives the archive-trip animation (blocker B.2, tasks.md 21.2) from the browser's own frame
   // clock — deliberately never from `container`'s own SSE message handling, so ingestion speed
   // and animation playback speed stay decoupled (`OfficeContainer.test.ts` pins this).
-  const animate = (now: number): void => {
-    container.tick(now);
+  const animate = (frameTime: number): void => {
+    // `requestAnimationFrame` hands out milliseconds since page load; `AgentEvent.at` — and so
+    // `Worker.lastEventAt`, which the sofa visit compares against — is wall-clock Unix time.
+    // `performance.timeOrigin` is exactly the wall-clock instant that frame clock started from, so
+    // adding it converts the frame time into the domain's clock without losing the frame clock's
+    // monotonicity or sub-millisecond precision.
+    container.tick(performance.timeOrigin + frameTime);
     requestAnimationFrame(animate);
   };
   requestAnimationFrame(animate);

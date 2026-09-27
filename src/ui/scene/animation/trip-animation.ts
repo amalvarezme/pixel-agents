@@ -24,8 +24,16 @@ import type { CharacterDirection } from '../character/character-sprite';
 
 export type TripPhase = 'walking-out' | 'at-archive' | 'walking-back';
 
-/** Time the worker spends walking each leg of the path. */
-export const WALK_DURATION_MS = 600;
+/**
+ * Time the worker spends walking each leg of the path.
+ *
+ * Note that this is a DURATION, not a speed: a leg takes this long whatever its length, so a long
+ * route is covered faster than a short one. Halving the apparent walking speed therefore means
+ * doubling this number, which is what the 600 -> 1200 change did. A true constant speed would mean
+ * deriving the duration from the path length instead; that is a bigger change and nothing has
+ * needed it yet.
+ */
+export const WALK_DURATION_MS = 1200;
 /** Time the worker dwells, highlighted, at the archive cabinet before walking back. */
 export const DOCK_DURATION_MS = 350;
 
