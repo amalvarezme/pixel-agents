@@ -14,6 +14,12 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readTailIncrement } from '../claude-code/tail';
 import { discoverPiSessions } from './discover';
+import {
+  presenceActivityFileName,
+  presenceHeaderFileName,
+  readPresenceActivity,
+  readPresenceHeaders,
+} from './presence-read';
 
 interface FileSnapshot {
   contentHash: string;
@@ -89,6 +95,73 @@ describe('Pi adapter: Global No-Write Invariant', () => {
     root = await mkdtemp(join(tmpdir(), 'pi-zero-write-absent-'));
 
     expect(await discoverPiSessions(root)).toEqual([]);
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it('performs zero writes across a full read of the subagent presence registry', async () => {
+    root = await mkdtemp(join(tmpdir(), 'pi-zero-write-presence-'));
+    const presenceRoot = join(root, 'gentle-agents', 'presence');
+    await mkdir(presenceRoot, { recursive: true });
+    const sessionHash = 'a'.repeat(64);
+    const incarnation = '5f6ea6c5-4745-45b1-b5bc-c9e442172deb';
+    const body = JSON.stringify({
+      schema: 1,
+      sessionHash,
+      incarnation,
+      generation: 1,
+      activity: {
+        tasks: [
+          {
+            summary: {
+              id: 't1',
+              agent: 'sdd-apply',
+              label: 'apply',
+              status: 'running',
+              model: 'claude-sonnet-5',
+              createdAt: 1,
+              startedAt: 2,
+              endedAt: null,
+              lastActivityAt: 3,
+            },
+            thread: { version: 1, dropped: 0, items: [] },
+          },
+        ],
+      },
+    });
+    await writeFile(join(presenceRoot, presenceActivityFileName(sessionHash, incarnation)), body);
+    await writeFile(
+      join(presenceRoot, presenceHeaderFileName(sessionHash, incarnation)),
+      JSON.stringify({
+        schema: 1,
+        sessionHash,
+        incarnation,
+        label: 'pixel-agents',
+        heartbeat: 3,
+        generation: 1,
+        counts: { running: 1, queued: 0, waiting: 0, finished: 0 },
+        digest: createHash('sha256').update(body).digest('hex'),
+        unavailable: null,
+      }),
+    );
+
+    const before = await snapshotTree(root);
+    expect(Object.keys(before)).toHaveLength(2);
+
+    const page = await readPresenceHeaders(presenceRoot, 3);
+    expect(page.entries).toHaveLength(1);
+    expect((await readPresenceActivity(presenceRoot, page.entries[0]!)).activity?.tasks).toHaveLength(1);
+
+    expect(await snapshotTree(root)).toEqual(before);
+  });
+
+  it('never creates the presence directory when no subagent has ever run', async () => {
+    root = await mkdtemp(join(tmpdir(), 'pi-zero-write-nopresence-'));
+    const presenceRoot = join(root, 'gentle-agents', 'presence');
+
+    const page = await readPresenceHeaders(presenceRoot, 0);
+
+    expect(page.entries).toEqual([]);
+    expect(page.unavailable).toBe('missing');
     expect(await readdir(root)).toEqual([]);
   });
 });

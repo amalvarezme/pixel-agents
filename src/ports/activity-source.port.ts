@@ -57,7 +57,27 @@ export interface SeqCheckpoint {
   partsBySession?: Record<string, number>;
 }
 
-export type Checkpoint = ByteOffsetCheckpoint | SeqCheckpoint;
+/**
+ * Pi presence-registry checkpoint. The registry is a SNAPSHOT store, not an append-only log: Pi
+ * rewrites `activity.json` atomically on every change, bumping a monotonic `generation`. There is
+ * no offset and no sequence to resume from, so the checkpoint records what was last PUBLISHED.
+ *
+ * Two currencies, for the same reason `SeqCheckpoint` carries two: `byActivation` decides WHEN a
+ * registry file has content we have not seen, while `threadByTask` decides WHICH tasks inside it
+ * actually changed. Without the second, one task's progress would republish every sibling task's
+ * whole thread on the same tick.
+ */
+export interface GenerationCheckpoint {
+  kind: 'generation';
+  /** Last published activity `generation`, keyed by `<sessionHash>.<incarnation>`. */
+  byActivation: Record<string, number>;
+  /** Last published thread `version`, keyed by `<sessionHash>.<incarnation>.<taskId>`. */
+  threadByTask?: Record<string, number>;
+  /** Last published task `status`, keyed the same way, so a `status` event fires only on a change. */
+  statusByTask?: Record<string, string>;
+}
+
+export type Checkpoint = ByteOffsetCheckpoint | SeqCheckpoint | GenerationCheckpoint;
 
 /**
  * `probe()` MUST NOT throw. A harness that is unreachable, mis-configured, or schema-drifted
