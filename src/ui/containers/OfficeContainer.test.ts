@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OfficeContainer } from './OfficeContainer';
 import { OfficeStage, type OfficeRenderer } from '../scene/OfficeStage';
 import type { OfficeViewModel } from '../state/office-view-model';
-import type { AgentEvent } from '../../domain/events/types';
+import type { AgentEvent, SessionLifecycle } from '../../domain/events/types';
 import { createEventFromLogRecord } from '../../domain/events/factories';
 import { resolveWorkerLabel, type ClaudeCodeRecord } from '../../adapters/driven/claude-code/parse';
 import type { StreamConnection, StreamConnectionFactory, StreamMessage } from './OfficeContainer';
 import { DOCK_DURATION_MS, WALK_DURATION_MS } from '../scene/animation/trip-animation';
 import { SOFA_IDLE_MS } from '../scene/animation/sofa-visit';
+import { ENDED_WORKER_DWELL_MS } from '../scene/animation/ended-worker-dwell';
+import { resolveLifecyclePresentation } from '../scene/character/lifecycle-presentation';
 import { MEETING_SOFA, PERSISTENT_MEMORY } from '../scene/world/office-map';
 
 class RecordingRenderer implements OfficeRenderer {
@@ -37,6 +39,28 @@ class FakeStreamConnection implements StreamConnection, StreamConnectionFactory 
   emit(message: StreamMessage): void {
     this.handler?.(message);
   }
+}
+
+/**
+ * The exact shape the Pi presence source publishes: a task's `session_start`, then its
+ * `status(lifecycle)` and — for a terminal status — its `session_end` back-to-back in ONE diff
+ * (`adapters/driven/pi/presence-source.ts`'s `diffTask`). Note that the real `session_end` carries
+ * NO lifecycle of its own: the worker's last known lifecycle is the one the `status` set.
+ */
+function piEvent(
+  id: number,
+  kind: 'session_start' | 'status' | 'session_end',
+  sessionKey: string,
+  lifecycle?: SessionLifecycle,
+): AgentEvent {
+  return createEventFromLogRecord(id, {
+    kind,
+    harness: 'pi',
+    sessionKey,
+    at: id,
+    ...(kind === 'session_start' ? { label: 'child-task' } : {}),
+    ...(lifecycle !== undefined ? { lifecycle } : {}),
+  });
 }
 
 function sessionStart(id: number, sessionKey: string, label?: string): AgentEvent {
@@ -417,6 +441,110 @@ describe('OfficeContainer — sofa-visit animation', () => {
 
     const seated = renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')!;
     expect(seated.sofaVisit?.seated).toBe(true);
+  });
+});
+
+// F1 (`openspec/changes/pi-harness-portability`, office-scene-renderer spec): "A failed subagent
+// ends visibly, not silently". The Pi presence source folds `status(lifecycle:'failed')` and the
+// terminal `session_end` into ONE diff, so both land before the browser paints a frame and the
+// failure flag is never seen. The dwell keeps the worker — with its indicator — on the floor for a
+// bounded slice of the RENDER clock after the domain has already forgotten it.
+describe('OfficeContainer — ended-worker dwell (F1: a failed subagent ends visibly, not silently)', () => {
+  it('keeps drawing a failed worker after its session_end, so its indicator is actually seen', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    // A real render clock first, so the dwell's `startedAt` is a wall-clock instant and not 0.
+    connection.emit({ kind: 'event', event: piEvent(1, 'session_start', 'pi:task:t1') });
+    container.tick(1_000);
+
+    connection.emit({ kind: 'event', event: piEvent(2, 'status', 'pi:task:t1', 'failed') });
+    connection.emit({ kind: 'event', event: piEvent(3, 'session_end', 'pi:task:t1') });
+
+    const dwelling = renderer.latest.workers.find((w) => w.sessionKey === 'pi:task:t1');
+    expect(dwelling?.lifecycle).toBe('failed');
+    // The indicator itself is the renderer's existing, untouched mapping.
+    expect(resolveLifecyclePresentation(dwelling?.lifecycle).indicator).toBe('failed');
+    expect(dwelling?.endedDwell).toBe(true);
+
+    // ...and it is bounded: the first frame past the dwell no longer draws it.
+    container.tick(1_000 + ENDED_WORKER_DWELL_MS);
+    expect(renderer.latest.workers.find((w) => w.sessionKey === 'pi:task:t1')).toBeUndefined();
+  });
+
+  // Risk 2, end-to-end: a worker that ended while still carrying a document must not keep that
+  // carry on its ghost. The ghost's only claim is "this one failed".
+  it('never keeps the carry-to-archive overlay the live worker had', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({ kind: 'event', event: piEvent(1, 'session_start', 'pi:task:t1') });
+    container.tick(1_000);
+    connection.emit({ kind: 'event', event: memoryWriteEvent(2, 'pi:task:t1') });
+    expect(renderer.latest.workers.find((w) => w.sessionKey === 'pi:task:t1')?.archiveTrip).toBeDefined();
+
+    connection.emit({ kind: 'event', event: piEvent(3, 'status', 'pi:task:t1', 'failed') });
+    connection.emit({ kind: 'event', event: piEvent(4, 'session_end', 'pi:task:t1') });
+
+    const ghost = renderer.latest.workers.find((w) => w.sessionKey === 'pi:task:t1');
+    expect(ghost?.lifecycle).toBe('failed');
+    expect(ghost?.endedDwell).toBe(true);
+    expect(ghost?.archiveTrip).toBeUndefined();
+    expect(ghost?.sofaVisit).toBeUndefined();
+  });
+
+  // Adversarial twin: a cancellation is someone's choice, not a fault — it must never dwell.
+  it('removes a cancelled worker on its session_end, with no dwell at all', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({ kind: 'event', event: piEvent(1, 'session_start', 'pi:task:t1') });
+    container.tick(1_000);
+    connection.emit({ kind: 'event', event: piEvent(2, 'status', 'pi:task:t1', 'cancelled') });
+    connection.emit({ kind: 'event', event: piEvent(3, 'session_end', 'pi:task:t1') });
+
+    expect(renderer.latest.workers.find((w) => w.sessionKey === 'pi:task:t1')).toBeUndefined();
+  });
+
+  // Rule 3: the coordinator's synthetic `session_end(reason:'timeout')` eviction carries no
+  // lifecycle and must never dwell.
+  it('removes a worker whose session_end carries no lifecycle at all', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({ kind: 'event', event: sessionStart(1, 'claude-code:s1') });
+    container.tick(1_000);
+    connection.emit({ kind: 'event', event: sessionEnd(2, 'claude-code:s1') });
+
+    expect(renderer.latest.workers.find((w) => w.sessionKey === 'claude-code:s1')).toBeUndefined();
+  });
+
+  // Rule 4: the coordinator re-admits an evicted session under the same key.
+  it('a new session_start under the same key clears the dwell', () => {
+    const connection = new FakeStreamConnection();
+    const renderer = new RecordingRenderer();
+    const container = new OfficeContainer(connection, new OfficeStage(renderer));
+    container.connect();
+
+    connection.emit({ kind: 'event', event: piEvent(1, 'session_start', 'pi:task:t1') });
+    container.tick(1_000);
+    connection.emit({ kind: 'event', event: piEvent(2, 'status', 'pi:task:t1', 'failed') });
+    connection.emit({ kind: 'event', event: piEvent(3, 'session_end', 'pi:task:t1') });
+    expect(renderer.latest.workers.some((w) => w.sessionKey === 'pi:task:t1')).toBe(true);
+
+    connection.emit({ kind: 'event', event: piEvent(4, 'session_start', 'pi:task:t1') });
+
+    const reAdmitted = renderer.latest.workers.filter((w) => w.sessionKey === 'pi:task:t1');
+    expect(reAdmitted).toHaveLength(1);
+    expect(reAdmitted[0]?.endedDwell).toBeUndefined();
   });
 });
 

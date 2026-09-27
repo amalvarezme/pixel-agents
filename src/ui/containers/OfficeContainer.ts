@@ -9,7 +9,7 @@
  * every other port/adapter seam in this codebase) and so real wire-format decisions (SSE frame
  * parsing, reconnect/backoff) stay outside this projection logic.
  */
-import type { AgentEvent } from '../../domain/events/types';
+import type { AgentEvent, SessionLifecycle } from '../../domain/events/types';
 import {
   applyEventToOfficeState,
   completeArchiveTripForWorker,
@@ -22,6 +22,14 @@ import { buildOfficeViewModel } from '../state/office-view-model';
 import type { OfficeStage } from '../scene/OfficeStage';
 import { advanceTripAnimations, applyTripOverlay, createTripAnimatorState, type TripAnimatorState } from '../scene/animation/trip-animation';
 import { advanceSofaVisits, applySofaOverlay, createSofaVisitState, type SofaVisitState } from '../scene/animation/sofa-visit';
+import {
+  advanceEndedWorkerDwells,
+  applyEndedWorkerDwellOverlay,
+  clearEndedWorkerDwell,
+  createEndedWorkerDwellState,
+  noteEndedWorker,
+  type EndedWorkerDwellState,
+} from '../scene/animation/ended-worker-dwell';
 import type { LaunchResult, LaunchSpec } from '../../ports/session-launcher.port';
 
 /**
@@ -73,6 +81,16 @@ export class OfficeContainer {
    * above: `handleMessage` never reads or advances it, so animation playback can never slow down
    * or couple to ingestion speed. */
   private sofaVisitState: SofaVisitState = createSofaVisitState();
+  /**
+   * Failed-worker dwell state (F1, spec: office-scene-renderer, "A failed subagent ends visibly,
+   * not silently"). Kept apart from `officeState`/ingestion for the exact same reason as
+   * `tripAnimatorState`/`sofaVisitState` above: `handleMessage` never ADVANCES it, so playback can
+   * never slow down or couple to ingestion speed. `handleMessage` does, however, RECORD into it —
+   * that is unavoidable, because the instant a worker leaves the floor (`session_end`) is the only
+   * instant its last frame can still be captured; the clock that later expires the entry is still
+   * `tick()`'s alone.
+   */
+  private endedWorkerDwellState: EndedWorkerDwellState = createEndedWorkerDwellState();
   private lastTickAt = 0;
 
   constructor(
@@ -119,14 +137,25 @@ export class OfficeContainer {
       this.officeState = completeArchiveTripForWorker(this.officeState, sessionKey, now);
     }
     this.sofaVisitState = advanceSofaVisits(this.sofaVisitState, structuralViewModel.workers, now);
+    this.endedWorkerDwellState = advanceEndedWorkerDwells(this.endedWorkerDwellState, now);
     this.render();
   }
 
   private handleMessage(message: StreamMessage): void {
     switch (message.kind) {
-      case 'event':
-        this.officeState = applyEventToOfficeState(this.officeState, message.event);
+      case 'event': {
+        const event = message.event;
+        // Both dwell transitions are recorded BEFORE the fold, because the fold is what removes the
+        // worker: the frame this captures is the last one that will ever exist for it.
+        if (event.kind === 'session_end') {
+          this.endedWorkerDwellState = this.recordWorkerEnd(event.sessionKey, event.lifecycle);
+        } else if (event.kind === 'session_start') {
+          // Rule 4: the coordinator re-admits an evicted session under the same key.
+          this.endedWorkerDwellState = clearEndedWorkerDwell(this.endedWorkerDwellState, event.sessionKey);
+        }
+        this.officeState = applyEventToOfficeState(this.officeState, event);
         break;
+      }
       case 'snapshot':
         // G.1: a snapshot rebuild must reconstruct archive docking + carry queues too, not just
         // discard them the way `{ ...createOfficeState(), workers: ... }` used to — otherwise a
@@ -144,6 +173,26 @@ export class OfficeContainer {
   }
 
   /**
+   * Captures `sessionKey`'s last rendered frame and hands it to the dwell module, which decides
+   * whether it deserves a dwell at all (only a failure lifecycle does). The frame is captured HERE,
+   * from the not-yet-folded state, because `session_end` is what deletes the worker from
+   * `OfficeState`.
+   *
+   * The commit clock is `lastTickAt`, never `Date.now()` and never the event's own `at`: the dwell
+   * is a playback duration measured by `render()`'s clock, and mixing the event clock in would let a
+   * long-delayed `session_end` arrive already expired.
+   */
+  private recordWorkerEnd(sessionKey: string, lifecycle: SessionLifecycle | undefined): EndedWorkerDwellState {
+    const captured = buildOfficeViewModel(this.officeState).workers.find((w) => w.sessionKey === sessionKey);
+    if (!captured) return this.endedWorkerDwellState;
+    // The ending event's own lifecycle, when it carries one, is the last word; when it carries none
+    // (every real Pi `session_end`), the worker's last KNOWN lifecycle is — the preceding `status`
+    // is what made the failure known in the first place.
+    const endedWorker = lifecycle !== undefined ? { ...captured, lifecycle } : captured;
+    return noteEndedWorker(this.endedWorkerDwellState, endedWorker, this.lastTickAt);
+  }
+
+  /**
    * Renders against `lastTickAt`, NEVER `Date.now()` — this is what actually decouples ingestion
    * from animation: `handleMessage` re-renders on every event, but always through whatever the
    * animation clock last was, so overlaying a trip's current position never advances time on its
@@ -153,6 +202,9 @@ export class OfficeContainer {
     const viewModel = buildOfficeViewModel(this.officeState);
     const withTripOverlay = applyTripOverlay(viewModel, this.tripAnimatorState, this.lastTickAt);
     const workers = applySofaOverlay(withTripOverlay.workers, this.sofaVisitState, this.lastTickAt);
-    this.stage.update({ ...withTripOverlay, workers });
+    // Applied LAST, and it APPENDS rather than annotates: a dwelled worker is no longer in
+    // `officeState`, so no earlier overlay could have drawn it.
+    const withDwell = applyEndedWorkerDwellOverlay(workers, this.endedWorkerDwellState, this.lastTickAt);
+    this.stage.update({ ...withTripOverlay, workers: withDwell });
   }
 }

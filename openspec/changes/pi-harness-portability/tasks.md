@@ -195,6 +195,9 @@ renderer.
 
 ### Findings from live verification (open follow-ups)
 
+Both findings below are now scoped as **Work Unit 4** (sections 10 and 11). The summaries are kept
+verbatim as the record of what live verification found.
+
 - [ ] F1 **A failed subagent is never actually seen.** A terminal status emits `status(lifecycle)`
       and `session_end` in the same batch, so the office removes the worker in the same fold that
       learns it failed. The red indicator is correct in unit tests and unreachable on a real floor.
@@ -206,6 +209,72 @@ renderer.
       whenever the hash resolves, so inheriting the orchestrator's `projectPath` through the
       resolved `parentSessionKey` would be a lookup, not a guess. Today the roster reports a
       phantom second project (`2 PROJECTS · 4 AGENTS`) for one real one.
+
+---
+
+## Work Unit 4 — `pi-lifecycle-dwell-and-project-inheritance`
+
+Goal: close F1 and F2 so the change satisfies its own spec and can be archived. Branch
+`feat-pi-followups`, two work-unit commits, one per finding — each independently green.
+
+Baseline before this unit, measured on `main` @ `9dcdea5`: `npm test` 1124/1124 across 99 files,
+`npm run typecheck` clean, `npm run lint:deps` clean (220 modules).
+
+### Finding F1 — a failed subagent ends visibly, not silently
+
+Spec scenario under test: `specs/office-scene-renderer/spec.md` — "A failed subagent ends visibly,
+not silently" ("the failure is surfaced before the worker is removed; a `cancelled` worker is
+removed without a failure indication").
+
+- [x] 10.1 RED: `ui/scene/animation/ended-worker-dwell.test.ts` — a worker removed by a
+      `session_end` whose last known lifecycle maps to a failure indicator stays visible for a
+      bounded dwell, and is dropped when the dwell expires. Pure arithmetic with an explicit `now`.
+- [x] 10.2 RED: `ui/containers/OfficeContainer.test.ts` — folding `session_start` ->
+      `status(lifecycle:'failed')` -> `session_end` in ONE `handleMessage` sequence still renders the
+      worker carrying its failure indicator; the adversarial twin `lifecycle:'cancelled'` is removed
+      immediately. This is the assertion that failed before the fix, and the reason the unit tests
+      passed while the floor did not.
+- [x] 10.3 RED: the dwell compares the tick clock (wall-clock ms, same domain as `AgentEvent.at`),
+      never `Date.now()` inside the render half; a `session_start` re-using the same `sessionKey`
+      clears any dwell entry.
+- [x] 10.4 RED: a `session_end` that carries no `lifecycle` — notably the synthetic eviction from
+      `SessionLifecycleCoordinator.tick()` — is removed immediately, exactly as before. Only a
+      worker whose last known lifecycle is `failed`/`timed_out` dwells.
+- [x] 10.5 GREEN: new render-half module beside `sofa-visit.ts` (pure state container + an
+      `advance…` step driven by `tick(now)` + an `apply…` overlay), threaded through
+      `OfficeContainer.tick`/`render` and a `WorkerViewModel` field. The container captures the
+      worker's last view-model state at removal time, because the worker is already gone from
+      `OfficeState`.
+- [x] 10.6 GREEN: `domain/office/office.ts` MUST NOT change. The domain fold stays event-driven and
+      clock-less; this is an animation-clock concern, not a domain one.
+
+### Finding F2 — a Pi subagent inherits its orchestrator's project
+
+- [ ] 11.1 RED: `presence-source.test.ts` — once the parent hash resolves and the parent session's
+      cwd is known, the subagent's events carry the parent's real `projectPath`.
+- [ ] 11.2 RED: adversarial twin — when the hash does not resolve, or the parent transcript yielded
+      no cwd, `projectPath` stays absent. Never a guess.
+- [ ] 11.3 RED: a subagent discovered BEFORE its parent is registered still receives the inherited
+      `projectPath` once the parent becomes resolvable. The source must not cache `undefined`
+      permanently (the ordering hazard documented at `server.ts:135-137`).
+- [ ] 11.4 RED: the inherited `projectPath` rides an event `SessionLifecycleCoordinator` records into
+      `SessionIdentity`, so a re-admission after eviction republishes it. A `parent`-only delivery
+      does not survive, because `observe()` returns early for `parent` events.
+- [ ] 11.5 GREEN: record each registered session's cwd in the parent index, and attach the parent's
+      project path to the subagent's identity once it resolves.
+- [ ] 11.6 RED+GREEN: the roster reports ONE project for one orchestrator plus its subagents — no
+      phantom `2 PROJECTS · 4 AGENTS` for a single real project.
+- [ ] 11.7 `presence-read.ts` MUST NOT change: the registry files genuinely contain no path, so
+      inheritance from the resolved parent is the only honest source.
+
+### Verification for this unit
+
+- [x] 10.v `npm test` 1145/1145 across 100 files, `npm run typecheck` clean, `npm run lint:deps`
+      clean (222 modules) — independently re-verified, not taken from the writer's report.
+- [ ] 12.1 `npm test`, `npm run typecheck` and `npm run lint:deps` all clean at each of the two
+      commits, not only at the tip.
+- [ ] 12.2 Re-run the live browser check from task 9.7 with a real failed subagent: the failure is
+      now observable, which is exactly what task 9.7 could not show.
 
 ---
 

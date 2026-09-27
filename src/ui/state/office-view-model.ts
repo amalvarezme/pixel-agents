@@ -95,6 +95,17 @@ export interface WorkerViewModel {
    * animation-clock state, not something the structural projection can know. Never set alongside
    * `archiveTrip`: filing a document always takes precedence (`applySofaOverlay`'s own rule). */
   sofaVisit?: { seated: boolean; direction: CharacterDirection };
+  /**
+   * Set by the render half (`ui/scene/animation/ended-worker-dwell.ts`'s
+   * `applyEndedWorkerDwellOverlay`) on a worker that has ALREADY ended but is still drawn for a
+   * bounded dwell, so the failure flag `lifecycle` earns is actually visible instead of being
+   * folded away with the `session_end` in the same frame (spec: office-scene-renderer, "A failed
+   * subagent ends visibly, not silently"). `undefined` from `buildOfficeViewModel` itself, exactly
+   * like `sofaVisit` above — this is animation-clock state, not something the structural projection
+   * can know. The indicator itself is still `resolveLifecyclePresentation`'s answer for
+   * `lifecycle`; this flag only says the worker is a post-end ghost rather than a live one.
+   */
+  endedDwell?: boolean;
 }
 
 /**
