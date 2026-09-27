@@ -1,18 +1,19 @@
 /**
- * The five agents, as palettes plus silhouette features.
+ * The six agents, as palettes plus silhouette features.
  *
  * Two rules decide everything here, and both exist because a character has to be identifiable at
  * the size the office actually draws it (a 54px body at scale 2 in a 1672x941 room):
  *
  * 1. SILHOUETTE FIRST. Colour is the second thing a viewer resolves, never the first. Each
  *    character therefore owns a distinct outline — a hood lump, a beanie, a top bun, hair past the
- *    shoulders, a pointed hood — so the five stay apart even when they overlap or dim to
- *    `IDLE_CHARACTER_ALPHA`.
- * 2. ONE ACCENT PER CHARACTER, on a desaturated base. The bases are slate/teal/plum/aubergine at
- *    low saturation (and, for Scorpion, near-black); the single saturated hue per character (cyan,
- *    lime, magenta, amber, yellow) is spent only on deliberate areas — a drawstring, a sleeve
- *    stripe, glasses, a collar, a tabard and its guards. Spreading a saturated hue over a whole
- *    garment is what made the v2 pack read as four blobs of colour.
+ *    shoulders, a pointed hood, a ponytail over one shoulder — so the six stay apart even when they
+ *    overlap or dim to `IDLE_CHARACTER_ALPHA`.
+ * 2. ONE ACCENT PER CHARACTER, on a desaturated base. The bases are slate/teal/plum/aubergine/navy
+ *    at low saturation (and, for Scorpion, near-black); the single saturated hue per character
+ *    (cyan, lime, magenta, amber, yellow, royal blue) is spent only on deliberate areas — a
+ *    drawstring, a sleeve stripe, glasses, a collar, a tabard and its guards, a headband and a
+ *    sash. Spreading a saturated hue over a whole garment is what made the v2 pack read as four
+ *    blobs of colour.
  *
  * Shades are derived with `shift()` rather than hand-picked so a palette edit stays coherent.
  */
@@ -112,6 +113,63 @@ export const CHARACTERS = {
     shoes: '#191922',
     feature: 'scorpion',
   },
+  /**
+   * Kitana. The sixth character, and the second to rise.
+   *
+   * THE BLUE COLLISION, resolved deliberately. Alex already owns a slate base with a CYAN accent
+   * (`#31405f` / `#3ad6e6`), so "Kitana is the blue one" cannot mean "a blue like Alex's" or the
+   * two read as the same figure in two poses. Three choices keep them apart, in order of how much
+   * each one carries:
+   *
+   * 1. THE SILHOUETTE CARRIES THE IDENTITY. A long ponytail sweeping over one shoulder plus two
+   *    open fans, one per hand, are unmistakable even in one flat colour — which is what `palette`'s
+   *    first rule asks for. Nothing about her depends on being read as blue.
+   * 2. THE HUE IS FAR FROM ALEX'S CYAN, not merely darker. Cyan sits at hue 186 and is a green-leaning
+   *    blue; this accent is a royal blue at hue ~232, an indigo-leaning blue 46 degrees away. They
+   *    are different blues, not one blue at two brightnesses, which is the only kind of difference
+   *    that survives `IDLE_CHARACTER_ALPHA` and the room's dim band.
+   * 3. THE FANS ADD A SECOND, NON-ACCENT CUE: STEEL. A low-saturation grey is not a second accent
+   *    under rule 2 — it is a neutral — but no other character carries it, so it separates her from
+   *    everyone while the single saturated hue stays spent on the headband, the sash and the boot
+   *    tops alone.
+   *
+   * The base is a deep desaturated navy (much darker and bluer than Alex's slate) so the figure is
+   * still one dark silhouette marked with one bright hue, which is the pack's rule rather than a
+   * preference. Verified by rendering her beside Alex and beside Scorpion, not by reasoning alone.
+   */
+  kitana: {
+    displayName: 'Kitana',
+    role: 'Delivery Lead',
+    skin: '#e9bb8f',
+    hair: '#0d0e14',
+    hairLight: '#242a40',
+    top: '#1a2036',
+    topAlt: '#31446b',
+    accent: '#4a63ff',
+    pants: '#161c2b',
+    shoes: '#1d2740',
+    /** Neutral steel for the two war fans — the low-saturation cue no other character owns. Not a
+     * second accent (see rule 2): it is a grey, so it never competes with the royal blue. */
+    steel: '#98a1b3',
+    feature: 'kitana',
+  },
 };
 
+/**
+ * Generation order, NOT the hash table.
+ *
+ * There are TWO independently ordered id lists in this generator and a reader WILL mistake one for
+ * the other:
+ * - THIS one is only the order `index.mjs` writes characters into `public/characters/` and into
+ *   `characters_manifest.json` (which stores a keyed object, so its own order is cosmetic). It
+ *   drives nothing at runtime.
+ * - The RUNTIME mapping table is `CHARACTER_IDS` in
+ *   `src/ui/scene/character/character-sprite.ts`, where `resolveCharacterId` maps a project onto
+ *   `CHARACTER_IDS[hash % length]`. That order is a hash table, not a display order, and reordering
+ *   it silently reassigns every project's character.
+ * The two already DIFFER: the runtime list leads with Scorpion (the no-project default), while this
+ * one keeps the original generation order. That is fine, because the only consumer here is the
+ * generator loop. Do NOT reorder this list to "match" the runtime one, and do NOT treat it as the
+ * mapping table.
+ */
 export const CHARACTER_IDS = Object.keys(CHARACTERS);

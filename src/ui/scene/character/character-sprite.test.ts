@@ -21,10 +21,10 @@ const PACK_ROOT = join(process.cwd(), 'public', 'characters');
 
 /**
  * The characters that shipped BEFORE the pack moved to v3, and are therefore the only ones with a
- * `_v2` pair on disk. Scorpion is born at v3 — it never had a v2 — and a fabricated `_v2` file just
- * to satisfy a uniform loop would be a lie about the pack's history, so the two guards below are
- * deliberately split: v3 for every character (the URLs the code actually builds), v2 for these four
- * by name (kept so a future cleanup does not delete files that are still served).
+ * `_v2` pair on disk. Scorpion and Kitana are born at v3 — neither ever had a v2 — and a fabricated
+ * `_v2` file just to satisfy a uniform loop would be a lie about the pack's history, so the two
+ * guards below are deliberately split: v3 for every character (the URLs the code actually builds),
+ * v2 for these four by name (kept so a future cleanup does not delete files that are still served).
  */
 const LEGACY_V2_IDS = ['alex', 'marcus', 'sophia', 'elena'] as const;
 
@@ -70,6 +70,16 @@ describe('resolveCharacterId', () => {
     // and must never be done for tidiness. Changing the default has to be deliberate, and this
     // assertion is what forces that.
     expect(resolveCharacterId(undefined)).toBe('scorpion');
+  });
+
+  it('places Kitana SECOND: the maintainer asked for her right after the default', () => {
+    // PRODUCT DECISION, not an implementation detail, and deliberately the same shape as the
+    // Scorpion-default assertion above. Slot 1 is a bucket of the hash table, not a display order,
+    // so WHICH character a new id pushes onto is a choice about which existing projects get
+    // redrawn. The maintainer asked for Kitana to be the second character, immediately after the
+    // no-project default; this assertion is what makes moving her out of that slot a deliberate,
+    // reviewable change rather than a tidy-up that silently reshuffles every project's character.
+    expect(CHARACTER_IDS[1]).toBe('kitana');
   });
 
   it('can reach EVERY shipped character, so no project silently loses the character it was assigned', () => {
@@ -369,9 +379,14 @@ describe('shipped asset pack', () => {
     }
 
     const bornAtV3 = [...CHARACTER_IDS].filter((id) => !(LEGACY_V2_IDS as readonly string[]).includes(id));
-    expect(bornAtV3).toEqual(['scorpion']);
+    // Enumerated by name ON PURPOSE: the four legacy pairs are the only `_v2` files that may exist,
+    // and every other shipped id must be v3-born with no `_v2` pair. Naming them instead of
+    // filtering generically is what kept this negative from silently dropping Kitana when the
+    // sixth character landed.
+    expect(bornAtV3).toEqual(['scorpion', 'kitana']);
     for (const id of bornAtV3) {
       expect(() => readFileSync(join(PACK_ROOT, id, `${id}_spritesheet_v2.png`))).toThrow();
+      expect(() => readFileSync(join(PACK_ROOT, id, `${id}_portrait_v2.png`))).toThrow();
     }
   });
 });

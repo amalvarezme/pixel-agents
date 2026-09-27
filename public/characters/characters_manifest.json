@@ -37,6 +37,13 @@
       "metadata": "scorpion/scorpion.json",
       "spritesheet": "scorpion/scorpion_spritesheet_v3.png",
       "portrait": "scorpion/scorpion_portrait_v3.png"
+    },
+    "kitana": {
+      "displayName": "Kitana",
+      "role": "Delivery Lead",
+      "metadata": "kitana/kitana.json",
+      "spritesheet": "kitana/kitana_spritesheet_v3.png",
+      "portrait": "kitana/kitana_portrait_v3.png"
     }
   }
 }

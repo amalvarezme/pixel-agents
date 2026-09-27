@@ -92,6 +92,7 @@ function drawTorso(f, p, { dir, bob }) {
   }
 
   if (p.feature === 'scorpion') drawScorpionTorso(f, p, { dir, bob });
+  if (p.feature === 'kitana') drawKitanaTorso(f, p, { dir, bob });
 }
 
 /**
@@ -179,6 +180,42 @@ function drawScorpionEmblem(f, cx, cy, ink) {
   f.rect(cx + 2, cy + 4, cx + 2, cy + 4, ink); // stinger, hooking back in
 }
 
+/**
+ * Kitana's chest: a fitted bodysuit with a light front panel and a sash at the waist. A NEW branch,
+ * like Scorpion's — none of the four original features' code is reused or edited, and none of them
+ * reaches this one.
+ *
+ * The accent AREA follows the same rule the rest of the pack does (`palette.mjs`: ONE saturated hue
+ * on a desaturated base, spent on deliberate areas): the royal blue marks the sash's top edge and
+ * the headband, and nothing else on the torso. The suit itself stays near-black navy so the figure
+ * remains one dark silhouette and the colour is the second thing a viewer resolves.
+ */
+function drawKitanaTorso(f, p, { dir, bob }) {
+  // The suit's cloth continues over the neck. Without it the shared skin-coloured neck would show
+  // as a bright patch between a dark head and a dark suit.
+  f.rect(30, NECK_Y + bob, 33, SHOULDER_Y + bob, p.top);
+
+  if (dir !== 'up') {
+    // Front panel, a half-step up from the suit: it gives the front a centre of mass without ever
+    // reading as a second colour. From behind there is none, which is what makes the two reads differ
+    // by more than the face.
+    if (dir === 'side') f.rect(34, SHOULDER_Y + 2 + bob, 37, HIP_Y - 2 + bob, shift(p.top, 0.12));
+    else f.rect(29, SHOULDER_Y + 2 + bob, 34, HIP_Y - 2 + bob, shift(p.top, 0.12));
+  }
+
+  // Sash: a dark band with the accent spent on its TOP EDGE only, plus a knot on the front view. A
+  // solid accent sash would spend ~40 saturated pixels across the waist, which is the spread the
+  // pack's own rule warns about; an edge is enough to read as a garment.
+  const [bx0, bx1] = torsoSpan(dir, HIP_Y);
+  f.rect(bx0 - 1, HIP_Y - 2 + bob, bx1 + 1, HIP_Y + 1 + bob, p.topAlt);
+  f.rect(bx0 - 1, HIP_Y - 2 + bob, bx1 + 1, HIP_Y - 2 + bob, p.accent);
+  if (dir === 'down') {
+    f.rect(29, HIP_Y + 2 + bob, 32, HIP_Y + 4 + bob, p.topAlt); // knot
+    f.rect(29, HIP_Y + 5 + bob, 29, HIP_Y + 7 + bob, p.topAlt); // one loose end
+    f.rect(32, HIP_Y + 5 + bob, 32, HIP_Y + 7 + bob, p.topAlt);
+  }
+}
+
 // ---------------------------------------------------------------------------- legs
 
 /** `legs` is `[far, near]`; each entry is `{ dx, lift }` in frame pixels. */
@@ -200,11 +237,19 @@ function drawLegs(f, p, { dir, bob, legs, sitting }) {
         f.rect(30 + i, hip, 39 + i, hip + 4, pants); // thigh forward
         f.rect(36 + i, hip + 4, 40 + i, hip + 10, pants); // shin down
         f.rect(36 + i, hip + 10, 42 + i, hip + 12, shoes);
+        if (p.feature === 'kitana') {
+          f.rect(36 + i, hip + 4, 40 + i, hip + 10, shoes); // thigh-high boot = the whole shin
+          f.rect(36 + i, hip + 4, 40 + i, hip + 4, far ? shift(p.accent, FAR) : p.accent);
+        }
       } else {
         const x0 = 26 + i * 7;
         f.rect(x0, hip, x0 + 5, hip + 4, pants); // knee toward the viewer
         f.rect(x0 + 1, hip + 4, x0 + 4, hip + 9, pants);
         f.rect(x0 + 1, hip + 9, x0 + 4, hip + 11, shoes);
+        if (p.feature === 'kitana') {
+          f.rect(x0 + 1, hip + 4, x0 + 4, hip + 9, shoes);
+          f.rect(x0 + 1, hip + 4, x0 + 4, hip + 4, far ? shift(p.accent, FAR) : p.accent);
+        }
       }
       continue;
     }
@@ -222,6 +267,14 @@ function drawLegs(f, p, { dir, bob, legs, sitting }) {
     if (p.feature === 'scorpion') {
       const flash = far ? shift(p.accent, FAR) : p.accent;
       f.rect(cx, foot, cx + 1, foot, flash);
+    }
+    // Kitana's thigh-high boots: the shared pants draw above stays untouched and the boot is painted
+    // OVER it from mid-thigh down, with the accent spent on the boot's top edge alone. Added after the
+    // shared leg code, so the other five characters regenerate byte for byte.
+    if (p.feature === 'kitana') {
+      const bootTop = hip + Math.max(2, Math.round((foot - hip) * 0.45));
+      f.rect(cx, bootTop, cx + 4, foot, shoes);
+      f.rect(cx, bootTop, cx + 4, bootTop, far ? shift(p.accent, FAR) : p.accent);
     }
   }
 }
@@ -248,10 +301,94 @@ function drawScorpionArm(f, p, { shoulder, elbow, hand, far }) {
   f.ellipse(hand[0], hand[1], 2, 2, glove);
 }
 
+/**
+ * Kitana's arm: a fitted sleeve, a dark steel forearm guard with ONE accent stripe, and the hand
+ * gripping an open war fan. A separate branch, like Scorpion's — the four original features go on
+ * drawing skin and sleeve exactly as before.
+ *
+ * The fan is drawn BEFORE the hand so the hand reads as gripping the fan's hinge rather than being
+ * painted over by a shape that grew out of its wrist.
+ */
+function drawKitanaArm(f, p, { dir, armIndex, shoulder, elbow, hand, far }) {
+  const sleeve = far ? shift(p.topAlt, FAR) : p.topAlt;
+  const skin = far ? shift(p.skin, FAR) : p.skin;
+  const guardBase = shift(p.steel, -0.55);
+  const guard = far ? shift(guardBase, FAR) : guardBase;
+
+  f.line(shoulder[0], shoulder[1], elbow[0], elbow[1], sleeve, 4);
+  f.line(elbow[0], elbow[1], hand[0], hand[1], guard, 3);
+  // The accent marks the guard's WRIST END, not its whole length: a stripe down the forearm spends
+  // far more saturated pixels than a small mark and reads as a blue arm rather than a blue edge.
+  const wrist = [Math.round((elbow[0] + hand[0]) / 2), Math.round((elbow[1] + hand[1]) / 2)];
+  f.line(wrist[0], wrist[1], hand[0], hand[1], far ? shift(p.accent, FAR) : p.accent, 1);
+
+  drawKitanaFan(f, p, { dir, armIndex, hand, far });
+  f.ellipse(hand[0], hand[1], 1, 1, skin);
+}
+
+/**
+ * One open war fan, hinged at the hand — half of Kitana's second cue. The blades are STEEL, not the
+ * accent: `palette.mjs`'s rule 2 allows one saturated hue per character, and a low-saturation grey
+ * does not count against it. No other character carries steel, so it separates her without spending
+ * a second accent.
+ *
+ * GEOMETRY. A solid sector whose hinge is the hand, opening OUTWARD — away from the body in the
+ * front/back views, forward in profile. The hinge is biased toward the body ONLY as far as needed to
+ * keep the blades (plus the 1px outline pass) inside the calibrated body envelope: `celebrate` t3
+ * puts the near hand at x=20 and `point/up` t4 puts the far hand at x=45, and the bias collapses to
+ * zero everywhere the pose leaves room. The envelope is a hard constraint — the hover box and depth
+ * occlusion were measured from columns 17..49 — so the fan bends to it rather than the reverse.
+ *
+ * The hand is drawn SMALL (radius 1) for this character, so the blades clear it. A full 5px hand
+ * swallows the hinge and the fan reads as a grey cuff, which the first pass proved.
+ *
+ * The ribs and the bright rim are what make it read as a folded fan rather than as a plain disc, the
+ * same way the outline pass is what makes a shape read as pixel art.
+ */
+function drawKitanaFan(f, p, { dir, armIndex, hand, far }) {
+  const outward = dir === 'side' ? 1 : armIndex === 0 ? -1 : 1;
+  const radius = 5;
+  // Bias toward the body only when the hand is far enough out that an open fan would breach the
+  // envelope (solid pixels must land in 18..48 so the outline pass lands in 17..49).
+  const bias =
+    dir === 'side' ? 0 : Math.max(0, outward < 0 ? 18 + radius - hand[0] : hand[0] + radius - 48);
+  const hx = hand[0] - outward * bias;
+  const hy = hand[1];
+  const half = 0.95; // radians: the blades fan out over roughly 110 degrees
+
+  const steel = far ? shift(p.steel, FAR) : p.steel;
+  const rib = shift(steel, -0.34);
+  const rim = shift(steel, 0.24);
+
+  // Solid blade.
+  for (let y = hy - radius; y <= hy + radius; y++) {
+    for (let x = hx - radius; x <= hx + radius; x++) {
+      const dx = (x - hx) * outward;
+      const dy = y - hy;
+      if (dx <= 0) continue;
+      if (Math.hypot(dx, dy) > radius + 0.4) continue;
+      if (Math.abs(Math.atan2(dy, dx)) > half) continue;
+      f.set(x, y, steel);
+    }
+  }
+  // Ribs from the hinge, then the bright outer edge.
+  for (const a of [-half, -half / 2, 0, half / 2, half]) {
+    f.line(hx, hy, Math.round(hx + outward * Math.cos(a) * radius), Math.round(hy + Math.sin(a) * radius), rib, 1);
+  }
+  for (let i = 0; i <= 10; i++) {
+    const a = -half + (2 * half * i) / 10;
+    f.set(Math.round(hx + outward * Math.cos(a) * radius), Math.round(hy + Math.sin(a) * radius), rim);
+  }
+}
+
 /** One arm as upper + forearm, with an accent cuff for the characters whose jacket has one. */
-function drawArm(f, p, { shoulder, elbow, hand, far, sleeveTo }) {
+function drawArm(f, p, { dir, armIndex, shoulder, elbow, hand, far, sleeveTo }) {
   if (p.feature === 'scorpion') {
     drawScorpionArm(f, p, { shoulder, elbow, hand, far });
+    return;
+  }
+  if (p.feature === 'kitana') {
+    drawKitanaArm(f, p, { dir, armIndex, shoulder, elbow, hand, far });
     return;
   }
 
@@ -273,6 +410,8 @@ function drawArms(f, p, { dir, bob, arms, only = 'both' }) {
   for (const [i, far] of entries) {
     const a = arms[i];
     drawArm(f, p, {
+      dir,
+      armIndex: i,
       shoulder: [a.shoulder[0], a.shoulder[1] + bob],
       elbow: [a.elbow[0], a.elbow[1] + bob],
       hand: [a.hand[0], a.hand[1] + bob],
@@ -477,6 +616,83 @@ function drawScorpionHead(f, p, { dir, bob, cx, cy, eyes }) {
   }
 }
 
+/**
+ * Kitana's head. A new branch, like Scorpion's: the mask hides the mouth and the ponytail carries the
+ * silhouette, so rather than teach `drawFace` about either this draws her own head.
+ *
+ * What has to survive the shrink to 54px is the ORDER of the masses: the ponytail over one shoulder
+ * (the longest element in the frame, and the one marker nothing else on the floor has), then the
+ * crown of hair, then the accent headband, then the narrow pale eye band, then the cloth mask. The
+ * mouth is absent on purpose — it is under the mask, so `talk` reads through the gesturing arm, the
+ * same way Scorpion's does.
+ *
+ * The pale area is kept to one band split by a dark bridge: a broad lit region is what made Scorpion's
+ * first head read as a visor, and the mistake costs nothing to avoid.
+ */
+function drawKitanaHead(f, p, { dir, bob, cx, cy, eyes }) {
+  const hair = p.hair;
+  const lit = p.hairLight;
+  const cloth = shift(p.top, 0.05);
+  const eyeY = cy + 1 + bob;
+  const nape = SHOULDER_Y + 5 + bob;
+
+  // Head base: the skin the eye band sits in. Everything else is overdrawn on top of it.
+  f.ellipse(cx, cy + bob, HEAD_RX, HEAD_RY, p.skin);
+
+  // Crown of hair, stopping two rows above the eye line like `drawHair` does for every other
+  // character — a cap drawn through the eyes leaves every character blindfolded.
+  f.ellipse(cx, cy - 5 + bob, HEAD_RX, HEAD_RY - 4, hair);
+  f.rect(cx - HEAD_RX, cy - HEAD_RY + 1 + bob, cx + HEAD_RX, cy - 3 + bob, hair);
+
+  if (dir === 'up') {
+    // From behind there is no face to protect, so the hair covers the whole skull and the ponytail
+    // hangs straight down the back — the back view's feature, and the reason she is not a black
+    // rectangle from behind.
+    f.ellipse(cx, cy - 1 + bob, HEAD_RX, HEAD_RY - 1, hair);
+    f.rect(cx - 3, cy - HEAD_RY + bob, cx + 3, nape + 5, hair);
+    f.rect(cx - 1, cy - HEAD_RY + 3 + bob, cx + 1, nape + 3, lit);
+    return;
+  }
+
+  // Ponytail, drawn OVER the crown so its sweep stays visible. Deliberately the longest element on
+  // the sheet, because the silhouette is the identity and the colour is second. It hangs BESIDE the
+  // head (the 2-3px channel every other long-haired character uses) and NOT across the face: a tail
+  // wide enough to cross the face is just a black bar, which the first pass proved.
+  if (dir === 'side') {
+    f.rect(cx - HEAD_RX - 2, cy - HEAD_RY + 1 + bob, cx - HEAD_RX, nape + 4, hair);
+    f.rect(cx - HEAD_RX - 1, cy - HEAD_RY + 3 + bob, cx - HEAD_RX - 1, nape + 2, lit);
+  } else {
+    f.rect(cx - 4, cy - HEAD_RY - 3 + bob, cx, cy - HEAD_RY + bob, hair); // topknot over the crown
+    f.rect(cx - HEAD_RX - 2, cy - HEAD_RY + 1 + bob, cx - HEAD_RX + 1, nape + 2, hair); // tail beside the head
+    f.rect(cx - HEAD_RX - 1, cy - HEAD_RY + 3 + bob, cx - HEAD_RX - 1, nape, lit); // sheen
+    f.rect(cx - HEAD_RX - 2, nape + 3, cx - HEAD_RX, nape + 5, hair); // tip sweeping out
+  }
+
+  // Mask: the eye line DOWN to the jaw, drawn BEFORE the eyes so the eye band can sit on top of it.
+  // It is one small step up from the suit: enough to separate the cloth from the hair in a zoomed
+  // sheet, little enough that the head stays one dark mass at draw size.
+  if (dir === 'side') f.rect(cx - 2, eyeY, cx + HEAD_RX - 2, cy + 6 + bob, cloth);
+  else f.rect(cx - HEAD_RX + 1, eyeY, cx + HEAD_RX - 1, cy + 6 + bob, cloth);
+
+  // Eyes: ONE row of skin across the eye line with a dark pupil inside each half. One row tall on
+  // purpose — a pale area two rows tall is the visor, and it is the pupils that make it two eyes
+  // rather than a lit strip. Closed eyes drop one row, which is how a blink survives a masked face.
+  const slitY = eyes === 'closed' ? eyeY + 1 : eyeY;
+  if (dir === 'side') {
+    f.rect(cx + 3, slitY, cx + 5, slitY, p.skin);
+    f.rect(cx + 4, slitY, cx + 4, slitY, OUTLINE);
+  } else {
+    f.rect(cx - 4, slitY, cx + 4, slitY, p.skin);
+    f.rect(cx - 3, slitY, cx - 3, slitY, OUTLINE);
+    f.rect(cx + 3, slitY, cx + 3, slitY, OUTLINE);
+  }
+
+  // Headband: the accent, one pixel tall ON the brow. It is the front view's bright mark above the
+  // sash, and in profile the only accent besides the sash edge.
+  if (dir === 'side') f.rect(cx - HEAD_RX + 1, eyeY - 2, cx + HEAD_RX - 1, eyeY - 2, p.accent);
+  else f.rect(cx - HEAD_RX, eyeY - 2, cx + HEAD_RX, eyeY - 2, p.accent);
+}
+
 function drawHead(f, p, { dir, bob, headDx, headDy, eyes, mouth }) {
   // In profile the skull rides forward of the spine; without this the face sits on top of the
   // back and the nose lands in the middle of the chest.
@@ -485,6 +701,11 @@ function drawHead(f, p, { dir, bob, headDx, headDy, eyes, mouth }) {
 
   if (p.feature === 'scorpion') {
     drawScorpionHead(f, p, { dir, bob, cx, cy, eyes });
+    return;
+  }
+
+  if (p.feature === 'kitana') {
+    drawKitanaHead(f, p, { dir, bob, cx, cy, eyes });
     return;
   }
 
