@@ -86,6 +86,21 @@ describe('buildWorkerView (molecule) — combines badge + caption + position int
     expect(view.archiveTrip).toBeUndefined();
   });
 
+  // Sofa-visit feature: carries the render half's overlay data through unchanged, same shape as
+  // archiveTrip above, so `ui/scene/pixi/office-scene-renderer.ts` can animate the walk/sit.
+  it('carries sofaVisit (seated, direction) through when the worker has one', () => {
+    const view = buildWorkerView(workerViewModel({ sofaVisit: { seated: true, direction: 'down' } }));
+
+    expect(view.sofaVisit).toEqual({ seated: true, direction: 'down' });
+  });
+
+  // Adversarial twin: a worker with no sofaVisit must not gain one out of nowhere.
+  it('has no sofaVisit when the worker has none', () => {
+    const view = buildWorkerView(workerViewModel());
+
+    expect(view.sofaVisit).toBeUndefined();
+  });
+
   // Character rendering (ui/scene/pixi/office-scene-renderer.ts) needs the raw activity and
   // agentProfile alongside the badge/caption already built here, to pick the drawn animation
   // state and the orchestrator/subagent/model accent.

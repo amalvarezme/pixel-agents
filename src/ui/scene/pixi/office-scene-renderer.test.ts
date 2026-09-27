@@ -346,6 +346,26 @@ describe('character — role, project colour and idle dimming', () => {
     expect(characterGroup(working).alpha).toBe(1);
     expect(characterGroup(idle).alpha).toBeLessThan(1);
   });
+
+  // Sofa-visit feature: `isWorkerWalking` must count sofa transit as walking too, exactly like an
+  // in-flight archive trip already does — otherwise a worker walking to/from the sofa with no
+  // `activity: 'working'` of its own would wrongly read (and dim) as idle mid-stride.
+  describe('sofa-visit transit and seating', () => {
+    it('does not dim a worker mid sofa-transit, even with no working activity of its own', () => {
+      const transit = renderOfficeScene(floorOf([worker({ sofaVisit: { seated: false, direction: 'down' } })]));
+
+      expect(characterGroup(transit).alpha).toBe(1);
+    });
+
+    // Adversarial twin: SEATED (not transit) must NOT count as walking — the procedural fallback
+    // has no dedicated seated pose, so a seated-but-otherwise-idle worker still reads (and dims)
+    // as idle, proving the guard checks `!sofaVisit.seated` and not just "any sofaVisit at all".
+    it('still dims a seated worker with no working activity, since seated is not walking', () => {
+      const seated = renderOfficeScene(floorOf([worker({ sofaVisit: { seated: true, direction: 'down' } })]));
+
+      expect(characterGroup(seated).alpha).toBeLessThan(1);
+    });
+  });
 });
 
 // Blocker B.2: "a per-archive counter increments".

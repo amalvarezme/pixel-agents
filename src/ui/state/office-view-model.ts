@@ -76,6 +76,16 @@ export interface WorkerViewModel {
    * (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`) to pick the `typing` vs.
    * `work` clip. `undefined` for a worker with no recorded tool_start. */
   lastToolStartAt?: number;
+  /** Carried straight through from `Worker.lastEventAt` — the sofa-visit feature
+   * (`ui/scene/animation/sofa-visit.ts`) reads it to tell how long this worker has been quiet.
+   * `undefined` for a worker the domain has never stamped one onto. */
+  lastEventAt?: number;
+  /** Set by the render half (`ui/scene/animation/sofa-visit.ts`'s `applySofaOverlay`) while the
+   * worker is walking to or sitting at the meeting sofa. `undefined` from `buildOfficeViewModel`
+   * itself, exactly like `archiveTrip.highlight`/`showDocument`/`direction` above — this is
+   * animation-clock state, not something the structural projection can know. Never set alongside
+   * `archiveTrip`: filing a document always takes precedence (`applySofaOverlay`'s own rule). */
+  sofaVisit?: { seated: boolean; direction: CharacterDirection };
 }
 
 /**
@@ -147,6 +157,7 @@ export function buildOfficeViewModel(state: OfficeState): OfficeViewModel {
       ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
       ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
       ...(worker.lastToolStartAt !== undefined ? { lastToolStartAt: worker.lastToolStartAt } : {}),
+      ...(worker.lastEventAt !== undefined ? { lastEventAt: worker.lastEventAt } : {}),
       // Routed around the furniture rather than straight at the cabinet (guide section 7): the
       // room between a desk and the archive wall is full of desks, a sofa and the memory core.
       ...(held

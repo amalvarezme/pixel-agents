@@ -900,3 +900,96 @@ describe('applyEventToOfficeState — lastToolStartAt (typing vs. thinking recen
     expect(state.workers.get('claude-code:s1')?.lastToolStartAt).toBe(1000);
   });
 });
+
+/**
+ * `Worker.lastEventAt` (the sofa-visit feature) is the scene's ONLY way to know how long a worker
+ * has been quiet: `applyEventToOfficeState` only runs when an event arrives, so a worker going
+ * quiet produces no event and the domain can never notice a minute passing on its own — the render
+ * layer (`OfficeContainer.tick`) has to compare `now - lastEventAt` against its own clock instead.
+ * `activity` cannot serve this: `IDLE_TIMEOUT_MS` (`session-lifecycle.ts`) is 10 minutes, and the
+ * sofa needs a 1-minute signal. Set from every branch that upserts or touches a worker.
+ */
+describe('applyEventToOfficeState — lastEventAt (quiet signal for the sofa-visit feature)', () => {
+  it('records lastEventAt from session_start', () => {
+    const state = applyEventToOfficeState(createOfficeState(), sessionStart(1, 'claude-code:s1'));
+
+    expect(state.workers.get('claude-code:s1')?.lastEventAt).toBe(1);
+  });
+
+  it('records lastEventAt from a parent event that touches an already-discovered worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, {
+      id: 1,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:parent1',
+      at: 1000,
+    });
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'session_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 1000,
+    });
+
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'parent',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:child1',
+      at: 1500,
+      correlationId: 'claude-code:parent1',
+    });
+
+    expect(state.workers.get('claude-code:child1')?.lastEventAt).toBe(1500);
+  });
+
+  it('records lastEventAt from a default-branch event (a status announcement)', () => {
+    let state = applyEventToOfficeState(createOfficeState(), sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'status',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 2000,
+      activity: 'idle',
+    });
+
+    expect(state.workers.get('claude-code:s1')?.lastEventAt).toBe(2000);
+  });
+
+  it('records lastEventAt from a memory_write event', () => {
+    let state = applyEventToOfficeState(createOfficeState(), sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, memoryWrite(2, 'claude-code:s1', 3000));
+
+    expect(state.workers.get('claude-code:s1')?.lastEventAt).toBe(3000);
+  });
+
+  // upsertWorker takes the NEWER of patch vs. existing lastEventAt via Math.max, never a plain `??`
+  // fallback — an out-of-order/older event (a real possibility on a live stream) must never move
+  // the quiet clock backwards, which would wrongly re-arm the sofa-idle timer.
+  it('never moves lastEventAt backwards when an out-of-order older event later touches the worker', () => {
+    let state = applyEventToOfficeState(createOfficeState(), sessionStart(1, 'claude-code:s1'));
+    state = applyEventToOfficeState(state, {
+      id: 2,
+      kind: 'tool_start',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 5000,
+      toolLabel: 'Bash',
+    });
+    expect(state.workers.get('claude-code:s1')?.lastEventAt).toBe(5000);
+
+    state = applyEventToOfficeState(state, {
+      id: 3,
+      kind: 'status',
+      harness: 'claude-code',
+      sessionKey: 'claude-code:s1',
+      at: 1000,
+      activity: 'idle',
+    });
+
+    expect(state.workers.get('claude-code:s1')?.lastEventAt).toBe(5000);
+  });
+});

@@ -126,6 +126,25 @@ describe('selectSpritePose', () => {
     expect(selectSpritePose({ state: 'walking', atArchive: true })).toEqual({ action: 'point', direction: 'up' });
     expect(selectSpritePose({ state: 'working', atArchive: true })).toEqual({ action: 'point', direction: 'up' });
   });
+
+  // Sofa-visit feature: `sit`/`down` slots into the precedence order right after `walking` — a
+  // worker mid-walk to or from the sofa must still show as WALKING (the caller passes
+  // `state: 'walking'` for that leg; `seated` only ever accompanies the dwell), and `atArchive`
+  // still outranks everything, exactly like it outranks `working`/`idle` above.
+  it('sits, facing the viewer, while seated at the meeting sofa', () => {
+    // The sofa sits against the back wall and its anchors face the room (office_map.json:
+    // specialZones.meeting_sofa's `facing: "up"` means the ANCHOR faces up toward the sofa, so
+    // the worker occupying it faces the opposite way — down, toward the viewer). The pack also
+    // only ever draws `sit` as `down` in the first place (`fallbackDirections.sit`), so this is
+    // both the geometrically correct reading and the only one the asset pack can answer.
+    expect(selectSpritePose({ state: 'idle', seated: true })).toEqual({ action: 'sit', direction: 'down' });
+  });
+
+  it('seated outranks idle/working but never outranks walking or the archive', () => {
+    expect(selectSpritePose({ state: 'working', seated: true })).toEqual({ action: 'sit', direction: 'down' });
+    expect(selectSpritePose({ state: 'walking', seated: true, direction: 'left' })).toEqual({ action: 'walk', direction: 'left' });
+    expect(selectSpritePose({ state: 'working', seated: true, atArchive: true })).toEqual({ action: 'point', direction: 'up' });
+  });
 });
 
 describe('selectSpriteFrame', () => {

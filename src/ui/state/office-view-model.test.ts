@@ -172,6 +172,32 @@ describe('buildOfficeViewModel — project path tracking', () => {
   });
 });
 
+// The sofa-visit feature's quiet signal (`domain/office/office.ts`'s `Worker.lastEventAt`) — same
+// conditional-spread shape as projectPath/agentProfile above, since a hand-built view model in a
+// test must never be forced to restate a field it never set.
+describe('buildOfficeViewModel — lastEventAt (sofa-visit quiet signal)', () => {
+  it('carries lastEventAt through onto the view model worker', () => {
+    let state = createOfficeState();
+    state = applyEventToOfficeState(state, sessionStart(1, 'claude-code:s1'));
+
+    const vm = buildOfficeViewModel(state);
+
+    expect(vm.workers[0]!.lastEventAt).toBe(1);
+  });
+
+  // Adversarial near-miss: a worker with no lastEventAt at all must not gain one out of nowhere.
+  it('has no lastEventAt when the worker has none', () => {
+    const vm = buildOfficeViewModel({
+      workers: new Map([['claude-code:s1', { sessionKey: 'claude-code:s1', harness: 'claude-code', label: 'x', activity: 'working', parentSessionKey: null }]]),
+      archive: { slots: [], waitQueue: [], nextSlotCursor: 0 },
+      carryQueues: new Map(),
+      pendingParentEdges: new Map(),
+    });
+
+    expect(vm.workers[0]!.lastEventAt).toBeUndefined();
+  });
+});
+
 // Character animation states (idle/working/walking) select from the worker's `activity` — this
 // carries `domain/office/office.ts`'s `Worker.activity` through, same shape as agentProfile above.
 describe('buildOfficeViewModel — worker activity', () => {

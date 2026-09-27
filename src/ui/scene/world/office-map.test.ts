@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   COLLISION_ZONES,
+  MEETING_SOFA,
   NAV_GRID_SIZE,
   OFFICE_LAYER_URLS,
   PERSISTENT_MEMORY,
@@ -73,6 +74,18 @@ describe('office map — the world the artwork actually draws', () => {
   it('knows where the Persistent Memory Archive is approached from', () => {
     expect(PERSISTENT_MEMORY.anchor).toEqual({ x: 1010, y: 455 });
     expect(PERSISTENT_MEMORY.facing).toBe('up');
+  });
+
+  // The sofa-visit feature's destination — unlike the archive's single interactionAnchor, the
+  // map declares meeting_sofa with THREE (one seat each), so a worker's visit can allocate a
+  // specific seat rather than stacking every visitor on top of one point.
+  it('knows the meeting sofa\'s three seat anchors and its facing', () => {
+    expect(MEETING_SOFA.anchors).toEqual([
+      { x: 585, y: 525 },
+      { x: 690, y: 525 },
+      { x: 790, y: 525 },
+    ]);
+    expect(MEETING_SOFA.facing).toBe('up');
   });
 
   it('carries the navigation grid and obstacle list the pathfinder needs', () => {

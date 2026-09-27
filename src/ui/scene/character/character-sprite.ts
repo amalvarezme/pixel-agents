@@ -191,6 +191,10 @@ export interface SpritePoseInput {
   /** Whether a tool started recently enough to draw the worker at the keys
    * (`ui/scene/character/animation-state.ts`'s `isToolRecentlyStarted`). */
   toolActive?: boolean;
+  /** True only while the worker is dwelling at the meeting sofa (the sofa-visit feature,
+   * `ui/scene/animation/sofa-visit.ts`). Outranks `working`/`idle` — a worker mid-walk to or from
+   * the sofa is still `state: 'walking'`, so this never coexists with that state in practice. */
+  seated?: boolean;
 }
 
 /**
@@ -212,10 +216,20 @@ export interface SpritePoseInput {
  *   OMITTED (not `false`) still resolves to `typing` — `office-map.json` declares
  *   `defaultAnimation: "typing"` on every workstation, and a caller with no signal must fall back
  *   to the map's own default rather than silently downgrading every worker to `work`.
+ * - `seated` (sofa-visit feature) draws `sit`/`down`. Down, not up, and not the caller's own
+ *   `direction`: `office_map.json`'s `specialZones.meeting_sofa` declares its anchors `facing:
+ *   "up"` — the anchor faces UP into the sofa, so the worker occupying it faces the opposite way,
+ *   DOWN toward the room, exactly like an idle worker turned away from its laptop. That also
+ *   happens to be the only direction the pack can draw `sit` in at all: it ships no `up`/`side`
+ *   clip for it, only `down` (`fallbackDirections.sit`), so a character-facing direction would be
+ *   silently discarded by `resolveSpriteClip`'s own fallback anyway. Ranked between `walking` and
+ *   `working`/`idle`: a worker mid-walk to or from the sofa is still `state: 'walking'` (its own
+ *   direction leg matters then), so `seated` and `walking` never actually compete in practice.
  */
 export function selectSpritePose(input: SpritePoseInput): SpritePose {
   if (input.atArchive) return { action: 'point', direction: 'up' };
   if (input.state === 'walking') return { action: 'walk', direction: input.direction ?? 'down' };
+  if (input.seated) return { action: 'sit', direction: 'down' };
   if (input.state === 'working') return { action: input.toolActive === false ? 'work' : 'typing', direction: 'up' };
   return { action: 'idle', direction: 'down' };
 }

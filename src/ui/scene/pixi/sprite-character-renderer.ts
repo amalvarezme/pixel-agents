@@ -128,6 +128,9 @@ export interface SpriteCharacterInput {
   /** Whether a tool started recently enough to draw the worker at the keys — forwarded straight
    * into `selectSpritePose` to split `working` into `typing` vs `work`. */
   toolActive?: boolean;
+  /** True only while dwelling at the meeting sofa (the sofa-visit feature) — forwarded straight
+   * into `selectSpritePose` to select the `sit` clip. */
+  seated?: boolean;
 }
 
 /**
@@ -150,6 +153,7 @@ export function renderSpriteCharacter(atlas: CharacterAtlas, input: SpriteCharac
     atArchive: input.atArchive,
     direction: input.direction,
     toolActive: input.toolActive,
+    seated: input.seated,
   });
   const resolved = resolveSpriteClip(meta, pose.action, pose.direction);
   if (!resolved) return null;

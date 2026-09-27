@@ -90,6 +90,18 @@ export const PERSISTENT_MEMORY = {
   facing: mapData.specialZones.persistent_memory.facing as Workstation['facing'],
 } as const;
 
+/**
+ * The meeting sofa — the destination of the sofa-visit feature (a worker quiet for a minute walks
+ * over, sits, and walks back once active again). Unlike `persistent_memory`'s single
+ * `interactionAnchor`, `meeting_sofa` declares THREE (`interactionAnchors`, plural) — one per seat
+ * — because up to three quiet workers can visit at once; the map already declares `actions: ["talk",
+ * "sit"]` on this zone for exactly that.
+ */
+export const MEETING_SOFA = {
+  anchors: mapData.specialZones.meeting_sofa.interactionAnchors as MapPoint[],
+  facing: mapData.specialZones.meeting_sofa.facing as Workstation['facing'],
+} as const;
+
 /** One piece of furniture, as an axis-aligned box. The `id` is the map's own name for it — kept
  * because a clipping report is only actionable if it can say WHICH rectangle to tune (guide
  * section 7: fine-tuning happens in `office_map.json`, never in the engine). */

@@ -73,10 +73,14 @@ const ARCHIVE_COUNTER_PLATE_ALPHA = 0.72;
 /** The counter sits above the archive's own approach anchor, clear of the agent standing on it. */
 const ARCHIVE_COUNTER_OFFSET_Y = 150;
 
-/** True only while a worker's archive trip is actively in transit (walking out or back) — NOT
- * while dwelling at the archive, which reads as standing still. */
-function isWorkerWalking(worker: Pick<WorkerView, 'archiveTrip'>): boolean {
-  return Boolean(worker.archiveTrip) && !worker.archiveTrip!.highlight;
+/** True while a worker's archive trip is actively in transit (walking out or back) — NOT while
+ * dwelling at the archive, which reads as standing still — OR while its sofa visit is actively in
+ * transit (walking-out/walking-back) — NOT while seated, which reads as sitting still (drawn via
+ * `seated` below, not this flag). */
+function isWorkerWalking(worker: Pick<WorkerView, 'archiveTrip' | 'sofaVisit'>): boolean {
+  if (worker.archiveTrip) return !worker.archiveTrip.highlight;
+  if (worker.sofaVisit) return !worker.sofaVisit.seated;
+  return false;
 }
 
 /**
@@ -126,8 +130,12 @@ function renderPlatedLabel(
  */
 function renderWorkerCharacter(worker: WorkerView, now: number, atlas?: CharacterAtlas): Container {
   const animationState = selectCharacterAnimationState({ activity: worker.activity, isWalking: isWorkerWalking(worker) });
-  const direction: CharacterDirection = worker.archiveTrip?.direction ?? 'down';
+  // Archive trip direction always wins when both exist — per `applySofaOverlay`'s own precedence
+  // (blocker step 4.9), an archiveTrip and a sofaVisit should never actually coexist on one worker
+  // in view-model data, but reading archiveTrip first keeps that precedence explicit here too.
+  const direction: CharacterDirection = worker.archiveTrip?.direction ?? worker.sofaVisit?.direction ?? 'down';
   const atArchive = Boolean(worker.archiveTrip?.highlight);
+  const seated = Boolean(worker.sofaVisit?.seated);
 
   if (atlas) {
     const sprite = renderSpriteCharacter(atlas, {
@@ -138,6 +146,7 @@ function renderWorkerCharacter(worker: WorkerView, now: number, atlas?: Characte
       now,
       scale: worker.scale,
       toolActive: isToolRecentlyStarted(worker.lastToolStartAt, now),
+      seated,
     });
     if (sprite) return sprite;
   }

@@ -55,6 +55,10 @@ export interface WorkerView {
   /** Carried straight through from `WorkerViewModel.lastToolStartAt` — the pixi renderer computes
    * `isToolRecentlyStarted` from it to pick the `typing` vs. `work` clip. */
   lastToolStartAt?: number;
+  /** Carried straight through from `WorkerViewModel.sofaVisit` — the pixi renderer uses it to
+   * animate the sofa-visit feature's walk/sit. Never set alongside `archiveTrip` (the render half
+   * already resolves that precedence upstream, `applySofaOverlay`). */
+  sofaVisit?: { seated: boolean; direction: CharacterDirection };
 }
 
 export function buildWorkerView(worker: WorkerViewModel): WorkerView {
@@ -88,6 +92,7 @@ export function buildWorkerView(worker: WorkerViewModel): WorkerView {
     ...(worker.agentProfile ? { agentProfile: worker.agentProfile } : {}),
     ...(worker.projectPath !== undefined ? { projectPath: worker.projectPath } : {}),
     ...(worker.lastToolStartAt !== undefined ? { lastToolStartAt: worker.lastToolStartAt } : {}),
+    ...(worker.sofaVisit ? { sofaVisit: worker.sofaVisit } : {}),
     ...(worker.archiveTrip
       ? {
           archiveTrip: {

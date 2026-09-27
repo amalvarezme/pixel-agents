@@ -59,6 +59,16 @@ export interface Worker {
    * `isToolRecentlyStarted`) can tell a worker hammering tools apart from one thinking between
    * them, without needing a matching `tool_end` (see that module for why pairing was rejected). */
   lastToolStartAt?: number;
+  /** Wall-clock `at` of the most recent event that touched this worker, of ANY kind — set on
+   * every branch of `applyEventToOfficeState` that upserts a worker, including `memory_write`.
+   * This is the scene's ONLY way to know how long a worker has been quiet: `applyEventToOfficeState`
+   * only runs when an event arrives, so a worker going quiet produces no event and the domain can
+   * never notice a minute passing on its own. `activity` cannot substitute — its own idle flip
+   * (`IDLE_TIMEOUT_MS`, `domain/sessions/session-lifecycle.ts`) is 10 minutes, and the sofa-visit
+   * feature (render layer, `OfficeContainer.tick`) needs a 1-minute signal. Deliberately kept in
+   * `domain/` (unlike `TripAnimatorState.archivedCount`) because it is a fact about the EVENT
+   * stream, not about animation playback. */
+  lastEventAt?: number;
 }
 
 /**
@@ -157,6 +167,13 @@ function upsertWorker(
     toolDetail: patch.toolDetail ?? existing?.toolDetail,
     projectPath: patch.projectPath ?? existing?.projectPath,
     lastToolStartAt: patch.lastToolStartAt ?? existing?.lastToolStartAt,
+    // Math.max, never a plain `??` fallback: an out-of-order/older event must never move the
+    // quiet clock BACKWARDS, which would wrongly re-arm the sofa-idle timer for a worker that is
+    // actually still quiet.
+    lastEventAt:
+      patch.lastEventAt !== undefined || existing?.lastEventAt !== undefined
+        ? Math.max(patch.lastEventAt ?? -Infinity, existing?.lastEventAt ?? -Infinity)
+        : undefined,
     // Merged, never replaced wholesale: a later partial profile (e.g. just the orchestrator's
     // newly-discovered model) must enrich the existing one, not erase agentType/model/task
     // already known from an earlier profile event (spec: "a missing model stays absent rather
@@ -208,6 +225,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         harness: event.harness,
         label: event.label,
         activity: 'working',
+        lastEventAt: event.at,
         ...(pendingEdge?.correlationId !== undefined ? { parentSessionKey: pendingEdge.correlationId } : {}),
         ...(mergedProfile ? { agentProfile: mergedProfile } : {}),
         ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
@@ -229,6 +247,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         return upsertWorker(pruned, event.sessionKey, {
           harness: event.harness,
           label: event.label,
+          lastEventAt: event.at,
           ...(event.correlationId !== undefined ? { parentSessionKey: event.correlationId } : {}),
           ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
           ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
@@ -273,6 +292,7 @@ export function applyEventToOfficeState(state: OfficeState, event: AgentEvent): 
         label: event.label,
         toolLabel: event.toolLabel,
         toolDetail: event.toolDetail,
+        lastEventAt: event.at,
         ...(event.agentProfile ? { agentProfile: event.agentProfile } : {}),
         ...(event.projectPath !== undefined ? { projectPath: event.projectPath } : {}),
         // The idle/working announcement from `session-lifecycle-coordinator.ts`. This is the only
@@ -305,7 +325,15 @@ function applyMemoryWriteToOfficeState(state: OfficeState, sessionKey: string, n
 
   const archive = wasIdle ? requestArchiveDock(state.archive, sessionKey, now) : state.archive;
 
-  return { ...state, carryQueues, archive };
+  // A memory_write is as much an activity signal as any other event — recorded here too so the
+  // sofa-visit quiet clock is never fooled into thinking a worker went quiet while it was busy
+  // filing a document.
+  const withLastEventAt = upsertWorker(state, sessionKey, {
+    harness: state.workers.get(sessionKey)!.harness,
+    lastEventAt: now,
+  });
+
+  return { ...withLastEventAt, carryQueues, archive };
 }
 
 /**
