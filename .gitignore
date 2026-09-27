@@ -39,3 +39,5 @@ venv/
 
 # Gentle AI per-change runtime instance id (machine-local, not shared state)
 .gentle-ai-instance
+# Local Pi runtime state
+.atl/
