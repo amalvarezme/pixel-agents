@@ -111,6 +111,74 @@ REPLAY_FROM_START=true CLAUDE_HOME=/path/to/fixture-root CODEX_ENABLED=false ANT
 This is the opt-in the design calls out for demos and fixture capture; it is OFF by default so a
 real `~/.claude` never replays 173k historical lines on every server start.
 
+## Driving the office from an MCP client
+
+The same office is also a **stdio MCP server**, so an agent can drive it directly: the human gets
+the URL and opens it in a browser, the agent gets the office as text. Five tools:
+
+| Tool | Mutating? | What it does |
+|---|---|---|
+| `office_start` | yes | Lift the visualizer and return its URL. Idempotent: probes the port first, returns an already-running office instead of starting a second one, and picks a free port instead of crashing when the default one is held by something else. |
+| `office_stop` | yes | Stop the visualizer *this server* started. A visualizer it did not spawn is never signalled. |
+| `office_launch` | yes | Proxy a launch to the office's `POST /launch`, so the server's own validation (including the Zero-Injection denylist) applies unchanged. Nothing is spawned by the MCP server itself. |
+| `office_status` | no | Whether the office is up, its URL and port, which harnesses are enabled, and how many sessions it can currently see. |
+| `office_snapshot` | no | The office as text: the current snapshot frame (workers, archive and carry queues) read from the running office. |
+
+`.mcp.json` already declares the server, with the three mutating tools in `approveTools`:
+
+```json
+{
+  "mcpServers": {
+    "office": {
+      "command": "node",
+      "args": ["node_modules/vite-node/vite-node.mjs", "src/mcp/stdio.ts"],
+      "lifecycle": "lazy",
+      "approveTools": ["office_start", "office_stop", "office_launch"]
+    }
+  }
+}
+```
+
+`lifecycle: lazy` is why nothing runs while the entry sits unused: a lazy server is not connected at
+startup, so the visualizer is not touched until one of the tools is actually called.
+
+### Setting it up
+
+1. Clone the repository and run `npm install` inside it.
+2. Run `npm run build` once. A fresh clone has no `dist/` — it is gitignored — and `office_start`
+   deliberately does not build, so without this step the URL it returns serves a 404 for the page.
+   The stream on that same origin still works; only the floor is missing.
+3. Open Pi (or another MCP client that reads `.mcp.json`) with the repository root as the working
+   directory. Both relative `args` — `node_modules/vite-node/vite-node.mjs` and
+   `src/mcp/stdio.ts` — are resolved against the session's working directory, and the committed
+   `.mcp.json` is discovered from that same directory. The entry carries no `cwd` and no absolute
+   path: the server derives the repository root from its own module location, so a clone works on
+   any machine as long as the client starts in the repository root.
+4. Trust the project. Pi gates project-derived MCP servers (anything declared in a project
+   `.mcp.json`) until the project is trusted: `project-server-trust.ts` blocks the `office` server,
+   disables it rather than connecting, and reports it as untrusted — which is why an untrusted
+   clone sees no `office_*` tools at all. Trust the project and approve the server when prompted.
+   Approval is recorded per project and per exact server definition, so editing the entry asks
+   again.
+
+### What it does not do
+
+- A stdio MCP server dies with its client, and this one kills the visualizer it manages as it shuts
+  down. The office therefore lives exactly as long as the chat that started it — unless something
+  else started it (`npm run office`, or another client), in which case `office_stop` leaves that
+  process alone rather than taking credit for it.
+- The visualizer binds `127.0.0.1` only, and `POST /launch` — which `office_launch` proxies to — is
+  unauthenticated on localhost. Anything that can reach your loopback can launch through it.
+- The MCP surface implements `initialize`, `ping`, `tools/list`, `tools/call` and the
+  `notifications/initialized` notification, and nothing else: no resources, no prompts, no
+  sampling, no logging, and no progress notifications.
+- Paths are resolved per process, never pinned to an install path. The MCP server writes the
+  visualizer's log to `.data/office-mcp-visualizer.log` under the repository root it derives (set
+  `OFFICE_MCP_LOG` to move it), and starts the visualizer with that root as its working directory;
+  the visualizer itself resolves its checkpoint (`.data/checkpoints.json`) and its static root
+  (`dist/`) from its own working directory. Run the visualizer by hand from somewhere else and it
+  will look for `dist/` and write `.data/` there.
+
 ## Verifying it by hand
 
 Mounting a real PixiJS canvas is the one thing no automated test covers; it needs a real browser.
