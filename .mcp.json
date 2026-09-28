@@ -3,7 +3,6 @@
     "office": {
       "command": "node",
       "args": ["node_modules/vite-node/vite-node.mjs", "src/mcp/stdio.ts"],
-      "cwd": "/Users/andresalvarez/Documents/pixel-agents",
       "lifecycle": "lazy",
       "approveTools": ["office_start", "office_stop", "office_launch"]
     }
