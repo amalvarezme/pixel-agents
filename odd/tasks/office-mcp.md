@@ -29,13 +29,33 @@ connection **lifts the local server and sees the agents on the virtual office fl
 - **Dependency cost**: the project has only `chokidar` and `pixi.js` at runtime. The official MCP SDK
   would be the first new runtime dependency (pure TypeScript, plus a zod peer).
 
-## One correction to the exploration report
+## Where the config actually goes (corrected after the REAL discovery)
 
-The explorer stated that `~/.pi/agent/mcp.json` does not exist and that Pi's config file is
-`mcp-adapter.json`. That was true at the moment it looked (the file had just been deleted) and is
-FALSE now: `mcp.json` is the canonical config, and `mcp-adapter.json` is the harness's own copy which
-does NOT carry `approveTools` or the Google `oauth` blocks. Two agents reading one filesystem at
-different times is a real hazard; state the observation time with any filesystem claim.
+An earlier version of this doc told the reader to write the entry into `~/.pi/agent/mcp.json`. **That
+was wrong, and it was the cause of a recurring problem.** Verified by reading the adapter's own code
+(`~/.pi/agent/npm/node_modules/pi-mcp-adapter/dist/config.js`, v3.1.0), which declares:
+
+```js
+const PROJECT_CONFIG_NAME = '.mcp.json';          // getProjectConfigPath(cwd)    -> <cwd>/.mcp.json
+const ADAPTER_CONFIG_NAME = 'mcp-adapter.json';   // getPiGlobalConfigPath()      -> <agent home>/mcp-adapter.json
+const PI_MCP_CONFIG_NAME  = 'mcp.json';           // getLegacyPiMcpGlobalConfigPath() -> <agent home>/mcp.json
+```
+
+So the live configs are **`<project>/.mcp.json`** (standard, per project) and
+**`~/.pi/agent/mcp-adapter.json`** (the Pi global). **`~/.pi/agent/mcp.json` is the LEGACY path and is
+no longer read at all**, which the adapter says out loud through `getLegacyMcpMigrationNotices`: it
+compares the legacy/new pair and instructs *"Merge \<source\> into \<target\>, then remove
+\<source\>"*.
+
+That is what kept deleting the legacy file: anything with content at a legacy path triggers the
+migration, and the migration removes the source. Restoring that file, which an earlier version of
+this work did twice, recreates the condition and invites the deletion again. **Do not write to
+`~/.pi/agent/mcp.json`, and do not recreate it.**
+
+The earlier correction note in this doc claimed the inverse (that `mcp.json` was canonical and
+`mcp-adapter.json` a copy). It has been replaced by the code-verified truth above. The lesson stands
+and is worth more than the note: **a filesystem claim needs its observation time**, and a claim about
+which file a program reads needs the program's own code, not an inference from timestamps.
 
 ## Slice 1 — one process, one command
 
@@ -111,25 +131,33 @@ different times is a real hazard; state the observation time with any filesystem
       `tools/list`. `office_launch` forwards its arguments verbatim to `POST /launch`
       (`src/mcp/office-client.ts`) so the validation is never duplicated; `office_snapshot` reads
       the first `event: snapshot` frame from the live `/stream` with a timeout and closes.
-- [x] A `lifecycle: lazy` config block for `~/.pi/agent/mcp.json` in the shape the existing entries
-      use. See "The `~/.pi/agent/mcp.json` entry" below.
+- [x] A `lifecycle: lazy` config block for the PROJECT config, `<repo>/.mcp.json`, which is the
+      file the adapter actually reads. See "The project `.mcp.json` entry" below.
 - [x] Honest limits to state with it. See "Honest limits" below.
 
-### The `~/.pi/agent/mcp.json` entry
+### The project `.mcp.json` entry
+
+Written to `<repo>/.mcp.json`, NOT to a global file. The office is per project: its `cwd` and its
+`vite-node` path only make sense inside this repository, so a global entry would be wrong even if the
+global path were the right one.
 
 ```json
-"office": {
-  "approveTools": ["*start*", "*stop*", "*launch*"],
-  "args": ["node_modules/vite-node/vite-node.mjs", "src/mcp/stdio.ts"],
-  "command": "node",
-  "cwd": "/Users/andresalvarez/Documents/pixel-agents",
-  "lifecycle": "lazy"
+{
+  "mcpServers": {
+    "office": {
+      "command": "node",
+      "args": ["node_modules/vite-node/vite-node.mjs", "src/mcp/stdio.ts"],
+      "cwd": "/Users/andresalvarez/Documents/pixel-agents",
+      "lifecycle": "lazy",
+      "approveTools": ["office_start", "office_stop", "office_launch"]
+    }
+  }
 }
 ```
 
 `approveTools` names the three MUTATING tools (`office_start`, `office_stop`, `office_launch`); the
-read-only `office_status` and `office_snapshot` are deliberately absent. The existing entries use
-glob-shaped patterns (`*click*`), so the glob form above is the wildcard-equivalent.
+read-only `office_status` and `office_snapshot` are deliberately absent. If a client matches these by
+glob rather than exactly, the wildcard-equivalent is `["*start*", "*stop*", "*launch*"]`.
 
 **Why `node node_modules/vite-node/vite-node.mjs src/mcp/stdio.ts`.** The project is TypeScript with
 no compiled `bin` and no build step for the server. `vite-node` is already the project's TS runtime
